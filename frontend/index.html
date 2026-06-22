@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>გამყიდველის პანელი</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- შეტყობინებების ზოლი -->
+  <div id="toast" class="toast hidden"></div>
+
+  <header class="app-header hidden" id="header">
+    <div class="brand">🛍️ გამყიდველის პანელი</div>
+    <div class="header-right">
+      <span id="user-email" class="user-email"></span>
+      <button id="logout-btn" class="btn btn-ghost">გასვლა</button>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ====== AUTH ====== -->
+    <section id="auth-view" class="auth-view">
+      <div class="card auth-card">
+        <h1 class="auth-title">🛍️ მაღაზიის პანელი</h1>
+        <div class="tabs">
+          <button class="tab active" data-tab="login">შესვლა</button>
+          <button class="tab" data-tab="register">რეგისტრაცია</button>
+        </div>
+
+        <form id="login-form" class="auth-form">
+          <label>ელ-ფოსტა
+            <input type="email" id="login-email" required autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <label>პაროლი
+            <input type="password" id="login-password" required autocomplete="current-password" placeholder="••••••••" />
+          </label>
+          <button type="submit" class="btn btn-primary">შესვლა</button>
+        </form>
+
+        <form id="register-form" class="auth-form hidden">
+          <label>ელ-ფოსტა
+            <input type="email" id="reg-email" required autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <label>პაროლი (მინ. 6 სიმბოლო)
+            <input type="password" id="reg-password" required minlength="6" autocomplete="new-password" placeholder="••••••••" />
+          </label>
+          <button type="submit" class="btn btn-primary">რეგისტრაცია</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ====== DASHBOARD ====== -->
+    <section id="app-view" class="hidden">
+
+      <!-- მაღაზიის არჩევა / შექმნა -->
+      <div class="card">
+        <div class="shop-bar">
+          <label class="shop-select-wrap">მაღაზია
+            <select id="shop-select"></select>
+          </label>
+          <button id="new-shop-btn" class="btn btn-ghost">+ ახალი მაღაზია</button>
+        </div>
+        <form id="shop-form" class="inline-form hidden">
+          <input type="text" id="shop-name" placeholder="მაღაზიის სახელი" required />
+          <button type="submit" class="btn btn-primary">შექმნა</button>
+          <button type="button" id="shop-cancel" class="btn btn-ghost">გაუქმება</button>
+        </form>
+
+        <!-- Facebook გვერდის დაკავშირება -->
+        <div id="fb-section" class="fb-section hidden">
+          <div id="fb-status" class="fb-status"></div>
+          <div class="fb-actions">
+            <button id="fb-connect-btn" class="btn btn-primary">🔵 Facebook გვერდის დაკავშირება</button>
+            <button id="fb-disconnect-btn" class="btn btn-danger hidden">გათიშვა</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- პროდუქტის ფორმა (დამატება/რედაქტირება) -->
+      <div class="card" id="product-form-card">
+        <h2 id="product-form-title">ახალი პროდუქტი</h2>
+        <form id="product-form" class="product-form">
+          <input type="hidden" id="product-id" />
+          <label>დასახელება *
+            <input type="text" id="p-name" required placeholder="მაგ. პური" />
+          </label>
+          <div class="row-2">
+            <label>ფასი (₾)
+              <input type="number" id="p-price" min="0" step="0.01" value="0" />
+            </label>
+            <label>რაოდენობა
+              <input type="number" id="p-quantity" min="0" step="1" value="0" />
+            </label>
+          </div>
+          <label>SKU (არასავალდებულო)
+            <input type="text" id="p-sku" placeholder="მაგ. BR-001" />
+          </label>
+          <label>აღწერა (არასავალდებულო)
+            <textarea id="p-description" rows="2" placeholder="მოკლე აღწერა"></textarea>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="p-active" checked /> აქტიური (ჩანს ბოტში)
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="product-submit">დამატება</button>
+            <button type="button" class="btn btn-ghost hidden" id="product-cancel">გაუქმება</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ბევრი პროდუქტის ატვირთვა (Excel/CSV) -->
+      <div class="card" id="import-card">
+        <h2>📄 ბევრი პროდუქტის ატვირთვა (Excel/CSV)</h2>
+        <p class="import-hint">
+          სვეტები: <b>სახელი</b>, <b>ფასი</b>, <b>მარაგი</b>, <b>დეტალები</b>.
+          <a href="sample-products.xlsx" download>Excel ნიმუში</a> ·
+          <a href="sample-products.csv" download>CSV ნიმუში</a>
+        </p>
+        <div class="import-row">
+          <input type="file" id="import-file" accept=".csv,.xlsx" />
+          <button id="import-btn" class="btn btn-primary">ატვირთვა</button>
+        </div>
+        <div id="import-result" class="import-result"></div>
+      </div>
+
+      <!-- პროდუქტების სია -->
+      <div class="card">
+        <div class="list-header">
+          <h2>პროდუქტები (<span id="product-count">0</span>)</h2>
+          <button id="refresh-btn" class="btn btn-ghost">↻ განახლება</button>
+        </div>
+        <div id="product-list" class="product-list"></div>
+        <p id="empty-state" class="empty-state hidden">პროდუქტები ჯერ არ გაქვს — დაამატე პირველი ზემოთ.</p>
+      </div>
+
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js?v=10"></script>
+</body>
+</html>
