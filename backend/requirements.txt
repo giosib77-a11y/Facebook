@@ -1,0 +1,12 @@
+# Python 3.14-თან თავსებადი floor-ები (მზა wheel-ები, compile არ სჭირდება).
+# ზუსტი resolved ვერსიები იხ. requirements.lock.txt (pip freeze-ით განახლებადი).
+fastapi>=0.115
+uvicorn[standard]>=0.34
+pydantic>=2.11
+pydantic-settings>=2.7
+supabase>=2.11
+python-dotenv>=1.0
+httpx>=0.28
+google-genai>=1.0
+openpyxl>=3.1
+python-multipart>=0.0.9
