@@ -101,7 +101,10 @@
   async function api(path, method, body) {
     const token = await getToken();
     if (!token) throw new Error("სესია არ არის — გთხოვ თავიდან შედი");
-    const opts = { method: method || "GET", headers: { Authorization: "Bearer " + token } };
+    const opts = {
+      method: method || "GET",
+      headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" },
+    };
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
@@ -374,7 +377,7 @@
     try {
       const res = await fetch(cfg.API_BASE + "/products/import", {
         method: "POST",
-        headers: { Authorization: "Bearer " + token }, // Content-Type-ს browser თვითონ აყენებს
+        headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" },
         body: fd,
       });
       const data = await res.json().catch(() => null);

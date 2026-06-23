@@ -1,6 +1,9 @@
 """FastAPI entrypoint."""
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import router as chat_router
 from app.api.facebook import router as facebook_router
@@ -38,3 +41,10 @@ app.include_router(facebook_router)
 @app.get("/")
 def root():
     return {"name": "shop-ai-bot", "version": "0.1.0", "env": settings.app_env}
+
+
+# გამყიდველის პანელის მომსახურება იმავე backend-იდან — ngrok-ით გასაზიარებლად.
+# პანელი ხელმისაწვდომია: <backend-url>/panel/
+_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+if _FRONTEND_DIR.exists():
+    app.mount("/panel", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="panel")
