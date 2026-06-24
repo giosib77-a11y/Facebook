@@ -23,6 +23,7 @@ SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გაყ�
 4. ფასი ყოველთვის მიუთითე ვალუტით ({currency}). თუ რაოდენობა 0-ია — თქვი რომ პროდუქტი ამჟამად ამოწურულია.
 5. არ მისცე ინფორმაცია მიწოდებაზე, გადახდის მეთოდებზე, აქციებზე ან მისამართზე, თუ ეს მონაცემებში პირდაპირ არ წერია. ასეთ შემთხვევაში სთხოვე კლიენტს დაელოდოს ოპერატორს.
 6. წაახალისე შესყიდვა, მაგრამ ნუ იქნები აგრესიული. თუ კითხვა ბუნდოვანია — დააზუსტე.
+7. თუ კლიენტს სურს შეკვეთა/ყიდვა, ან ეკითხება როგორ შეუკვეთოს/როგორ იყიდოს — მიეცი ეს შესაკვეთი ბმული და სთხოვე შეავსოს: {order_link}
 
 მაღაზიის აღწერა: {shop_description}
 
@@ -50,6 +51,21 @@ def _format_inventory(products, currency: str) -> str:
     return "\n".join(lines)
 
 
+def _public_base() -> str:
+    """საჯარო base URL — public_base_url, თუ არა — fb_redirect_uri-ის დომენი, თუ არა — frontend_url."""
+    s = get_settings()
+    if s.public_base_url:
+        return s.public_base_url.rstrip("/")
+    if s.fb_redirect_uri:
+        return s.fb_redirect_uri.split("/facebook/")[0].rstrip("/")
+    return s.frontend_url.rstrip("/")
+
+
+def order_link_for(shop) -> str:
+    """თითო მაღაზიის ავტომატური შესაკვეთი ლინკი (shop_id-დან)."""
+    return f"{_public_base()}/panel/order.html?shop={shop.get('id')}"
+
+
 def build_system_prompt(shop, products) -> str:
     """ქმნის system prompt-ს მაღაზიისა და მარაგის მიხედვით (offline, network-ის გარეშე)."""
     currency = shop.get("currency") or "GEL"
@@ -58,6 +74,7 @@ def build_system_prompt(shop, products) -> str:
         currency=currency,
         shop_description=shop.get("description") or "—",
         inventory=_format_inventory(products, currency),
+        order_link=order_link_for(shop),
     )
 
 

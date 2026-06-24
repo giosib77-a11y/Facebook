@@ -116,6 +116,10 @@ page token ინახება **დაშიფრულად** (Fernet, `FB
 | GET | `/orders` | გამყიდველი — მისი შეკვეთები (auth, RLS) |
 | PATCH | `/orders/{id}` | სტატ უსის შეცვლა (new/processing/done/cancelled) |
 
+ბოტი ავტომატურად აძლევს კლიენტს მაღაზიის შესაკვეთ ლინკს, როცა ის შეკვეთას ჰკითხ ავს
+(ლინკი თითო მაღაზიისთვის `shop_id`-დან იგება — იხ. `order_link_for` bot.py-ში; base URL:
+`PUBLIC_BASE_URL` ან `FB_REDIRECT_URI`-ის დომენი).
+
 შესაკვეთი ფორმა: [frontend/order.html](frontend/order.html) — გაიხ სნება ლინკით
 `order.html?shop=<shop_id>`. SQL: [supabase/migrations/0002_orders.sql](supabase/migrations/0002_orders.sql).
 შეკვეთის ჩაწერა service_role-ით ხდება (კლიენტი ავტორიზებული არ არის); გამყიდველი

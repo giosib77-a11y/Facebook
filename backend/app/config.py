@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5500"
     fb_token_encryption_key: str = ""      # Fernet key page token-ის დასაშიფრად
 
+    # საჯარო base URL (პანელი/ფორმა აქედან იხ სნება). ცარიელია → fb_redirect_uri-დან გამოითვლება.
+    public_base_url: str = ""
+
     model_config = SettingsConfigDict(
         env_file=(_ROOT_ENV, _BACKEND_ENV),
         env_file_encoding="utf-8",
