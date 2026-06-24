@@ -211,14 +211,129 @@
     }
     updateProductFormState();
     updateFbSection();
+    updateOrderLink();
     await loadProducts();
+    await loadOrders();
   }
 
   $("shop-select").addEventListener("change", async (e) => {
     currentShopId = e.target.value || null;
     updateFbSection();
+    updateOrderLink();
     await loadProducts();
+    await loadOrders();
   });
+
+  // ---------- შესაკვეთი ლინკი + შეკვეთები ----------
+  function updateOrderLink() {
+    const input = $("order-link");
+    if (!input) return;
+    if (!currentShopId) {
+      input.value = "";
+      return;
+    }
+    // order.html იმავე საქაღალდეშია, სადაც index.html
+    const dir = location.pathname.replace(/[^/]*$/, "");
+    const link = location.origin + dir + "order.html?shop=" + currentShopId;
+    input.value = link;
+    const open = $("open-link");
+    if (open) open.href = link;
+  }
+
+  on("copy-link-btn", "click", async () => {
+    const v = $("order-link").value;
+    if (!v) return;
+    try {
+      await navigator.clipboard.writeText(v);
+      toast("ლინკი დაკოპირდა");
+    } catch (e) {
+      $("order-link").select();
+      toast("მონიშნულია — დააკოპირე Ctrl+C-ით");
+    }
+  });
+
+  on("orders-refresh-btn", "click", loadOrders);
+  on("order-filter", "change", loadOrders);
+
+  const ORDER_STATUS_LABELS = {
+    new: "ახ ალი",
+    processing: "მუშავდება",
+    done: "დასრულებული",
+    cancelled: "გაუქმებული",
+  };
+
+  async function loadOrders() {
+    const list = $("order-list");
+    if (!list) return;
+    if (!currentShopId) {
+      list.innerHTML = "";
+      $("order-count").textContent = "0";
+      return;
+    }
+    const filter = ($("order-filter") || {}).value || "";
+    let path = "/orders";
+    if (filter) path += "?status=" + encodeURIComponent(filter);
+    let orders;
+    try {
+      orders = await api(path);
+    } catch (err) {
+      toast("შეკვეთები ვერ ჩაიტვირთა: " + err.message, true);
+      return;
+    }
+    $("order-count").textContent = orders.length;
+    list.innerHTML = "";
+    $("orders-empty").classList.toggle("hidden", orders.length > 0);
+    orders.forEach((o) => list.appendChild(orderRow(o)));
+  }
+
+  function orderRow(o) {
+    const row = document.createElement("div");
+    row.className = "product-item";
+    row.style.flexDirection = "column";
+    row.style.alignItems = "stretch";
+
+    const itemsText = (o.items || [])
+      .map((i) => escapeHtml(i.name) + " ×" + i.quantity)
+      .join(", ");
+    const when = new Date(o.created_at).toLocaleString("ka-GE");
+
+    const info = document.createElement("div");
+    info.className = "product-info";
+    info.innerHTML =
+      '<div class="product-name">' + escapeHtml(o.customer_name) +
+      " · " + Number(o.total).toFixed(2) + " ₾</div>" +
+      '<div class="product-meta">' + itemsText + "</div>" +
+      '<div class="product-meta">📞 ' + escapeHtml(o.customer_phone || "—") +
+      " · 📍 " + escapeHtml(o.customer_address || "—") + "</div>" +
+      (o.note ? '<div class="product-meta">📝 ' + escapeHtml(o.note) + "</div>" : "") +
+      '<div class="product-meta" style="color:#9ca3af">' + escapeHtml(when) + "</div>";
+
+    const actions = document.createElement("div");
+    actions.className = "product-actions";
+    actions.style.marginTop = "8px";
+    const sel = document.createElement("select");
+    ["new", "processing", "done", "cancelled"].forEach((st) => {
+      const opt = document.createElement("option");
+      opt.value = st;
+      opt.textContent = ORDER_STATUS_LABELS[st];
+      if (o.status === st) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", async () => {
+      try {
+        await api("/orders/" + o.id, "PATCH", { status: sel.value });
+        toast("სტატ უსი განახ ლდა");
+      } catch (err) {
+        toast(err.message, true);
+        loadOrders();
+      }
+    });
+    actions.appendChild(sel);
+
+    row.appendChild(info);
+    row.appendChild(actions);
+    return row;
+  }
 
   // ---------- Facebook გვერდის დაკავშირება ----------
   function currentShop() {

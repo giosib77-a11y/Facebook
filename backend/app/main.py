@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.chat import router as chat_router
 from app.api.facebook import router as facebook_router
 from app.api.health import router as health_router
+from app.api.orders import router as orders_router
 from app.api.products import router as products_router
 from app.api.shops import router as shops_router
 from app.api.webhook import router as webhook_router
@@ -36,6 +37,7 @@ app.include_router(products_router)
 app.include_router(chat_router)
 app.include_router(webhook_router)
 app.include_router(facebook_router)
+app.include_router(orders_router)
 
 
 @app.get("/")
@@ -45,6 +47,15 @@ def root():
 
 # გამყიდველის პანელის მომსახურება იმავე backend-იდან — ngrok-ით გასაზიარებლად.
 # პანელი ხელმისაწვდომია: <backend-url>/panel/
+class _NoCacheStatic(StaticFiles):
+    """ბრაუზერმა პანელის ფაილები რომ არ დააქეშოს (ცვლილებები მაშინვე ჩანდეს)."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return resp
+
+
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 if _FRONTEND_DIR.exists():
-    app.mount("/panel", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="panel")
+    app.mount("/panel", _NoCacheStatic(directory=str(_FRONTEND_DIR), html=True), name="panel")

@@ -38,6 +38,7 @@ Multi-tenant SaaS პლატფორმა: ქართველი გა�
 - [x] **ნაბიჯი 4** — ბოტის ფუნქცია `get_bot_reply` (Gemini, ქართულად, მხოლოდ მარაგით) + `POST /test-chat`
 - [x] **ნაბიჯი 5** — Facebook Messenger ინტეგრაცია (webhook, Send API, გვერდის OAuth დაკავშირება)
 - [x] **ნაბიჯი 6** — Excel/CSV bulk import (`POST /products/import` + ღილაკი პანელში)
+- [x] **ნაბიჯი 7** — შეკვეთები: საჯარო შესაკვეთი ფორმა + `orders` ცხ რილი + პანელში „შეკვეთები"
 
 ## ლოკალური გაშვება (backend)
 
@@ -105,6 +106,20 @@ DB-ოპერაციები სრულდება მომხმარ
 
 page token ინახება **დაშიფრულად** (Fernet, `FB_TOKEN_ENCRYPTION_KEY`). webhook ამოწმებs
 ხელმოწერას app secret-ით. იხ. ქვემოთ „Meta App setup + ngrok".
+
+### შეკვეთები (ნაბიჯი 7)
+
+| Method | Path | აღწერა |
+|---|---|---|
+| GET | `/public-menu?shop_id=` | საჯარო: მაღაზია + აქტიური პროდუქტები (ფორმისთვის) |
+| POST | `/orders` | საჯარო: კლიენტი ქმნის შეკვეთას |
+| GET | `/orders` | გამყიდველი — მისი შეკვეთები (auth, RLS) |
+| PATCH | `/orders/{id}` | სტატ უსის შეცვლა (new/processing/done/cancelled) |
+
+შესაკვეთი ფორმა: [frontend/order.html](frontend/order.html) — გაიხ სნება ლინკით
+`order.html?shop=<shop_id>`. SQL: [supabase/migrations/0002_orders.sql](supabase/migrations/0002_orders.sql).
+შეკვეთის ჩაწერა service_role-ით ხდება (კლიენტი ავტორიზებული არ არის); გამყიდველი
+შეკვეთებს RLS-ით ხედავს. ფორმის ლინკი Facebook გვერდის „Shop Now" ღილაკში მაგრდება.
 
 ინტერაქტიული დოკუმენტაცია: http://localhost:8000/docs
 

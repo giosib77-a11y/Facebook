@@ -135,11 +135,41 @@
         <p id="empty-state" class="empty-state hidden">პროდუქტები ჯერ არ გაქვს — დაამატე პირველი ზემოთ.</p>
       </div>
 
+      <!-- შესაკვეთი ლინკი (გასაზიარებლად) -->
+      <div class="card" id="order-link-card">
+        <h2 style="margin-top:0">🔗 შესაკვეთი ლინკი</h2>
+        <p class="import-hint">გაუგზავნე კლიენტებს ან დაამაგრე Facebook გვერდის ღილაკში. კლიენტი შეავსებს და შეკვეთა აქ გამოჩნდება.</p>
+        <div class="import-row">
+          <input type="text" id="order-link" readonly />
+          <button id="copy-link-btn" class="btn btn-ghost">კოპირება</button>
+          <a id="open-link" href="#" target="_blank" class="btn btn-ghost">გახ სნა</a>
+        </div>
+      </div>
+
+      <!-- შეკვეთები -->
+      <div class="card">
+        <div class="list-header">
+          <h2>შეკვეთები (<span id="order-count">0</span>)</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="order-filter">
+              <option value="">ყველა</option>
+              <option value="new">ახ ალი</option>
+              <option value="processing">მუშავდება</option>
+              <option value="done">დასრულებული</option>
+              <option value="cancelled">გაუქმებული</option>
+            </select>
+            <button id="orders-refresh-btn" class="btn btn-ghost">↻</button>
+          </div>
+        </div>
+        <div id="order-list" class="product-list"></div>
+        <p id="orders-empty" class="empty-state hidden">შეკვეთები ჯერ არ არის.</p>
+      </div>
+
     </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>
