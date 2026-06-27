@@ -225,8 +225,7 @@
     updateFbSection();
     updateOrderLink();
     updateKnowledgeStatus();
-    await loadProducts();
-    await loadOrders();
+    await Promise.all([loadProducts(), loadOrders()]);
   }
 
   $("shop-select").addEventListener("change", async (e) => {
@@ -234,8 +233,7 @@
     updateFbSection();
     updateOrderLink();
     updateKnowledgeStatus();
-    await loadProducts();
-    await loadOrders();
+    await Promise.all([loadProducts(), loadOrders()]);
   });
 
   // ---------- შესაკვეთი ლინკი + შეკვეთები ----------
