@@ -95,6 +95,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); b
 .inline-form { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .inline-form input { flex: 1; min-width: 160px; }
 
+/* Dashboard tabs */
+.tabs-nav { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.tab-btn {
+  flex: 1; min-width: 100px; padding: 12px 10px; font: inherit; font-weight: 600;
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  border-radius: 10px; cursor: pointer;
+}
+.tab-btn:hover { background: var(--bg); }
+.tab-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
 /* Import (Excel/CSV) */
 .import-hint { font-size: 0.85rem; color: var(--muted); margin: 0 0 10px; }
 .import-hint a { color: var(--primary); }

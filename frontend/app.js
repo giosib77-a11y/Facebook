@@ -63,6 +63,18 @@
   const appView = $("app-view");
   const header = $("header");
 
+  // dashboard ჩანართები (პროდუქტები / შეკვეთები / ბოტი)
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.dataset.tab;
+      document.querySelectorAll(".tab-panel").forEach((p) => {
+        p.classList.toggle("hidden", p.dataset.panel !== tab);
+      });
+    });
+  });
+
   // ---------- helpers ----------
   function toast(msg, isError) {
     const t = $("toast");

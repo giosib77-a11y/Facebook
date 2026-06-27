@@ -54,7 +54,7 @@
     <!-- ====== DASHBOARD ====== -->
     <section id="app-view" class="hidden">
 
-      <!-- მაღაზიის არჩევა / შექმნა -->
+      <!-- მაღაზიის არჩევა / შექმნა (ყოველთვის ჩანს) -->
       <div class="card">
         <div class="shop-bar">
           <label class="shop-select-wrap">მაღაზია
@@ -67,118 +67,144 @@
           <button type="submit" class="btn btn-primary">შექმნა</button>
           <button type="button" id="shop-cancel" class="btn btn-ghost">გაუქმება</button>
         </form>
+      </div>
+
+      <!-- ჩანართები -->
+      <div class="tabs-nav">
+        <button class="tab-btn active" data-tab="products">🛒 პროდუქტები</button>
+        <button class="tab-btn" data-tab="orders">📋 შეკვეთები</button>
+        <button class="tab-btn" data-tab="bot">🤖 ბოტი &amp; Facebook</button>
+      </div>
+
+      <!-- ===== ჩანართი: პროდუქტები ===== -->
+      <div class="tab-panel" data-panel="products">
+
+        <!-- პროდუქტის ფორმა (დამატება/რედაქტირება) -->
+        <div class="card" id="product-form-card">
+          <h2 id="product-form-title">ახალი პროდუქტი</h2>
+          <form id="product-form" class="product-form">
+            <input type="hidden" id="product-id" />
+            <label>დასახელება *
+              <input type="text" id="p-name" required placeholder="მაგ. პური" />
+            </label>
+            <div class="row-2">
+              <label>ფასი (₾)
+                <input type="number" id="p-price" min="0" step="0.01" value="0" />
+              </label>
+              <label>რაოდენობა
+                <input type="number" id="p-quantity" min="0" step="1" value="0" />
+              </label>
+            </div>
+            <label>SKU (არასავალდებულო)
+              <input type="text" id="p-sku" placeholder="მაგ. BR-001" />
+            </label>
+            <label>აღწერა (არასავალდებულო)
+              <textarea id="p-description" rows="2" placeholder="მოკლე აღწერა"></textarea>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="p-active" checked /> აქტიური (ჩანს ბოტში)
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="product-submit">დამატება</button>
+              <button type="button" class="btn btn-ghost hidden" id="product-cancel">გაუქმება</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- პროდუქტების სია -->
+        <div class="card">
+          <div class="list-header">
+            <h2>პროდუქტები (<span id="product-count">0</span>)</h2>
+            <button id="refresh-btn" class="btn btn-ghost">↻ განახლება</button>
+          </div>
+          <div id="product-list" class="product-list"></div>
+          <p id="empty-state" class="empty-state hidden">პროდუქტები ჯერ არ გაქვს — დაამატე პირველი ზემოთ.</p>
+        </div>
+
+        <!-- ბევრი პროდუქტის ატვირთვა (Excel/CSV) -->
+        <div class="card" id="import-card">
+          <h2>📄 ბევრი პროდუქტის ატვირთვა (Excel/CSV)</h2>
+          <p class="import-hint">
+            სვეტები: <b>სახელი</b>, <b>ფასი</b>, <b>მარაგი</b>, <b>დეტალები</b>.
+            <a href="sample-products.xlsx" download>Excel ნიმუში</a> ·
+            <a href="sample-products.csv" download>CSV ნიმუში</a>
+          </p>
+          <div class="import-row">
+            <input type="file" id="import-file" accept=".csv,.xlsx" />
+            <button id="import-btn" class="btn btn-primary">ატვირთვა</button>
+          </div>
+          <div id="import-result" class="import-result"></div>
+        </div>
+
+      </div>
+
+      <!-- ===== ჩანართი: შეკვეთები ===== -->
+      <div class="tab-panel hidden" data-panel="orders">
+
+        <!-- შესაკვეთი ლინკი (გასაზიარებლად) -->
+        <div class="card" id="order-link-card">
+          <h2 style="margin-top:0">🔗 შესაკვეთი ლინკი</h2>
+          <p class="import-hint">გაუგზავნე კლიენტებს ან დაამაგრე Facebook გვერდის ღილაკში. კლიენტი შეავსებს და შეკვეთა აქ გამოჩნდება.</p>
+          <div class="import-row">
+            <input type="text" id="order-link" readonly />
+            <button id="copy-link-btn" class="btn btn-ghost">კოპირება</button>
+            <a id="open-link" href="#" target="_blank" class="btn btn-ghost">გახ სნა</a>
+          </div>
+        </div>
+
+        <!-- შეკვეთები -->
+        <div class="card">
+          <div class="list-header">
+            <h2>შეკვეთები (<span id="order-count">0</span>)</h2>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="order-filter">
+                <option value="">ყველა</option>
+                <option value="new">ახ ალი</option>
+                <option value="processing">მუშავდება</option>
+                <option value="done">დასრულებული</option>
+                <option value="cancelled">გაუქმებული</option>
+              </select>
+              <button id="orders-refresh-btn" class="btn btn-ghost">↻</button>
+            </div>
+          </div>
+          <div id="order-list" class="product-list"></div>
+          <p id="orders-empty" class="empty-state hidden">შეკვეთები ჯერ არ არის.</p>
+        </div>
+
+      </div>
+
+      <!-- ===== ჩანართი: ბოტი & Facebook ===== -->
+      <div class="tab-panel hidden" data-panel="bot">
 
         <!-- Facebook გვერდის დაკავშირება -->
-        <div id="fb-section" class="fb-section hidden">
-          <div id="fb-status" class="fb-status"></div>
-          <div class="fb-actions">
-            <button id="fb-connect-btn" class="btn btn-primary">🔵 Facebook გვერდის დაკავშირება</button>
-            <button id="fb-disconnect-btn" class="btn btn-danger hidden">გათიშვა</button>
+        <div class="card">
+          <h2 style="margin-top:0">🔵 Facebook გვერდი</h2>
+          <p class="import-hint">დააკავშირე შენი Facebook გვერდი — ბოტი Messenger-ში კლიენტებს უპასუხებს მაღაზიის მარაგით.</p>
+          <div id="fb-section" class="fb-section">
+            <div id="fb-status" class="fb-status"></div>
+            <div class="fb-actions">
+              <button id="fb-connect-btn" class="btn btn-primary">🔵 Facebook გვერდის დაკავშირება</button>
+              <button id="fb-disconnect-btn" class="btn btn-danger hidden">გათიშვა</button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- პროდუქტის ფორმა (დამატება/რედაქტირება) -->
-      <div class="card" id="product-form-card">
-        <h2 id="product-form-title">ახალი პროდუქტი</h2>
-        <form id="product-form" class="product-form">
-          <input type="hidden" id="product-id" />
-          <label>დასახელება *
-            <input type="text" id="p-name" required placeholder="მაგ. პური" />
-          </label>
-          <div class="row-2">
-            <label>ფასი (₾)
-              <input type="number" id="p-price" min="0" step="0.01" value="0" />
-            </label>
-            <label>რაოდენობა
-              <input type="number" id="p-quantity" min="0" step="1" value="0" />
-            </label>
+        <!-- ბოტის ცოდნა (PDF) -->
+        <div class="card" id="knowledge-card">
+          <h2>📚 ბოტის ცოდნა (PDF)</h2>
+          <p class="import-hint">
+            ატვირთე PDF (მიწოდების პირობები, გარანტია, ხ შირი კითხ ვები...) — ბოტი ამ ინფორმაციას
+            გამოიყენებს კლიენტებთან პასუხ ისას. მხ ოლოდ ტექსტური PDF (არა დასკანერებული/ფოტო).
+          </p>
+          <div id="knowledge-status" class="import-hint"></div>
+          <div class="import-row">
+            <input type="file" id="knowledge-file" accept=".pdf,application/pdf" />
+            <button id="knowledge-upload-btn" class="btn btn-primary">ატვირთვა</button>
+            <button id="knowledge-clear-btn" class="btn btn-danger hidden">წაშლა</button>
           </div>
-          <label>SKU (არასავალდებულო)
-            <input type="text" id="p-sku" placeholder="მაგ. BR-001" />
-          </label>
-          <label>აღწერა (არასავალდებულო)
-            <textarea id="p-description" rows="2" placeholder="მოკლე აღწერა"></textarea>
-          </label>
-          <label class="checkbox-label">
-            <input type="checkbox" id="p-active" checked /> აქტიური (ჩანს ბოტში)
-          </label>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" id="product-submit">დამატება</button>
-            <button type="button" class="btn btn-ghost hidden" id="product-cancel">გაუქმება</button>
-          </div>
-        </form>
-      </div>
-
-      <!-- ბევრი პროდუქტის ატვირთვა (Excel/CSV) -->
-      <div class="card" id="import-card">
-        <h2>📄 ბევრი პროდუქტის ატვირთვა (Excel/CSV)</h2>
-        <p class="import-hint">
-          სვეტები: <b>სახელი</b>, <b>ფასი</b>, <b>მარაგი</b>, <b>დეტალები</b>.
-          <a href="sample-products.xlsx" download>Excel ნიმუში</a> ·
-          <a href="sample-products.csv" download>CSV ნიმუში</a>
-        </p>
-        <div class="import-row">
-          <input type="file" id="import-file" accept=".csv,.xlsx" />
-          <button id="import-btn" class="btn btn-primary">ატვირთვა</button>
+          <div id="knowledge-result" class="import-result"></div>
         </div>
-        <div id="import-result" class="import-result"></div>
-      </div>
 
-      <!-- ბოტის ცოდნა (PDF) -->
-      <div class="card" id="knowledge-card">
-        <h2>📚 ბოტის ცოდნა (PDF)</h2>
-        <p class="import-hint">
-          ატვირთე PDF (მიწოდების პირობები, გარანტია, ხ შირი კითხ ვები...) — ბოტი ამ ინფორმაციას
-          გამოიყენებს კლიენტებთან პასუხ ისას. მხ ოლოდ ტექსტური PDF (არა დასკანერებული/ფოტო).
-        </p>
-        <div id="knowledge-status" class="import-hint"></div>
-        <div class="import-row">
-          <input type="file" id="knowledge-file" accept=".pdf,application/pdf" />
-          <button id="knowledge-upload-btn" class="btn btn-primary">ატვირთვა</button>
-          <button id="knowledge-clear-btn" class="btn btn-danger hidden">წაშლა</button>
-        </div>
-        <div id="knowledge-result" class="import-result"></div>
-      </div>
-
-      <!-- პროდუქტების სია -->
-      <div class="card">
-        <div class="list-header">
-          <h2>პროდუქტები (<span id="product-count">0</span>)</h2>
-          <button id="refresh-btn" class="btn btn-ghost">↻ განახლება</button>
-        </div>
-        <div id="product-list" class="product-list"></div>
-        <p id="empty-state" class="empty-state hidden">პროდუქტები ჯერ არ გაქვს — დაამატე პირველი ზემოთ.</p>
-      </div>
-
-      <!-- შესაკვეთი ლინკი (გასაზიარებლად) -->
-      <div class="card" id="order-link-card">
-        <h2 style="margin-top:0">🔗 შესაკვეთი ლინკი</h2>
-        <p class="import-hint">გაუგზავნე კლიენტებს ან დაამაგრე Facebook გვერდის ღილაკში. კლიენტი შეავსებს და შეკვეთა აქ გამოჩნდება.</p>
-        <div class="import-row">
-          <input type="text" id="order-link" readonly />
-          <button id="copy-link-btn" class="btn btn-ghost">კოპირება</button>
-          <a id="open-link" href="#" target="_blank" class="btn btn-ghost">გახ სნა</a>
-        </div>
-      </div>
-
-      <!-- შეკვეთები -->
-      <div class="card">
-        <div class="list-header">
-          <h2>შეკვეთები (<span id="order-count">0</span>)</h2>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="order-filter">
-              <option value="">ყველა</option>
-              <option value="new">ახ ალი</option>
-              <option value="processing">მუშავდება</option>
-              <option value="done">დასრულებული</option>
-              <option value="cancelled">გაუქმებული</option>
-            </select>
-            <button id="orders-refresh-btn" class="btn btn-ghost">↻</button>
-          </div>
-        </div>
-        <div id="order-list" class="product-list"></div>
-        <p id="orders-empty" class="empty-state hidden">შეკვეთები ჯერ არ არის.</p>
       </div>
 
     </section>
@@ -186,6 +212,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>
