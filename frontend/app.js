@@ -595,20 +595,47 @@
     }
   });
 
+  let allProducts = []; // ჩატვირთული პროდუქტები (ძებნისთვის)
+
   async function loadProducts() {
     const list = $("product-list");
     if (!currentShopId) {
+      allProducts = [];
       list.innerHTML = "";
       $("product-count").textContent = "0";
       $("empty-state").classList.add("hidden");
       return;
     }
-    const products = await api("/products?shop_id=" + encodeURIComponent(currentShopId));
-    $("product-count").textContent = products.length;
-    list.innerHTML = "";
-    $("empty-state").classList.toggle("hidden", products.length > 0);
-    products.forEach((p) => list.appendChild(productRow(p)));
+    allProducts = await api("/products?shop_id=" + encodeURIComponent(currentShopId));
+    $("product-count").textContent = allProducts.length;
+    renderProductList();
   }
+
+  function renderProductList() {
+    const list = $("product-list");
+    const q = (($("product-search") || {}).value || "").trim().toLowerCase();
+    const shown = q
+      ? allProducts.filter(
+          (p) =>
+            (p.name || "").toLowerCase().includes(q) ||
+            (p.sku || "").toLowerCase().includes(q)
+        )
+      : allProducts;
+    list.innerHTML = "";
+    shown.forEach((p) => list.appendChild(productRow(p)));
+    const empty = $("empty-state");
+    if (!allProducts.length) {
+      empty.textContent = "პროდუქტები ჯერ არ გაქვს — დაამატე პირველი ზემოთ.";
+      empty.classList.remove("hidden");
+    } else if (!shown.length) {
+      empty.textContent = "„" + q + "“ — ვერაფერი მოიძებნა.";
+      empty.classList.remove("hidden");
+    } else {
+      empty.classList.add("hidden");
+    }
+  }
+
+  on("product-search", "input", renderProductList);
 
   function productRow(p) {
     const row = document.createElement("div");
