@@ -18,8 +18,10 @@
     <form id="order-form">
       <div class="card">
         <h2 style="margin-top:0">პროდუქტები</h2>
+        <input type="search" id="product-search" placeholder="🔍 ძებნა — პროდუქტის სახელი" style="margin-bottom:12px" />
         <div id="product-list" class="product-list"></div>
         <p id="empty-products" class="empty-state hidden">ამ მაღაზიას ამჟ ამად პროდუქტი არ აქვს.</p>
+        <p id="no-match" class="empty-state hidden">ვერაფერი მოიძებნა.</p>
       </div>
 
       <div class="card">
@@ -55,6 +57,6 @@
   </main>
 
   <script src="config.js"></script>
-  <script src="order.js"></script>
+  <script src="order.js?v=2"></script>
 </body>
 </html>

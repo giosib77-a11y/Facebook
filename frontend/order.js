@@ -43,6 +43,7 @@
     products.forEach(function (p) {
       var row = document.createElement("div");
       row.className = "product-item";
+      row.dataset.search = (p.name + " " + (p.description || "")).toLowerCase();
       row.innerHTML =
         '<div class="product-info"><div class="product-name">' + esc(p.name) + "</div>" +
         '<div class="product-meta">' + Number(p.price).toFixed(2) + " " + currency +
@@ -55,6 +56,23 @@
       row.appendChild(qtyWrap);
       list.appendChild(row);
       qtyWrap.querySelector("input").addEventListener("input", recalcTotal);
+    });
+  }
+
+  // ძებნა — ვმალავთ/ვაჩვენებთ მწკრივებს (რაოდენობა არ იკარგება)
+  var searchEl = $("product-search");
+  if (searchEl) {
+    searchEl.addEventListener("input", function () {
+      var q = this.value.trim().toLowerCase();
+      var rows = document.querySelectorAll("#product-list .product-item");
+      var visible = 0;
+      rows.forEach(function (row) {
+        var match = !q || (row.dataset.search || "").indexOf(q) >= 0;
+        row.style.display = match ? "" : "none";
+        if (match) visible++;
+      });
+      var noMatch = $("no-match");
+      if (noMatch) noMatch.classList.toggle("hidden", !(rows.length && visible === 0));
     });
   }
 
