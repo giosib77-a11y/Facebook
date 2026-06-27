@@ -125,6 +125,22 @@
         <div id="import-result" class="import-result"></div>
       </div>
 
+      <!-- ბოტის ცოდნა (PDF) -->
+      <div class="card" id="knowledge-card">
+        <h2>📚 ბოტის ცოდნა (PDF)</h2>
+        <p class="import-hint">
+          ატვირთე PDF (მიწოდების პირობები, გარანტია, ხ შირი კითხ ვები...) — ბოტი ამ ინფორმაციას
+          გამოიყენებს კლიენტებთან პასუხ ისას. მხ ოლოდ ტექსტური PDF (არა დასკანერებული/ფოტო).
+        </p>
+        <div id="knowledge-status" class="import-hint"></div>
+        <div class="import-row">
+          <input type="file" id="knowledge-file" accept=".pdf,application/pdf" />
+          <button id="knowledge-upload-btn" class="btn btn-primary">ატვირთვა</button>
+          <button id="knowledge-clear-btn" class="btn btn-danger hidden">წაშლა</button>
+        </div>
+        <div id="knowledge-result" class="import-result"></div>
+      </div>
+
       <!-- პროდუქტების სია -->
       <div class="card">
         <div class="list-header">
@@ -170,6 +186,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

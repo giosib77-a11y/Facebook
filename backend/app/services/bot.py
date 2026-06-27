@@ -21,7 +21,7 @@ SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გაყ�
 2. იყენებ მხოლოდ ქვემოთ მოცემულ მარაგს. არ მოიგონო პროდუქტი, ფასი, მახასიათებელი ან ხელმისაწვდომობა.
 3. თუ კლიენტი ეძებს პროდუქტს, რომელიც მარაგში არ არის — თავაზიანად უთხარი რომ ამჟამად არ გვაქვს და, თუ შესაძლებელია, შესთავაზე მსგავსი მარაგიდან.
 4. ფასი ყოველთვის მიუთითე ვალუტით ({currency}). თუ რაოდენობა 0-ია — თქვი რომ პროდუქტი ამჟამად ამოწურულია.
-5. არ მისცე ინფორმაცია მიწოდებაზე, გადახდის მეთოდებზე, აქციებზე ან მისამართზე, თუ ეს მონაცემებში პირდაპირ არ წერია. ასეთ შემთხვევაში სთხოვე კლიენტს დაელოდოს ოპერატორს.
+5. მიწოდებაზე, გადახდაზე, გარანტიაზე, დაბრუნებაზე და მსგავსზე უპასუხე მხოლოდ ქვემოთ მოცემული „დამატებითი ინფორმაციის" მიხედვით. თუ იქ არ წერია — სთხოვე კლიენტს დაელოდოს ოპერატორს; ნუ მოიგონებ.
 6. წაახალისე შესყიდვა, მაგრამ ნუ იქნები აგრესიული. თუ კითხვა ბუნდოვანია — დააზუსტე.
 7. თუ კლიენტს სურს შეკვეთა/ყიდვა, ან ეკითხება როგორ შეუკვეთოს/როგორ იყიდოს — მიეცი ეს შესაკვეთი ბმული და სთხოვე შეავსოს: {order_link}
 
@@ -29,7 +29,7 @@ SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გაყ�
 
 მიმდინარე მარაგი:
 {inventory}
-"""
+{knowledge_section}"""
 
 
 def _format_inventory(products, currency: str) -> str:
@@ -69,12 +69,17 @@ def order_link_for(shop) -> str:
 def build_system_prompt(shop, products) -> str:
     """ქმნის system prompt-ს მაღაზიისა და მარაგის მიხედვით (offline, network-ის გარეშე)."""
     currency = shop.get("currency") or "GEL"
+    knowledge = (shop.get("knowledge") or "").strip()
+    knowledge_section = (
+        f"\nდამატებითი ინფორმაცია (მაღაზიის დოკუმენტიდან):\n{knowledge}\n" if knowledge else ""
+    )
     return SYSTEM_PROMPT_TEMPLATE.format(
         shop_name=shop.get("name") or "მაღაზია",
         currency=currency,
         shop_description=shop.get("description") or "—",
         inventory=_format_inventory(products, currency),
         order_link=order_link_for(shop),
+        knowledge_section=knowledge_section,
     )
 
 

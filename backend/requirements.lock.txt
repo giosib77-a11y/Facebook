@@ -7,10 +7,12 @@ charset-normalizer==3.4.7
 click==8.4.1
 colorama==0.4.6
 cryptography==49.0.0
+defusedxml==0.7.1
 deprecation==2.1.0
 distro==1.9.0
 et_xmlfile==2.0.0
 fastapi==0.138.0
+fonttools==4.63.0
 google-auth==2.55.0
 google-genai==2.9.0
 h11==0.16.0
@@ -24,6 +26,7 @@ idna==3.18
 multidict==6.7.1
 openpyxl==3.1.5
 packaging==26.2
+pillow==12.2.0
 postgrest==2.31.0
 propcache==0.5.2
 pyasn1==0.6.3
@@ -33,6 +36,7 @@ pydantic==2.13.4
 pydantic-settings==2.14.2
 pydantic_core==2.46.4
 PyJWT==2.13.0
+pypdf==6.14.2
 python-dotenv==1.2.2
 python-multipart==0.0.32
 PyYAML==6.0.3

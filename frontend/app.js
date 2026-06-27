@@ -212,6 +212,7 @@
     updateProductFormState();
     updateFbSection();
     updateOrderLink();
+    updateKnowledgeStatus();
     await loadProducts();
     await loadOrders();
   }
@@ -220,6 +221,7 @@
     currentShopId = e.target.value || null;
     updateFbSection();
     updateOrderLink();
+    updateKnowledgeStatus();
     await loadProducts();
     await loadOrders();
   });
@@ -416,6 +418,68 @@
     // URL-ის გასუფთავება
     window.history.replaceState({}, "", window.location.pathname);
   }
+
+  // ---------- ბოტის ცოდნა (PDF) ----------
+  function updateKnowledgeStatus() {
+    const box = $("knowledge-status");
+    if (!box) return;
+    const shop = currentShop();
+    const clearBtn = $("knowledge-clear-btn");
+    if (shop && shop.knowledge_filename) {
+      box.innerHTML = '<span class="fb-connected">📄 ატვირთულია: ' + escapeHtml(shop.knowledge_filename) + "</span>";
+      if (clearBtn) clearBtn.classList.remove("hidden");
+    } else {
+      box.innerHTML = '<span class="fb-disconnected">დოკუმენტი ჯერ არ არის ატვირთული.</span>';
+      if (clearBtn) clearBtn.classList.add("hidden");
+    }
+  }
+
+  on("knowledge-upload-btn", "click", async () => {
+    if (!currentShopId) return toast("ჯერ აირჩიე მაღაზია", true);
+    const fileInput = $("knowledge-file");
+    const resultBox = $("knowledge-result");
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return toast("ჯერ აირჩიე PDF ფაილი", true);
+
+    resultBox.className = "import-result";
+    resultBox.textContent = "მუშავდება...";
+    const token = await getToken();
+    if (!token) { resultBox.textContent = "სესია არ არის — თავიდან შედი"; return; }
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch(cfg.API_BASE + "/shops/" + currentShopId + "/knowledge", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" },
+        body: fd,
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        resultBox.className = "import-result import-ok";
+        resultBox.textContent = "✅ PDF ჩაიტვირთა — ბოტი ახ ლა ამ ინფოს გამოიყენებს";
+        fileInput.value = "";
+        await loadShops(currentShopId);
+      } else {
+        const msg = data && data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : "შეცდომა (HTTP " + res.status + ")";
+        resultBox.className = "import-result import-err";
+        resultBox.textContent = "⚠️ " + msg;
+      }
+    } catch (err) {
+      resultBox.className = "import-result import-err";
+      resultBox.textContent = "⚠️ ატვირთვა ვერ მოხერხდა: " + err.message;
+    }
+  });
+
+  on("knowledge-clear-btn", "click", async () => {
+    if (!currentShopId || !confirm("წავშალო ატვირთული PDF-ცოდნა?")) return;
+    try {
+      await api("/shops/" + currentShopId + "/knowledge", "DELETE");
+      toast("ცოდნა წაიშალა");
+      await loadShops(currentShopId);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
   function updateProductFormState() {
     const disabled = !currentShopId;
