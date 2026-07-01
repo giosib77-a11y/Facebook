@@ -39,14 +39,42 @@ def create_order(payload: OrderCreate):
     if not shop.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
 
-    total = round(sum(i.price * i.quantity for i in payload.items), 2)
+    # ფასი/სახ ელი ბაზიდან — არა კლიენტისგან (მანიპულაციის თავიდან ასაცილებლად).
+    product_ids = [str(i.product_id) for i in payload.items if i.product_id]
+    if not product_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთა ცარიელია")
+    db_products = (
+        sc.table("products")
+        .select("id,name,price")
+        .eq("shop_id", str(payload.shop_id))
+        .in_("id", product_ids)
+        .execute()
+        .data
+    )
+    price_map = {p["id"]: p for p in db_products}
+
+    items, total = [], 0.0
+    for i in payload.items:
+        pid = str(i.product_id) if i.product_id else None
+        prod = price_map.get(pid)
+        if not prod:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"პროდუქტი ვერ მოიძებნა მაღაზიაში: {i.name}"
+            )
+        price = float(prod["price"])
+        items.append(
+            {"product_id": pid, "name": prod["name"], "price": price, "quantity": i.quantity}
+        )
+        total += price * i.quantity
+    total = round(total, 2)
+
     row = {
         "shop_id": str(payload.shop_id),
         "customer_name": payload.customer_name.strip(),
         "customer_phone": (payload.customer_phone or "").strip() or None,
         "customer_address": (payload.customer_address or "").strip() or None,
         "note": (payload.note or "").strip() or None,
-        "items": [i.model_dump(mode="json") for i in payload.items],
+        "items": items,
         "total": total,
         "status": "new",
     }
