@@ -109,8 +109,28 @@
     }
   }
 
-  // FastAPI backend-ის გამოძახება Bearer token-ით
-  async function api(path, method, body) {
+  // token-ის ავტო-განახლება (ვადაგასვლისას) — 8წმ timeout-ით დაცული, რომ არ გაიჭედოს
+  let _refreshPromise = null;
+  function refreshToken() {
+    if (!_refreshPromise) {
+      _refreshPromise = (async () => {
+        try {
+          const timeout = new Promise((res) => setTimeout(() => res(null), 8000));
+          const doRefresh = sb.auth
+            .refreshSession()
+            .then((r) => (r && r.data && r.data.session ? r.data.session.access_token : null))
+            .catch(() => null);
+          return await Promise.race([doRefresh, timeout]);
+        } finally {
+          _refreshPromise = null;
+        }
+      })();
+    }
+    return _refreshPromise;
+  }
+
+  // FastAPI backend-ის გამოძახება Bearer token-ით (401-ზე ავტო-განახლება + ერთხელ retry)
+  async function api(path, method, body, _retried) {
     const token = await getToken();
     if (!token) throw new Error("სესია არ არის — გთხოვ თავიდან შედი");
     const opts = {
@@ -122,6 +142,14 @@
       opts.body = JSON.stringify(body);
     }
     const res = await fetch(cfg.API_BASE + path, opts);
+
+    // ვადაგასული token → ერთხელ ვცდით განახლებას და თავიდან
+    if (res.status === 401 && !_retried) {
+      const fresh = await refreshToken();
+      if (fresh) return api(path, method, body, true);
+      throw new Error("სესია ამოიწურა — გთხოვ თავიდან შედი");
+    }
+
     if (res.status === 204) return null;
     const data = await res.json().catch(() => null);
     if (!res.ok) {
