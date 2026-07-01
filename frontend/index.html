@@ -37,6 +37,7 @@
             <input type="password" id="login-password" required autocomplete="current-password" placeholder="••••••••" />
           </label>
           <button type="submit" class="btn btn-primary">შესვლა</button>
+          <a href="#" id="forgot-link" class="auth-link">პაროლი დაგავიწყდა?</a>
         </form>
 
         <form id="register-form" class="auth-form hidden">
@@ -46,7 +47,20 @@
           <label>პაროლი (მინ. 6 სიმბოლო)
             <input type="password" id="reg-password" required minlength="6" autocomplete="new-password" placeholder="••••••••" />
           </label>
+          <label>გაიმეორე პაროლი
+            <input type="password" id="reg-password2" required minlength="6" autocomplete="new-password" placeholder="••••••••" />
+          </label>
           <button type="submit" class="btn btn-primary">რეგისტრაცია</button>
+        </form>
+
+        <!-- პაროლის აღდგენის მოთხ ოვნა -->
+        <form id="forgot-form" class="auth-form hidden">
+          <p class="import-hint">ჩაწერე ელ-ფოსტა — გამოგიგზავნით პაროლის აღდგენის ბმულს.</p>
+          <label>ელ-ფოსტა
+            <input type="email" id="forgot-email" required autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <button type="submit" class="btn btn-primary">აღდგენის ბმულის გაგზავნა</button>
+          <a href="#" id="forgot-back" class="auth-link">← უკან შესვლაზე</a>
         </form>
       </div>
     </section>
@@ -213,6 +227,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>

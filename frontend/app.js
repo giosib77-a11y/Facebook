@@ -42,6 +42,8 @@
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,
+      // implicit — პაროლის აღდგენის ბმული hash-ით (მრავალ მოწყობილობაზე მუშაობს)
+      flowType: "implicit",
       // no-op lock — navigator LockManager-ის ჩაკეტვის თავიდან ასაცილებლად
       // (getSession() რომ არ „გაიჭედოს" მრავალი tab-ის/popup-ის დროს)
       lock: async (_name, _timeout, fn) => await fn(),
@@ -182,6 +184,9 @@
 
   $("register-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    if ($("reg-password").value !== $("reg-password2").value) {
+      return toast("პაროლები არ ემთხ ვევა", true);
+    }
     const { data, error } = await sb.auth.signUp({
       email: $("reg-email").value.trim(),
       password: $("reg-password").value,
@@ -198,6 +203,32 @@
     // scope:"local" — ქსელის გარეშე, მყისიერი; მერე გვერდს ვტვირთავთ თავიდან
     try { await sb.auth.signOut({ scope: "local" }); } catch (e) {}
     window.location.reload();
+  });
+
+  // ---------- პაროლის აღდგენა ----------
+  on("forgot-link", "click", (e) => {
+    e.preventDefault();
+    $("login-form").classList.add("hidden");
+    $("register-form").classList.add("hidden");
+    $("forgot-form").classList.remove("hidden");
+    $("forgot-email").value = $("login-email").value;
+  });
+  on("forgot-back", "click", (e) => {
+    e.preventDefault();
+    $("forgot-form").classList.add("hidden");
+    $("login-form").classList.remove("hidden");
+  });
+  on("forgot-form", "submit", async (e) => {
+    e.preventDefault();
+    const email = $("forgot-email").value.trim();
+    if (!email) return;
+    const dir = location.pathname.replace(/[^/]*$/, ""); // reset.html იმავე საქაღალდეშია
+    const redirectTo = location.origin + dir + "reset.html";
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) return toast(translateAuthError(error.message), true);
+    toast("აღდგენის ბმული გაიგზავნა — შეამოწმე ელ-ფოსტა 📧");
+    $("forgot-form").classList.add("hidden");
+    $("login-form").classList.remove("hidden");
   });
 
   function translateAuthError(msg) {

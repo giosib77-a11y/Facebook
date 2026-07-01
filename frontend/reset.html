@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>პაროლის აღდგენა</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+
+  <main class="container">
+    <div class="auth-view">
+      <div class="card auth-card">
+        <h1 class="auth-title">🔑 ახ ალი პაროლი</h1>
+
+        <div id="reset-loading" class="import-hint">ბმული მოწმდება...</div>
+
+        <form id="reset-form" class="auth-form hidden">
+          <label>ახ ალი პაროლი (მინ. 6 სიმბოლო)
+            <input type="password" id="new-password" required minlength="6" autocomplete="new-password" placeholder="••••••••" />
+          </label>
+          <label>გაიმეორე პაროლი
+            <input type="password" id="new-password2" required minlength="6" autocomplete="new-password" placeholder="••••••••" />
+          </label>
+          <button type="submit" class="btn btn-primary">პაროლის შენახ ვა</button>
+        </form>
+
+        <div id="reset-error" class="import-result import-err hidden"></div>
+
+        <div id="reset-success" class="hidden" style="text-align:center">
+          <p style="color:var(--ok);font-weight:600">✅ პაროლი შეიცვალა!</p>
+          <a href="index.html" class="btn btn-primary" style="display:inline-block">შესვლა</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="reset.js?v=1"></script>
+</body>
+</html>

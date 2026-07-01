@@ -62,6 +62,8 @@ body {
 }
 .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .auth-form { display: flex; flex-direction: column; gap: 12px; }
+.auth-link { display: block; text-align: center; font-size: 0.85rem; color: var(--primary); text-decoration: none; }
+.auth-link:hover { text-decoration: underline; }
 
 /* Forms */
 label { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; color: var(--muted); }
