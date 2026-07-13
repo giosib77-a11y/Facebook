@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import router as chat_router
@@ -42,6 +43,12 @@ app.include_router(orders_router)
 
 @app.get("/")
 def root():
+    # მთავარი გვერდი = მარკეტინგული landing (პანელი რჩება /panel/-ზე)
+    return RedirectResponse(url="/panel/landing.html")
+
+
+@app.get("/status")
+def status():
     return {"name": "shop-ai-bot", "version": "0.1.0", "env": settings.app_env}
 
 

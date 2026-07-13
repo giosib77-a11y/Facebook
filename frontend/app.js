@@ -85,7 +85,25 @@
     setTimeout(() => t.classList.add("hidden"), 3500);
   }
 
-  // token-ს პირდაპირ storage-დან ვკითხ ულობთ — sb.auth.getSession() ზოგ ჯერ იჭედება
+  // ღილაკზე spinner + დაბლოკვა async მოქმედების დროს
+  function btnBusy(btn, busy) {
+    if (!btn) return;
+    btn.classList.toggle("is-loading", busy);
+    btn.disabled = busy;
+  }
+
+  // list-ში skeleton placeholder-ები ჩატვირთვისას
+  function showSkeleton(list, n) {
+    if (!list) return;
+    let h = "";
+    for (let i = 0; i < (n || 3); i++) {
+      h += '<div class="skel-item"><div class="skel skel-line lg"></div>' +
+           '<div class="skel skel-line sm"></div></div>';
+    }
+    list.innerHTML = h;
+  }
+
+  // token-ს პირდაპირ storage-დან ვკითხულობთ — sb.auth.getSession() ზოგ ჯერ იჭედება
   function readStoredToken() {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -174,28 +192,40 @@
 
   $("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const { error } = await sb.auth.signInWithPassword({
-      email: $("login-email").value.trim(),
-      password: $("login-password").value,
-    });
-    if (error) return toast(translateAuthError(error.message), true);
-    toast("მოგესალმებით!");
+    const btn = e.target.querySelector("button[type=submit]");
+    btnBusy(btn, true);
+    try {
+      const { error } = await sb.auth.signInWithPassword({
+        email: $("login-email").value.trim(),
+        password: $("login-password").value,
+      });
+      if (error) return toast(translateAuthError(error.message), true);
+      toast("მოგესალმებით!");
+    } finally {
+      btnBusy(btn, false);
+    }
   });
 
   $("register-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if ($("reg-password").value !== $("reg-password2").value) {
-      return toast("პაროლები არ ემთხ ვევა", true);
+      return toast("პაროლები არ ემთხვევა", true);
     }
-    const { data, error } = await sb.auth.signUp({
-      email: $("reg-email").value.trim(),
-      password: $("reg-password").value,
-    });
-    if (error) return toast(translateAuthError(error.message), true);
-    if (data.session) {
-      toast("რეგისტრაცია წარმატებულია!");
-    } else {
-      toast("რეგისტრაცია მიღებულია — შეამოწმე ელ-ფოსტა დასადასტურებლად, შემდეგ შედი.");
+    const btn = e.target.querySelector("button[type=submit]");
+    btnBusy(btn, true);
+    try {
+      const { data, error } = await sb.auth.signUp({
+        email: $("reg-email").value.trim(),
+        password: $("reg-password").value,
+      });
+      if (error) return toast(translateAuthError(error.message), true);
+      if (data.session) {
+        toast("რეგისტრაცია წარმატებულია!");
+      } else {
+        toast("რეგისტრაცია მიღებულია — შეამოწმე ელ-ფოსტა დასადასტურებლად, შემდეგ შედი.");
+      }
+    } finally {
+      btnBusy(btn, false);
     }
   });
 
@@ -327,7 +357,7 @@
   on("order-filter", "change", loadOrders);
 
   const ORDER_STATUS_LABELS = {
-    new: "ახ ალი",
+    new: "ახალი",
     processing: "მუშავდება",
     done: "დასრულებული",
     cancelled: "გაუქმებული",
@@ -344,10 +374,13 @@
     const filter = ($("order-filter") || {}).value || "";
     let path = "/orders";
     if (filter) path += "?status=" + encodeURIComponent(filter);
+    showSkeleton(list, 3);
+    $("orders-empty").classList.add("hidden");
     let orders;
     try {
       orders = await api(path);
     } catch (err) {
+      list.innerHTML = "";
       toast("შეკვეთები ვერ ჩაიტვირთა: " + err.message, true);
       return;
     }
@@ -359,7 +392,7 @@
 
   function orderRow(o) {
     const row = document.createElement("div");
-    row.className = "product-item";
+    row.className = "product-item order-item order-" + o.status;
     row.style.flexDirection = "column";
     row.style.alignItems = "stretch";
 
@@ -382,7 +415,11 @@
     const actions = document.createElement("div");
     actions.className = "product-actions";
     actions.style.marginTop = "8px";
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    actions.style.alignItems = "center";
     const sel = document.createElement("select");
+    sel.style.flex = "1";
     ["new", "processing", "done", "cancelled"].forEach((st) => {
       const opt = document.createElement("option");
       opt.value = st;
@@ -393,13 +430,32 @@
     sel.addEventListener("change", async () => {
       try {
         await api("/orders/" + o.id, "PATCH", { status: sel.value });
-        toast("სტატ უსი განახ ლდა");
+        toast("სტატ უსი განახლდა");
       } catch (err) {
         toast(err.message, true);
         loadOrders();
       }
     });
     actions.appendChild(sel);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn btn-danger btn-sm";
+    delBtn.textContent = "🗑 წაშლა";
+    delBtn.addEventListener("click", async () => {
+      if (!confirm("წავშალო ეს შეკვეთა? მოქმედება შეუქცევადია. (მარაგი არ იცვლება)")) return;
+      delBtn.disabled = true;
+      try {
+        await api("/orders/" + o.id, "DELETE");
+        row.remove();
+        toast("შეკვეთა წაიშალა");
+        loadOrders();
+      } catch (err) {
+        toast(err.message, true);
+        delBtn.disabled = false;
+      }
+    });
+    actions.appendChild(delBtn);
 
     row.appendChild(info);
     row.appendChild(actions);
@@ -525,7 +581,7 @@
       const data = await res.json().catch(() => null);
       if (res.ok) {
         resultBox.className = "import-result import-ok";
-        resultBox.textContent = "✅ PDF ჩაიტვირთა — ბოტი ახ ლა ამ ინფოს გამოიყენებს";
+        resultBox.textContent = "✅ PDF ჩაიტვირთა — ბოტი ახლა ამ ინფოს გამოიყენებს";
         fileInput.value = "";
         await loadShops(currentShopId);
       } else {
@@ -665,6 +721,8 @@
       $("empty-state").classList.add("hidden");
       return;
     }
+    showSkeleton(list, 4);
+    $("empty-state").classList.add("hidden");
     allProducts = await api("/products?shop_id=" + encodeURIComponent(currentShopId));
     $("product-count").textContent = allProducts.length;
     renderProductList();
@@ -774,10 +832,22 @@
       }
       handleFbRedirect();
     } else {
+      // session არ არის — მაგრამ თუ storage-ში token ჯერ დევს, login-ზე არ გადავრთოთ
+      // (onAuthStateChange refresh-ზე ხან ცარიელ session-ს ისვრის; getSession მალე მოვა).
+      // login მხოლოდ მაშინ, თუ token საერთოდ აღარ არის (ნამდვილად გამოსული).
+      if (readStoredToken()) return;
       appView.classList.add("hidden");
       header.classList.add("hidden");
       authView.classList.remove("hidden");
     }
+  }
+
+  // მყისიერი UI — storage-ში token თუ არის, პანელი მაშინვე ვაჩვენოთ
+  // (getSession() ასინქრონულია და ზოგ ჯერ 2-3 წამს ანელებს → login „ციმციმის" გარეშე)
+  if (readStoredToken()) {
+    authView.classList.add("hidden");
+    appView.classList.remove("hidden");
+    header.classList.remove("hidden");
   }
 
   sb.auth.onAuthStateChange((_event, session) => render(session));

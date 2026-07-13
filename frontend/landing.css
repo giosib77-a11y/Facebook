@@ -192,6 +192,17 @@ img { max-width: 100%; display: block; }
 .cta-band .btn-primary { background: #fff; color: var(--brand-dark); }
 .cta-band .btn-primary:hover { background: #f1f5f9; }
 
+/* ---------- იურიდიული გვერდები (Privacy / Terms) ---------- */
+.legal { padding: 56px 0 72px; }
+.legal-wrap { max-width: 760px; }
+.legal h1 { font-size: clamp(1.8rem, 3.4vw, 2.4rem); letter-spacing: -.025em; margin: 0 0 6px; }
+.legal .updated { color: var(--muted); font-size: .9rem; margin: 0 0 34px; }
+.legal h2 { font-size: 1.2rem; margin: 34px 0 10px; letter-spacing: -.01em; }
+.legal p, .legal li { color: #334155; font-size: 1rem; }
+.legal ul { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.legal a { color: var(--brand-dark); font-weight: 600; }
+.legal .back { display: inline-block; margin-top: 40px; }
+
 /* Footer */
 .footer { border-top: 1px solid var(--line); padding: 40px 0; color: var(--muted); font-size: .9rem; }
 .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
@@ -210,6 +221,7 @@ img { max-width: 100%; display: block; }
 }
 @media (max-width: 560px) {
   .nav-links { display: none; }
+  .nav-cta .btn-ghost { display: none; }
   .section { padding: 60px 0; }
   .feature-grid { grid-template-columns: 1fr; }
   .price-grid { grid-template-columns: 1fr; }

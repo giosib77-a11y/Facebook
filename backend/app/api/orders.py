@@ -13,7 +13,7 @@ router = APIRouter(tags=["orders"])
 
 def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
     """მარაგის კორექცია: sign=-1 (შეკვეთა, გამოკლება) ან +1 (გაუქმება, დაბრუნება).
-    იკითხ ება მიმდინარე quantity და ინახ ება ახ ალი (floor 0-ზე)."""
+    იკითხება მიმდინარე quantity და ინახება ახალი (floor 0-ზე)."""
     agg: dict[str, int] = {}
     for it in items:
         pid = it.get("product_id")
@@ -39,7 +39,7 @@ def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
 # ---------- საჯარო (კლიენტი, ავტორიზაციის გარეშე) ----------
 @router.get("/public-menu")
 def public_menu(shop_id: uuid.UUID):
-    """მაღაზიის სახ ელი + აქტიური პროდუქტები — შესაკვეთი ფორმისთვის."""
+    """მაღაზიის სახელი + აქტიური პროდუქტები — შესაკვეთი ფორმისთვის."""
     sc = get_service_client()
     shop = sc.table("shops").select("id,name,currency").eq("id", str(shop_id)).limit(1).execute()
     if not shop.data:
@@ -64,7 +64,7 @@ def create_order(payload: OrderCreate):
     if not shop.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
 
-    # ფასი/სახ ელი ბაზიდან — არა კლიენტისგან (მანიპულაციის თავიდან ასაცილებლად).
+    # ფასი/სახელი ბაზიდან — არა კლიენტისგან (მანიპულაციის თავიდან ასაცილებლად).
     product_ids = [str(i.product_id) for i in payload.items if i.product_id]
     if not product_ids:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთა ცარიელია")
@@ -90,7 +90,7 @@ def create_order(payload: OrderCreate):
         if i.quantity > available:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                f"„{prod['name']}“ — მარაგში მხ ოლოდ {available} ცალია (ითხ ოვე {i.quantity})",
+                f"„{prod['name']}“ — მარაგში მხოლოდ {available} ცალია (ითხოვე {i.quantity})",
             )
         price = float(prod["price"])
         items.append(
@@ -125,7 +125,7 @@ def list_orders(
     auth: CurrentAuth = Depends(get_current_auth),
     status_filter: str | None = Query(default=None, alias="status"),
 ):
-    """მიმდინარე გამყიდველის შეკვეთები (RLS-ით მხ ოლოდ მისი მაღაზიების)."""
+    """მიმდინარე გამყიდველის შეკვეთები (RLS-ით მხოლოდ მისი მაღაზიების)."""
     query = auth.client.table("orders").select("*").order("created_at", desc=True)
     if status_filter:
         query = query.eq("status", status_filter)
@@ -138,8 +138,8 @@ def update_order_status(
     payload: OrderStatusUpdate,
     auth: CurrentAuth = Depends(get_current_auth),
 ):
-    """შეკვეთის სტატ უსის შეცვლა (RLS-ით მხ ოლოდ საკუთარი).
-    გაუქმებაზე მარაგი უკან ბრუნდება; გაუქმებულის ხელახ ლა გახ სნაზე — ისევ აკლდება."""
+    """შეკვეთის სტატ უსის შეცვლა (RLS-ით მხოლოდ საკუთარი).
+    გაუქმებაზე მარაგი უკან ბრუნდება; გაუქმებულის ხელახლა გახსნაზე — ისევ აკლდება."""
     # მიმდინარე მდგომარეობა (RLS ადასტურებს მფლობელობას)
     cur = run(
         auth.client.table("orders")
@@ -167,3 +167,17 @@ def update_order_status(
         _apply_stock_delta(get_service_client(), shop_id, items, -1)  # ისევ გამოკლება
 
     return res.data[0]
+
+
+@router.delete("/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_order(
+    order_id: uuid.UUID,
+    auth: CurrentAuth = Depends(get_current_auth),
+):
+    """შეკვეთის წაშლა სიიდან (RLS-ით მხოლოდ საკუთარი).
+    მარაგს არ ცვლის — მიწოდებული ნივთი გაყიდულია. მარაგის დასაბრუნებლად
+    გამოიყენე „გაუქმებული“ სტატ უსი."""
+    res = run(auth.client.table("orders").delete().eq("id", str(order_id)))
+    if not res.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი")
+    return None

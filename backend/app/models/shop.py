@@ -19,7 +19,7 @@ class ShopOut(BaseModel):
     currency: str
     facebook_page_id: str | None = None
     bot_enabled: bool
-    knowledge_filename: str | None = None  # ატვირთული PDF-ის სახ ელი (ცოდნის ნიშანი)
+    knowledge_filename: str | None = None  # ატვირთული PDF-ის სახელი (ცოდნის ნიშანი)
     created_at: datetime
     updated_at: datetime
     # facebook_page_token და knowledge (სრული ტექსტი) განზრახ არ ბრუნდება

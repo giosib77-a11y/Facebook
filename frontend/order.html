@@ -4,59 +4,70 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>შეკვეთა</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="order.css" />
 </head>
 <body>
   <div id="toast" class="toast hidden"></div>
 
-  <main class="container" style="max-width:560px">
-    <div class="card">
-      <h1 id="shop-name" style="margin-top:0">იტვირთება...</h1>
-      <p class="import-hint">აირჩიე პროდუქტები, მიუთითე რაოდენობა და შეავსე მონაცემები.</p>
-    </div>
+  <main class="order-wrap">
+
+    <header class="order-head">
+      <div class="badge">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 8h14l-1.1 11.2A2.5 2.5 0 0 1 15.4 21.5H8.6A2.5 2.5 0 0 1 6.1 19.2L5 8z" fill="#fff"/>
+          <path d="M9 8V6.5a3 3 0 0 1 6 0V8" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1 id="shop-name">იტვირთება...</h1>
+      <p class="sub">აირჩიე პროდუქტები, მიუთითე რაოდენობა და შეავსე მონაცემები.</p>
+    </header>
 
     <form id="order-form">
       <div class="card">
-        <h2 style="margin-top:0">პროდუქტები</h2>
-        <input type="search" id="product-search" placeholder="🔍 ძებნა — პროდუქტის სახელი" style="margin-bottom:12px" />
-        <div id="product-list" class="product-list"></div>
-        <p id="empty-products" class="empty-state hidden">ამ მაღაზიას ამჟ ამად პროდუქტი არ აქვს.</p>
+        <h2>🛒 პროდუქტები</h2>
+        <input type="search" id="product-search" placeholder="🔍 ძებნა — პროდუქტის სახელი" />
+        <div id="product-list" class="product-list" style="margin-top:12px"></div>
+        <p id="empty-products" class="empty-state hidden">ამ მაღაზიას ამჟამად პროდუქტი არ აქვს.</p>
         <p id="no-match" class="empty-state hidden">ვერაფერი მოიძებნა.</p>
       </div>
 
       <div class="card">
-        <h2 style="margin-top:0">შენი მონაცემები</h2>
-        <label>სახ ელი *
-          <input type="text" id="c-name" required placeholder="სახ ელი გვარი" />
+        <h2>📝 შენი მონაცემები</h2>
+        <label>სახელი *
+          <input type="text" id="c-name" required placeholder="სახელი გვარი" autocomplete="name" />
         </label>
         <label>ტელეფონი *
-          <input type="tel" id="c-phone" required placeholder="5XX XX XX XX" />
+          <input type="tel" id="c-phone" required placeholder="5XX XX XX XX" autocomplete="tel" />
         </label>
         <label>მისამართი *
-          <input type="text" id="c-address" required placeholder="ქალაქი, ქუჩა, ბინა" />
+          <input type="text" id="c-address" required placeholder="ქალაქი, ქუჩა, ბინა" autocomplete="street-address" />
         </label>
         <label>კომენტარი (არასავალდებულო)
           <textarea id="c-note" rows="2" placeholder="დამატებითი ინფორმაცია"></textarea>
         </label>
       </div>
 
-      <div class="card">
-        <div class="list-header">
-          <h2 style="margin:0">ჯამი: <span id="total">0</span> ₾</h2>
+      <div class="summary">
+        <div class="summary-row">
+          <span class="lbl">ჯამი</span>
+          <span class="val"><span id="total">0</span> <small>₾</small></span>
         </div>
-        <button type="submit" class="btn btn-primary" id="submit-btn" style="width:100%">
-          შეკვეთის გაგზავნა
-        </button>
+        <button type="submit" class="btn btn-primary" id="submit-btn">შეკვეთის გაგზავნა</button>
       </div>
     </form>
 
-    <div id="success" class="card hidden" style="text-align:center">
-      <h2 style="color:var(--ok)">✅ შეკვეთა მიღებულია!</h2>
+    <div id="success" class="card hidden">
+      <div class="ok-badge">✅</div>
+      <h2>შეკვეთა მიღებულია!</h2>
       <p>მადლობა! გამყიდველი მალე დაგიკავშირდებათ.</p>
     </div>
+
   </main>
 
   <script src="config.js"></script>
-  <script src="order.js?v=2"></script>
+  <script src="order.js?v=6"></script>
 </body>
 </html>

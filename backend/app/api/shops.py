@@ -46,10 +46,10 @@ async def upload_knowledge(
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
 ):
-    """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახ ება მაღაზიის ცოდნად (ბოტი იყენებს)."""
+    """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახება მაღაზიის ცოდნად (ბოტი იყენებს)."""
     name = (file.filename or "").lower()
     if not name.endswith(".pdf"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მხ ოლოდ .pdf ფაილია მხ არდაჭერილი")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მხოლოდ .pdf ფაილია მხარდაჭერილი")
     content = await file.read()
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")

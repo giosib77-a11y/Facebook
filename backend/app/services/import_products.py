@@ -47,7 +47,7 @@ def _read_xlsx(content: bytes):
     try:
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception:
-        raise ValueError("Excel ფაილის გახ სნა ვერ მოხერხდა — დარწმუნდი, რომ .xlsx ფორმატია.")
+        raise ValueError("Excel ფაილის გახსნა ვერ მოხერხდა — დარწმუნდი, რომ .xlsx ფორმატია.")
     ws = wb.active
     return [list(row) for row in ws.iter_rows(values_only=True)]
 
@@ -101,7 +101,7 @@ def parse_products_file(content: bytes, filename: str):
             try:
                 price = float(price_raw.replace(",", ".").replace(" ", ""))
             except ValueError:
-                errors.append({"row": line, "message": f"ფასი არ არის რიცხ ვი: „{price_raw}"})
+                errors.append({"row": line, "message": f"ფასი არ არის რიცხვი: „{price_raw}"})
                 continue
             if price < 0:
                 errors.append({"row": line, "message": "ფასი უარყოფითია"})
@@ -113,7 +113,7 @@ def parse_products_file(content: bytes, filename: str):
             try:
                 qty = int(float(qty_raw.replace(",", ".")))
             except ValueError:
-                errors.append({"row": line, "message": f"მარაგი არ არის რიცხ ვი: „{qty_raw}"})
+                errors.append({"row": line, "message": f"მარაგი არ არის რიცხვი: „{qty_raw}"})
                 continue
             if qty < 0:
                 errors.append({"row": line, "message": "მარაგი უარყოფითია"})

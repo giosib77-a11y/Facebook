@@ -41,21 +41,47 @@
       return;
     }
     products.forEach(function (p) {
+      var stock = Number(p.quantity) || 0;
+      var out = stock <= 0;
+      var low = !out && stock <= 3;
+
       var row = document.createElement("div");
-      row.className = "product-item";
+      row.className = "product-item" + (out ? " out" : "");
       row.dataset.search = (p.name + " " + (p.description || "")).toLowerCase();
+
+      var stockLabel = out
+        ? '<span class="stock stock-out">არ არის მარაგში</span>'
+        : low
+        ? '<span class="stock stock-low">დარჩა ' + stock + " ცალი</span>"
+        : '<span class="stock">მარაგში: ' + stock + " ცალი</span>";
+
       row.innerHTML =
         '<div class="product-info"><div class="product-name">' + esc(p.name) + "</div>" +
         '<div class="product-meta">' + Number(p.price).toFixed(2) + " " + currency +
-        (p.description ? " · " + esc(p.description) : "") + "</div></div>";
+        (p.description ? " · " + esc(p.description) : "") + "</div>" +
+        '<div class="product-meta">' + stockLabel + "</div></div>";
+
       var qtyWrap = document.createElement("div");
       qtyWrap.className = "product-actions";
       qtyWrap.innerHTML =
-        '<input type="number" min="0" value="0" id="qty-' + p.id + '" ' +
-        'style="width:80px" aria-label="რაოდენობა" />';
+        '<input type="number" min="0" max="' + stock + '" value="" placeholder="0" ' +
+        'id="qty-' + p.id + '" inputmode="numeric" ' +
+        'style="width:80px"' + (out ? " disabled" : "") + ' aria-label="რაოდენობა" />';
       row.appendChild(qtyWrap);
       list.appendChild(row);
-      qtyWrap.querySelector("input").addEventListener("input", recalcTotal);
+
+      var input = qtyWrap.querySelector("input");
+      input.addEventListener("focus", function () { this.select(); });
+      input.addEventListener("input", function () {
+        var v = parseInt(this.value, 10) || 0;
+        if (v > stock) {
+          this.value = stock;
+          toast("„" + p.name + "“ — მარაგშია მხოლოდ " + stock + " ცალი", true);
+        } else if (v < 0) {
+          this.value = 0;
+        }
+        recalcTotal();
+      });
     });
   }
 
@@ -86,7 +112,7 @@
       if (!res.ok) throw new Error("მაღაზია ვერ მოიძებნა");
       var data = await res.json();
       currency = (data.shop && data.shop.currency) || "GEL";
-      $("shop-name").textContent = "🛍️ " + (data.shop ? data.shop.name : "მაღაზია");
+      $("shop-name").textContent = data.shop ? data.shop.name : "მაღაზია";
       document.title = "შეკვეთა — " + (data.shop ? data.shop.name : "");
       products = data.products || [];
       renderProducts();

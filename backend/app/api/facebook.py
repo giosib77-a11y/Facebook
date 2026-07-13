@@ -18,7 +18,7 @@ router = APIRouter(prefix="/facebook", tags=["facebook connect"])
 
 
 def _finish(result: str, **params) -> HTMLResponse:
-    """ამთავრებს OAuth-ს: თუ popup-ია, შეტყობინებას უგზავნის მთავარ ფანჯ არ ას და იხ ურება;
+    """ამთავრებს OAuth-ს: თუ popup-ია, შეტყობინებას უგზავნის მთავარ ფანჯარას დაიხურება;
     თუ არა (popup დაბლოკილი), მთავარ პანელზე გადაამისამართებს (fallback)."""
     data = {"fb": result, **params}
     fallback = f"{get_settings().frontend_url.rstrip('/')}/?{urlencode(data)}"

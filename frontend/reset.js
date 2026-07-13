@@ -4,7 +4,7 @@
   var cfg = window.APP_CONFIG;
 
   // detectSessionInUrl:true — email-ის ბმულიდან recovery token-ის დამუშავება.
-  // ცალკე კლიენტია (პანელისგან განსხ ვავებით, სადაც false-ია Facebook-ის გამო).
+  // ცალკე კლიენტია (პანელისგან განსხვავებით, სადაც false-ია Facebook-ის გამო).
   var sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
     auth: { detectSessionInUrl: true, persistSession: false, flowType: "implicit" },
   });
@@ -52,7 +52,7 @@
     e.preventDefault();
     var p1 = $("new-password").value;
     var p2 = $("new-password2").value;
-    if (p1 !== p2) return toast("პაროლები არ ემთხ ვევა", true);
+    if (p1 !== p2) return toast("პაროლები არ ემთხვევა", true);
     var btn = e.target.querySelector("button[type=submit]");
     btn.disabled = true;
     try {
