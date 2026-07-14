@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # საჯარო base URL (პანელი/ფორმა აქედან იხსნება). ცარიელია → fb_redirect_uri-დან გამოითვლება.
     public_base_url: str = ""
 
+    # ადმინ პანელის მფლობელი — მხოლოდ ეს email ხედავს /admin-ს (override .env-ში ADMIN_EMAIL-ით)
+    admin_email: str = "giosib77@gmail.com"
+
     model_config = SettingsConfigDict(
         env_file=(_ROOT_ENV, _BACKEND_ENV),
         env_file_encoding="utf-8",

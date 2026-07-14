@@ -51,9 +51,31 @@
       — დაბალ ტრაფიკზე არა სასწრაფო, მაგრამ ჩანიშნული
 
 ### 8. Facebook App → Live mode + App Review
-- [ ] App Review: `pages_messaging` + `pages_manage_metadata`
-- [ ] Privacy Policy URL + App Icon
-- [ ] Development → **Live mode**
+
+> ახლა App **Development mode**-შია → ბოტთან მხოლოდ ტესტერები/ადმინები ურთიერთობენ.
+> რომ ნებისმიერმა მომხმარებელმა შეძლოს წერა და გამყიდვლებმა გვერდები დააკავშირონ,
+> საჭიროა Live mode + App Review. **წინაპირობა: ჯერ deploy (პუნქტი 2) — რეალური HTTPS
+> დომენი; ngrok App Review-სთვის არ გამოდგება.**
+
+თანმიმდევრობა:
+- [ ] **8.1 ფიქსირებული HTTPS დომენი** — deploy დასრულებული (იხ. პუნქტი 2)
+- [ ] **8.2 Privacy Policy + Terms + Data Deletion** — რეალურ დომენზე ხელმისაწვდომი
+      - Privacy Policy URL (გვაქვს `privacy.html`)
+      - Terms URL (გვაქვს `terms.html`)
+      - Data Deletion ინსტრუქცია ან callback URL (Meta ითხოვს) — დასამატებელი
+- [ ] **8.3 Business Verification** — ბიზნესის დადასტურება Meta-ში (დოკუმენტები/რეკვიზიტები);
+      საჭიროა `pages_messaging`-ის Advanced Access-ისთვის
+- [ ] **8.4 App-ის სავალდებულო ველები**
+      - App Icon (1024×1024), App სახელი, კატეგორია
+      - Privacy Policy URL + Data Deletion URL შევსებული App Settings-ში
+- [ ] **8.5 App Review — ნებართვები** (თითოზე screencast ვიდეო საჭიროა)
+      - `pages_messaging` (მესიჯების მიღება/გაგზავნა)
+      - `pages_manage_metadata` (webhook subscription)
+      - (სურვილისამებრ) `pages_show_list`, `pages_read_engagement`
+- [ ] **8.6 Development → Live mode** გადართვა (App Dashboard-ის თავში)
+
+> შენიშვნა: Standard Access = მხოლოდ app-ის role-ის მქონე ხალხი (ტესტერები).
+> Advanced Access = ფართო საზოგადოება — სწორედ ეს სჭირდება App Review + Business Verification.
 
 ### 9. Debug/logs
 - [ ] პროდაქშენში debug/სიტყ ვიერი error-ები გამორთე (stack trace არ ჩანდეს)

@@ -818,6 +818,17 @@
   }
 
   // ---------- session routing ----------
+  // ადმინია თუ არა — თუ კი, ვაჩენთ „ადმინი" ღილაკს header-ში
+  async function checkAdmin() {
+    try {
+      await api("/admin/check");
+      const l = $("admin-link");
+      if (l) l.classList.remove("hidden");
+    } catch (e) {
+      /* არა ადმინი — ღილაკი დამალული რჩება */
+    }
+  }
+
   async function render(session) {
     if (session) {
       authView.classList.add("hidden");
@@ -831,6 +842,7 @@
         showBanner("მონაცემების ჩატვირთვა ვერ მოხერხდა: " + err.message);
       }
       handleFbRedirect();
+      checkAdmin();
     } else {
       // session არ არის — მაგრამ თუ storage-ში token ჯერ დევს, login-ზე არ გადავრთოთ
       // (onAuthStateChange refresh-ზე ხან ცარიელ session-ს ისვრის; getSession მალე მოვა).

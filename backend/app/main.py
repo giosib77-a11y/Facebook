@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.admin import router as admin_router
 from app.api.chat import router as chat_router
 from app.api.facebook import router as facebook_router
 from app.api.health import router as health_router
@@ -39,6 +40,7 @@ app.include_router(chat_router)
 app.include_router(webhook_router)
 app.include_router(facebook_router)
 app.include_router(orders_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

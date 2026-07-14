@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ადმინ პანელი — ShopBot</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow-sm); }
+    .stat .val { font-size: 1.7rem; font-weight: 800; letter-spacing: -.02em; }
+    .stat .lbl { font-size: .82rem; color: var(--muted); margin-top: 2px; }
+    .admin-table-wrap { overflow-x: auto; }
+    table.admin { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    table.admin th, table.admin td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.admin th { color: var(--muted); font-weight: 600; font-size: .82rem; }
+    table.admin tr:hover td { background: var(--bg); }
+    .pill { display: inline-block; font-size: .72rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+    .pill-on { background: #dcfce7; color: var(--ok); }
+    .pill-off { background: #f1f5f9; color: var(--muted); }
+    .row-actions { display: flex; gap: 6px; }
+    .icon-btn { cursor: pointer; border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 5px 9px; font-size: .85rem; }
+    .icon-btn:hover { background: var(--bg); }
+    .icon-btn.danger { color: var(--danger); border-color: var(--danger); }
+    .icon-btn.danger:hover { background: var(--danger); color: #fff; }
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: flex; align-items: flex-start; justify-content: center; padding: 30px 16px; z-index: 200; overflow-y: auto; }
+    .modal { background: #fff; border-radius: var(--radius); max-width: 720px; width: 100%; padding: 20px; box-shadow: var(--shadow-md); }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .modal-head h2 { margin: 0; }
+    @media (max-width: 700px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+
+  <header class="app-header" id="header">
+    <div class="brand">
+      <span class="brand-mark"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 8h14l-1.1 11.2A2.5 2.5 0 0 1 15.4 21.5H8.6A2.5 2.5 0 0 1 6.1 19.2L5 8z" fill="#fff"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+      ადმინ პანელი
+    </div>
+    <div class="header-right">
+      <span id="user-email" class="user-email"></span>
+      <a href="index.html" class="btn btn-ghost">← პანელი</a>
+      <button id="logout-btn" class="btn btn-ghost">გასვლა</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="loading" class="card"><p class="import-hint" style="margin:0">იტვირთება...</p></div>
+
+    <div id="not-admin" class="card hidden" style="text-align:center">
+      <h2 style="color:var(--danger)">წვდომა აკრძალულია</h2>
+      <p class="import-hint">ეს გვერდი მხოლოდ ადმინისთვისაა. <a href="index.html">დაბრუნება პანელზე</a></p>
+    </div>
+
+    <div id="admin-content" class="hidden">
+      <!-- საერთო -->
+      <div class="card">
+        <div class="list-header">
+          <h2 style="margin:0">📊 საერთო მაჩვენებლები</h2>
+          <button id="refresh-btn" class="btn btn-ghost">↻ განახლება</button>
+        </div>
+        <div class="stat-grid" id="stats"></div>
+      </div>
+
+      <!-- ჩანართები -->
+      <div class="tabs-nav">
+        <button class="tab-btn active" data-tab="shops">🏪 მაღაზიები</button>
+        <button class="tab-btn" data-tab="sellers">👤 გამყიდვლები</button>
+        <button class="tab-btn" data-tab="orders">📋 შეკვეთები</button>
+      </div>
+
+      <!-- მაღაზიები -->
+      <div class="tab-panel" data-panel="shops">
+        <div class="card">
+          <div class="list-header">
+            <h2 style="margin:0">მაღაზიები (<span id="shop-count">0</span>)</h2>
+          </div>
+          <input type="search" id="shop-search" placeholder="🔍 ძებნა — მაღაზია ან მფლობელი" style="margin-bottom:12px" />
+          <div class="admin-table-wrap">
+            <table class="admin">
+              <thead><tr>
+                <th>მაღაზია</th><th>მფლობელი</th><th>პროდ.</th><th>შეკვ.</th>
+                <th>Facebook</th><th>ბოტი</th><th>შექმნა</th><th>მოქმედება</th>
+              </tr></thead>
+              <tbody id="shops-body"></tbody>
+            </table>
+          </div>
+          <p id="shops-empty" class="empty-state hidden">მაღაზიები ჯერ არ არის.</p>
+        </div>
+      </div>
+
+      <!-- გამყიდვლები -->
+      <div class="tab-panel hidden" data-panel="sellers">
+        <div class="card">
+          <div class="list-header">
+            <h2 style="margin:0">გამყიდვლები (<span id="seller-count">0</span>)</h2>
+          </div>
+          <input type="search" id="seller-search" placeholder="🔍 ძებნა — email" style="margin-bottom:12px" />
+          <div class="admin-table-wrap">
+            <table class="admin">
+              <thead><tr>
+                <th>Email</th><th>დადასტ.</th><th>მაღაზია</th><th>ბოლო შესვლა</th><th>რეგისტრ.</th><th>მოქმედება</th>
+              </tr></thead>
+              <tbody id="sellers-body"></tbody>
+            </table>
+          </div>
+          <p id="sellers-empty" class="empty-state hidden">გამყიდვლები ჯერ არ არის.</p>
+        </div>
+      </div>
+
+      <!-- შეკვეთები -->
+      <div class="tab-panel hidden" data-panel="orders">
+        <div class="card">
+          <div class="list-header">
+            <h2 style="margin:0">ბოლო შეკვეთები (<span id="order-count">0</span>)</h2>
+          </div>
+          <input type="search" id="order-search" placeholder="🔍 ძებნა — მაღაზია, კლიენტი ან სტატუსი" style="margin-bottom:12px" />
+          <div class="admin-table-wrap">
+            <table class="admin">
+              <thead><tr>
+                <th>მაღაზია</th><th>კლიენტი</th><th>ჯამი</th><th>სტატუსი</th><th>თარიღი</th>
+              </tr></thead>
+              <tbody id="orders-body"></tbody>
+            </table>
+          </div>
+          <p id="orders-empty" class="empty-state hidden">შეკვეთები ჯერ არ არის.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="modal-root"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="admin.js?v=3"></script>
+</body>
+</html>
