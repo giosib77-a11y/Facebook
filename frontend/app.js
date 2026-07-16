@@ -314,6 +314,7 @@
     updateFbSection();
     updateOrderLink();
     updateKnowledgeStatus();
+    updateUsage();
     await Promise.all([loadProducts(), loadOrders()]);
   }
 
@@ -322,7 +323,75 @@
     updateFbSection();
     updateOrderLink();
     updateKnowledgeStatus();
+    updateUsage();
     await Promise.all([loadProducts(), loadOrders()]);
+  });
+
+  // ---------- გამოწერა / გამოყენება (usage) ----------
+  const TIER_NAMES = { free: "უფასო", basic: "საბაზისო", standard: "სტანდარტი", business: "ბიზნესი" };
+  const PAID_TIERS = ["basic", "standard", "business"];
+
+  async function updateUsage() {
+    const box = $("usage-box");
+    if (!box) return;
+    if (!currentShopId) { box.classList.add("hidden"); return; }
+    try {
+      const u = await api("/shops/" + currentShopId + "/usage");
+      const climit = u.customer_limit;
+      const cpct = climit ? Math.min(100, Math.round((u.monthly_customers / climit) * 100)) : 0;
+      const near = cpct >= 90;
+      const plimit = u.product_limit == null ? "∞" : u.product_limit;
+
+      const prices = u.prices || {};
+      let upgrade;
+      if (u.pending_request) {
+        const pt = u.pending_request;
+        const shop = shops.find((s) => s.id === currentShopId);
+        const ref = shop ? shop.name : "";
+        upgrade = '<div class="usage-upgrade pending">' +
+          "⏳ მოთხოვნილია: <b>" + escapeHtml(TIER_NAMES[pt] || pt) + " · " + (prices[pt] || "") + "₾/თვე</b>" +
+          '<div class="pay-info">' +
+            "💳 გადარიცხე ანგარიშზე: <b>" + escapeHtml(u.payment_iban || "") + "</b><br>" +
+            "📝 დანიშნულებაში მიუთითე: <b>" + escapeHtml(ref) + "</b><br>" +
+            "📩 ქვითარი გამოგზავნე: <b>" + escapeHtml(u.payment_contact || "") + "</b><br>" +
+            "გადახდის შემდეგ ადმინი დაგიდასტურებთ და პაკეტი გააქტიურდება." +
+          "</div></div>";
+      } else {
+        const btns = PAID_TIERS.filter((t) => t !== u.tier).map((t) =>
+          '<button type="button" class="btn btn-ghost btn-sm" data-req-tier="' + t + '">' +
+            TIER_NAMES[t] + " · " + (prices[t] || "") + "₾</button>"
+        ).join("");
+        upgrade = '<div class="usage-upgrade"><span>პაკეტის განახლება:</span> ' + btns + "</div>";
+      }
+
+      box.innerHTML =
+        '<div class="usage-head">' +
+          '<span class="usage-tier">📦 პაკეტი: <b>' + escapeHtml(u.tier_label) + "</b></span>" +
+          '<span class="usage-nums">კლიენტი ამ თვეს: <b>' + u.monthly_customers + "</b> / " + climit + "</span>" +
+        "</div>" +
+        '<div class="usage-bar"><span style="width:' + cpct + '%"' + (near ? ' class="near"' : "") + "></span></div>" +
+        '<div class="usage-foot">პროდუქტი: ' + u.products + " / " + plimit +
+          (near ? ' · <b style="color:#d97706">ლიმიტს უახლოვდები — განაახლე პაკეტი</b>' : "") + "</div>" +
+        upgrade;
+      box.classList.remove("hidden");
+    } catch (e) {
+      box.classList.add("hidden");
+    }
+  }
+
+  // პაკეტის მოთხოვნა (event delegation usage-box-ზე)
+  document.addEventListener("click", async (e) => {
+    const t = e.target.closest && e.target.closest("[data-req-tier]");
+    if (!t || !currentShopId) return;
+    const tier = t.dataset.reqTier;
+    if (!confirm("გავაგზავნო „" + (TIER_NAMES[tier] || tier) + "“ პაკეტის მოთხოვნა? ადმინი დაგიდასტურებთ გადახდის შემდეგ.")) return;
+    try {
+      await api("/shops/" + currentShopId + "/upgrade-request", "POST", { tier });
+      toast("მოთხოვნა გაიგზავნა");
+      updateUsage();
+    } catch (err) {
+      toast(err.message, true);
+    }
   });
 
   // ---------- შესაკვეთი ლინკი + შეკვეთები ----------

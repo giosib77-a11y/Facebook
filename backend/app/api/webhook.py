@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, R
 from app.config import get_settings
 from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
+from app.core.tiers import DAILY_ABUSE_CAP, limits_for
 from app.services.bot import get_bot_reply
 from app.services.facebook import send_text_message, verify_signature
 
@@ -80,6 +81,34 @@ def _process_events(data: dict) -> None:
             text = message.get("text")
             if message.get("is_echo") or not sender_id or not text:
                 continue
+
+            # --- მონეტიზაცია: კლიენტის თვლა + ლიმიტების შემოწმება ---
+            over_limit = False
+            try:
+                r = sc.rpc(
+                    "track_bot_customer", {"p_shop": shop["id"], "p_psid": str(sender_id)}
+                ).execute()
+                row = (r.data or [{}])[0] if isinstance(r.data, list) else (r.data or {})
+                monthly = int(row.get("monthly_unique") or 0)
+                day_count = int(row.get("day_count") or 0)
+                limits = limits_for(shop.get("subscription_tier"))
+                if day_count > DAILY_ABUSE_CAP:
+                    continue  # abuse/loop — ჩუმად ვჩერდებით
+                if monthly > int(limits["customers"]):
+                    over_limit = True
+            except Exception:
+                pass  # თვლა ვერ მოხერხდა — ბოტი მაინც პასუხობს (არ ვბლოკავთ)
+
+            if over_limit:
+                try:
+                    send_text_message(
+                        page_token, sender_id,
+                        "მადლობა შეტყობინებისთვის! 🙏 ჩვენი ოპერატორი მალე დაგიკავშირდებათ.",
+                    )
+                except Exception:
+                    pass
+                continue
+
             try:
                 reply = get_bot_reply(shop, products, text, [])
             except Exception:

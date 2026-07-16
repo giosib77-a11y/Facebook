@@ -8,8 +8,10 @@
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
   });
 
-  var shops = [], sellers = [], orders = [];
+  var shops = [], sellers = [], orders = [], requests = [], growth = [];
   var STATUS = { new: "ახალი", processing: "მუშავდება", done: "დასრულებული", cancelled: "გაუქმებული" };
+  var TIERS = [["free", "უფასო"], ["basic", "საბაზისო"], ["standard", "სტანდარტი"], ["business", "ბიზნესი"]];
+  var TIER_CUST = { free: 30, basic: 200, standard: 800, business: 3000 };
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -59,6 +61,7 @@
   }
   function renderStats(o) {
     $("stats").innerHTML =
+      '<div class="stat mrr"><div class="val">' + (o.mrr || 0) + ' ₾</div><div class="lbl">MRR · თვიური შემოსავალი</div></div>' +
       statCard(o.total_shops, "მაღაზია") +
       statCard(o.total_sellers, "გამყიდველი") +
       statCard(o.connected_shops, "Facebook-დაკავშ.") +
@@ -81,9 +84,18 @@
       var botPill = s.bot_enabled ? '<span class="pill pill-on">ჩართ.</span>' : '<span class="pill pill-off">გამორთ.</span>';
       var fbPill = s.fb_connected ? '<span class="pill pill-on">კი</span>' : '<span class="pill pill-off">არა</span>';
       var toggleLbl = s.bot_enabled ? "გამორთვა" : "ჩართვა";
+      var tierSel = '<select class="tier-sel" data-tier="' + s.id + '">' +
+        TIERS.map(function (t) {
+          return '<option value="' + t[0] + '"' + (s.tier === t[0] ? " selected" : "") + ">" + t[1] + "</option>";
+        }).join("") + "</select>";
+      var over = s.customer_limit && s.monthly_customers > s.customer_limit;
+      var usage = '<span' + (over ? ' style="color:var(--danger);font-weight:600"' : "") + ">" +
+        s.monthly_customers + " / " + s.customer_limit + "</span>";
       return "<tr>" +
         "<td><b>" + esc(s.name) + "</b></td>" +
         "<td>" + esc(s.owner_email || "—") + "</td>" +
+        "<td>" + tierSel + "</td>" +
+        "<td>" + usage + "</td>" +
         "<td>" + s.products + "</td><td>" + s.orders + "</td>" +
         "<td>" + fbPill + "</td><td>" + botPill + "</td>" +
         "<td>" + fmtDate(s.created_at) + "</td>" +
@@ -131,6 +143,55 @@
         "<td>" + esc(STATUS[o.status] || o.status) + "</td>" +
         "<td>" + fmtDate(o.created_at) + "</td>" +
       "</tr>";
+    }).join("");
+  }
+
+  /* ---------- ზრდის გრაფიკი ---------- */
+  function renderGrowth() {
+    var max = 1;
+    growth.forEach(function (g) { max = Math.max(max, g.orders, g.shops); });
+    $("growth-chart").innerHTML = growth.map(function (g) {
+      var oh = Math.round((g.orders / max) * 100);
+      var sh = Math.round((g.shops / max) * 100);
+      return '<div class="chart-col"><div class="chart-bars">' +
+        '<span class="bar orders" style="height:' + oh + '%" title="შეკვეთა: ' + g.orders + '"></span>' +
+        '<span class="bar shops" style="height:' + sh + '%" title="მაღაზია: ' + g.shops + '"></span>' +
+        '</div><div class="chart-lbl">' + esc(g.ym.slice(5)) + "</div></div>";
+    }).join("");
+  }
+
+  /* ---------- CSV ექსპორტი ---------- */
+  function toCSV(headers, rows) {
+    function cell(v) {
+      v = v == null ? "" : String(v);
+      return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    }
+    var lines = [headers.map(cell).join(",")];
+    rows.forEach(function (r) { lines.push(r.map(cell).join(",")); });
+    return "﻿" + lines.join("\r\n"); // BOM — Excel-ში ქართული სწორად
+  }
+  function downloadCSV(name, content) {
+    var blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  /* ---------- პაკეტის მოთხოვნები ---------- */
+  function tierLabel(t) { var f = TIERS.filter(function (x) { return x[0] === t; })[0]; return f ? f[1] : t; }
+  function renderRequests() {
+    $("req-count").textContent = requests.length;
+    $("requests-card").classList.toggle("hidden", requests.length === 0);
+    $("requests-list").innerHTML = requests.map(function (r) {
+      return '<div class="req-row"><div><b>' + esc(r.shop_name || "—") + "</b> " +
+        '<span class="muted">(' + esc(r.owner_email || "") + ')</span><br>' +
+        '<span class="muted">' + esc(tierLabel(r.current_tier)) + " → </span><b>" + esc(r.tier_label) + "</b></div>" +
+        '<div class="row-actions">' +
+          '<button class="btn btn-primary btn-sm" data-approve="' + r.id + '">დადასტურება</button>' +
+          '<button class="icon-btn danger" data-reject="' + r.id + '">უარი</button>' +
+        "</div></div>";
     }).join("");
   }
 
@@ -212,6 +273,18 @@
     else if (t.dataset.toggle) toggleBot(t.dataset.toggle);
     else if (t.dataset.del) delShop(t.dataset.del);
   });
+  $("shops-body").addEventListener("change", async function (e) {
+    var sel = e.target;
+    if (!sel.dataset.tier) return;
+    var id = sel.dataset.tier, tier = sel.value;
+    try {
+      await req("PATCH", "/admin/shops/" + id, { subscription_tier: tier });
+      var s = shops.find(function (x) { return x.id === id; });
+      if (s) { s.tier = tier; s.customer_limit = TIER_CUST[tier] || s.customer_limit; }
+      renderShops();
+      toast("პაკეტი შეიცვალა: " + tier);
+    } catch (e2) { toast("ვერ შეიცვალა", true); }
+  });
   $("sellers-body").addEventListener("click", function (e) {
     if (e.target.dataset.recovery !== undefined) recovery(e.target.dataset.recovery);
   });
@@ -219,15 +292,52 @@
   $("seller-search").addEventListener("input", renderSellers);
   $("order-search").addEventListener("input", renderOrders);
 
+  $("csv-shops").addEventListener("click", function () {
+    downloadCSV("shops.csv", toCSV(
+      ["მაღაზია", "მფლობელი", "პაკეტი", "კლიენტი_თვე", "ლიმიტი", "პროდუქტი", "შეკვეთა", "Facebook", "ბოტი", "შექმნა"],
+      shops.map(function (s) {
+        return [s.name, s.owner_email, s.tier_label, s.monthly_customers, s.customer_limit,
+          s.products, s.orders, s.fb_connected ? "კი" : "არა", s.bot_enabled ? "ჩართ" : "გამორთ", fmtDate(s.created_at)];
+      })));
+  });
+  $("csv-sellers").addEventListener("click", function () {
+    downloadCSV("sellers.csv", toCSV(
+      ["Email", "დადასტურ", "მაღაზია", "ბოლო_შესვლა", "რეგისტრ"],
+      sellers.map(function (u) {
+        return [u.email, u.confirmed ? "კი" : "არა", u.shops, fmtDate(u.last_sign_in), fmtDate(u.created_at)];
+      })));
+  });
+  $("csv-orders").addEventListener("click", function () {
+    downloadCSV("orders.csv", toCSV(
+      ["მაღაზია", "კლიენტი", "ჯამი", "სტატუსი", "თარიღი"],
+      orders.map(function (o) {
+        return [o.shop_name, o.customer_name, Number(o.total || 0).toFixed(2), STATUS[o.status] || o.status, fmtDate(o.created_at)];
+      })));
+  });
+  $("requests-list").addEventListener("click", async function (e) {
+    var t = e.target;
+    var id = t.dataset.approve || t.dataset.reject;
+    if (!id) return;
+    var approve = !!t.dataset.approve;
+    if (!approve && !confirm("უარვყო ეს მოთხოვნა?")) return;
+    t.disabled = true;
+    try {
+      await req("POST", "/admin/upgrade-requests/" + id + "/resolve", { approve: approve });
+      toast(approve ? "დადასტურდა — პაკეტი შეიცვალა" : "უარყოფილია");
+      load();
+    } catch (e2) { toast("ვერ მოხერხდა", true); t.disabled = false; }
+  });
+
   /* ---------- load ---------- */
   async function load() {
     try {
       var r = await Promise.all([
-        api("/admin/overview"), api("/admin/shops"), api("/admin/sellers"), api("/admin/orders"),
+        api("/admin/overview"), api("/admin/shops"), api("/admin/sellers"),
+        api("/admin/orders"), api("/admin/upgrade-requests"), api("/admin/growth"),
       ]);
       renderStats(r[0]);
-      shops = r[1] || []; sellers = r[2] || []; orders = r[3] || [];
-      renderShops(); renderSellers(); renderOrders();
+      shops = r[1] || []; sellers = r[2] || []; orders = r[3] || []; requests = r[4] || []; growth = r[5] || [];
+      renderShops(); renderSellers(); renderOrders(); renderRequests(); renderGrowth();
       $("loading").classList.add("hidden");
       $("admin-content").classList.remove("hidden");
       sb.auth.getUser(readStoredToken()).then(function (u) {

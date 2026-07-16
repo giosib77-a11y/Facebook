@@ -1,16 +1,24 @@
 """Shops endpoints — გამყიდველის მაღაზიები."""
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from pydantic import BaseModel
 
+from app.config import get_settings
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
+from app.core.tiers import TIER_LABELS, TIER_PRICES, limits_for, normalize_tier
 from app.models.shop import ShopCreate, ShopOut
 from app.services.pdf_extract import extract_pdf_text
 
 router = APIRouter(prefix="/shops", tags=["shops"])
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10MB
+
+
+class UpgradeRequestIn(BaseModel):
+    tier: str
 
 
 @router.post("", response_model=ShopOut, status_code=status.HTTP_201_CREATED)
@@ -38,6 +46,76 @@ def my_shops(auth: CurrentAuth = Depends(get_current_auth)):
         .order("created_at")
     )
     return res.data
+
+
+@router.get("/{shop_id}/usage")
+def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
+    """მაღაზიის პაკეტი + მიმდინარე თვის გამოყენება (usage bar-ისთვის)."""
+    shop = run(
+        auth.client.table("shops").select("subscription_tier").eq("id", str(shop_id)).limit(1)
+    )
+    if not shop.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    tier = normalize_tier(shop.data[0].get("subscription_tier"))
+    limits = limits_for(tier)
+    ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    cust = run(
+        auth.client.table("bot_customers").select("psid", count="exact")
+        .eq("shop_id", str(shop_id)).eq("ym", ym).limit(1)
+    )
+    prods = run(
+        auth.client.table("products").select("id", count="exact")
+        .eq("shop_id", str(shop_id)).limit(1)
+    )
+    # მიმდინარე pending მოთხოვნა (თუ migration 0005 გაშვებულია)
+    pending = None
+    try:
+        pr = (
+            auth.client.table("upgrade_requests").select("requested_tier")
+            .eq("shop_id", str(shop_id)).eq("status", "pending")
+            .order("created_at", desc=True).limit(1).execute()
+        )
+        if pr.data:
+            pending = pr.data[0]["requested_tier"]
+    except Exception:
+        pass
+    settings = get_settings()
+    return {
+        "tier": tier,
+        "tier_label": TIER_LABELS[tier],
+        "monthly_customers": cust.count or 0,
+        "customer_limit": limits["customers"],
+        "products": prods.count or 0,
+        "product_limit": limits["products"],
+        "pending_request": pending,
+        "prices": TIER_PRICES,
+        "payment_iban": settings.payment_iban,
+        "payment_contact": settings.payment_contact,
+    }
+
+
+@router.post("/{shop_id}/upgrade-request")
+def request_upgrade(
+    shop_id: uuid.UUID,
+    payload: UpgradeRequestIn,
+    auth: CurrentAuth = Depends(get_current_auth),
+):
+    """გამყიდველი ითხოვს პაკეტს — ადმინი ხელით დაადასტურებს (გადახდის შემდეგ)."""
+    if payload.tier not in TIER_LABELS or payload.tier == "free":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
+    # ძველი pending მოთხოვნები ამ მაღაზიისთვის — ვხურავთ (მხოლოდ ბოლო რჩება)
+    try:
+        auth.client.table("upgrade_requests").update({"status": "cancelled"}).eq(
+            "shop_id", str(shop_id)
+        ).eq("status", "pending").execute()
+    except Exception:
+        pass
+    run(
+        auth.client.table("upgrade_requests").insert(
+            {"shop_id": str(shop_id), "requested_tier": payload.tier, "status": "pending"}
+        )
+    )
+    return {"ok": True}
 
 
 @router.post("/{shop_id}/knowledge", response_model=ShopOut)

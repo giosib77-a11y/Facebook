@@ -19,6 +19,21 @@
     .pill { display: inline-block; font-size: .72rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
     .pill-on { background: #dcfce7; color: var(--ok); }
     .pill-off { background: #f1f5f9; color: var(--muted); }
+    select.tier-sel { width: auto; padding: 6px 8px; border-radius: 8px; font-size: .85rem; }
+    .req-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .req-row:last-child { border-bottom: none; }
+    .muted { color: var(--muted); font-size: .85rem; }
+    .chart { display: flex; align-items: flex-end; gap: 10px; height: 160px; padding-top: 10px; }
+    .chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 5px; }
+    .chart-bars { display: flex; align-items: flex-end; gap: 4px; height: 100%; }
+    .chart-bars .bar { width: 14px; border-radius: 4px 4px 0 0; min-height: 2px; transition: height .3s ease; }
+    .bar.orders { background: var(--primary); }
+    .bar.shops { background: #8b5cf6; }
+    .chart-lbl { font-size: .72rem; color: var(--muted); }
+    .chart-legend { display: flex; gap: 18px; font-size: .82rem; color: var(--muted); margin-top: 10px; }
+    .chart-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+    .stat.mrr { background: linear-gradient(135deg, var(--primary), #8b5cf6); color: #fff; }
+    .stat.mrr .lbl { color: rgba(255,255,255,.85); }
     .row-actions { display: flex; gap: 6px; }
     .icon-btn { cursor: pointer; border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 5px 9px; font-size: .85rem; }
     .icon-btn:hover { background: var(--bg); }
@@ -56,6 +71,12 @@
     </div>
 
     <div id="admin-content" class="hidden">
+      <!-- პაკეტის მოთხოვნები (ჩანს თუ არის pending) -->
+      <div id="requests-card" class="card hidden" style="border-color:var(--primary)">
+        <h2 style="margin-top:0">🔔 პაკეტის მოთხოვნები (<span id="req-count">0</span>)</h2>
+        <div id="requests-list"></div>
+      </div>
+
       <!-- საერთო -->
       <div class="card">
         <div class="list-header">
@@ -63,6 +84,16 @@
           <button id="refresh-btn" class="btn btn-ghost">↻ განახლება</button>
         </div>
         <div class="stat-grid" id="stats"></div>
+      </div>
+
+      <!-- ზრდის გრაფიკი -->
+      <div class="card">
+        <h2 style="margin-top:0">📈 ზრდა (ბოლო 6 თვე)</h2>
+        <div class="chart" id="growth-chart"></div>
+        <div class="chart-legend">
+          <span><i style="background:var(--primary)"></i>შეკვეთები</span>
+          <span><i style="background:#8b5cf6"></i>ახალი მაღაზიები</span>
+        </div>
       </div>
 
       <!-- ჩანართები -->
@@ -77,13 +108,14 @@
         <div class="card">
           <div class="list-header">
             <h2 style="margin:0">მაღაზიები (<span id="shop-count">0</span>)</h2>
+            <button id="csv-shops" class="btn btn-ghost btn-sm">📤 CSV</button>
           </div>
           <input type="search" id="shop-search" placeholder="🔍 ძებნა — მაღაზია ან მფლობელი" style="margin-bottom:12px" />
           <div class="admin-table-wrap">
             <table class="admin">
               <thead><tr>
-                <th>მაღაზია</th><th>მფლობელი</th><th>პროდ.</th><th>შეკვ.</th>
-                <th>Facebook</th><th>ბოტი</th><th>შექმნა</th><th>მოქმედება</th>
+                <th>მაღაზია</th><th>მფლობელი</th><th>პაკეტი</th><th>კლიენტი/თვე</th>
+                <th>პროდ.</th><th>შეკვ.</th><th>Facebook</th><th>ბოტი</th><th>შექმნა</th><th>მოქმედება</th>
               </tr></thead>
               <tbody id="shops-body"></tbody>
             </table>
@@ -97,6 +129,7 @@
         <div class="card">
           <div class="list-header">
             <h2 style="margin:0">გამყიდვლები (<span id="seller-count">0</span>)</h2>
+            <button id="csv-sellers" class="btn btn-ghost btn-sm">📤 CSV</button>
           </div>
           <input type="search" id="seller-search" placeholder="🔍 ძებნა — email" style="margin-bottom:12px" />
           <div class="admin-table-wrap">
@@ -116,6 +149,7 @@
         <div class="card">
           <div class="list-header">
             <h2 style="margin:0">ბოლო შეკვეთები (<span id="order-count">0</span>)</h2>
+            <button id="csv-orders" class="btn btn-ghost btn-sm">📤 CSV</button>
           </div>
           <input type="search" id="order-search" placeholder="🔍 ძებნა — მაღაზია, კლიენტი ან სტატუსი" style="margin-bottom:12px" />
           <div class="admin-table-wrap">
@@ -136,6 +170,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="admin.js?v=3"></script>
+  <script src="admin.js?v=6"></script>
 </body>
 </html>

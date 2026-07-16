@@ -11,16 +11,22 @@ from pydantic import BaseModel
 from app.config import get_settings
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
+from app.core.tiers import TIER_LABELS, TIER_PRICES, limits_for, normalize_tier
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 class AdminShopUpdate(BaseModel):
-    bot_enabled: bool
+    bot_enabled: bool | None = None
+    subscription_tier: str | None = None
 
 
 class AdminRecovery(BaseModel):
     email: str
+
+
+class ResolveRequest(BaseModel):
+    approve: bool
 
 
 def get_current_admin(auth: CurrentAuth = Depends(get_current_auth)) -> CurrentAuth:
@@ -63,7 +69,7 @@ def check(admin: CurrentAuth = Depends(get_current_admin)):
 def overview(admin: CurrentAuth = Depends(get_current_admin)):
     """საერთო მაჩვენებლები — მთელი პლატფორმა."""
     sc = get_service_client()
-    shops = sc.table("shops").select("id,owner_id,facebook_page_id").execute().data or []
+    shops = sc.table("shops").select("id,owner_id,facebook_page_id,subscription_tier").execute().data or []
     orders = sc.table("orders").select("total,status,created_at").execute().data or []
     products = sc.table("products").select("id", count="exact").limit(1).execute()
 
@@ -76,6 +82,14 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         if ts and ts >= cutoff:
             orders_30d += 1
 
+    # MRR + პაკეტების განაწილება
+    mrr = 0
+    tier_counts = {"free": 0, "basic": 0, "standard": 0, "business": 0}
+    for s in shops:
+        t = normalize_tier(s.get("subscription_tier"))
+        tier_counts[t] = tier_counts.get(t, 0) + 1
+        mrr += TIER_PRICES.get(t, 0)
+
     return {
         "total_shops": len(shops),
         "total_sellers": len({s["owner_id"] for s in shops if s.get("owner_id")}),
@@ -84,7 +98,44 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         "total_orders": len(orders),
         "orders_30d": orders_30d,
         "revenue": round(revenue, 2),
+        "mrr": mrr,
+        "tier_counts": tier_counts,
     }
+
+
+def _last_months(n: int) -> list[str]:
+    """ბოლო n თვის 'YYYY-MM' სია (ძველიდან ახლისკენ)."""
+    now = datetime.now(timezone.utc)
+    y, m = now.year, now.month
+    out = []
+    for i in range(n):
+        yy, mm = y, m - i
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        out.append(f"{yy:04d}-{mm:02d}")
+    return list(reversed(out))
+
+
+@router.get("/growth")
+def growth(admin: CurrentAuth = Depends(get_current_admin), months: int = 6):
+    """ბოლო N თვის ზრდა — ახალი მაღაზიები + შეკვეთები თვეობრივად."""
+    months = max(1, min(months, 24))
+    sc = get_service_client()
+    shops = sc.table("shops").select("created_at").execute().data or []
+    orders = sc.table("orders").select("created_at").execute().data or []
+    yms = _last_months(months)
+    sh = {ym: 0 for ym in yms}
+    od = {ym: 0 for ym in yms}
+    for s in shops:
+        ym = str(s.get("created_at"))[:7]
+        if ym in sh:
+            sh[ym] += 1
+    for o in orders:
+        ym = str(o.get("created_at"))[:7]
+        if ym in od:
+            od[ym] += 1
+    return [{"ym": ym, "shops": sh[ym], "orders": od[ym]} for ym in yms]
 
 
 @router.get("/shops")
@@ -96,14 +147,24 @@ def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
     orders = sc.table("orders").select("shop_id").execute().data or []
     emails = _email_map(sc)
 
-    prod_count, order_count = {}, {}
+    ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    try:
+        cust_rows = sc.table("bot_customers").select("shop_id").eq("ym", ym).execute().data or []
+    except Exception:
+        cust_rows = []  # migration ჯერ არ გაშვებულა
+
+    prod_count, order_count, cust_count = {}, {}, {}
     for p in products:
         prod_count[p["shop_id"]] = prod_count.get(p["shop_id"], 0) + 1
     for o in orders:
         order_count[o["shop_id"]] = order_count.get(o["shop_id"], 0) + 1
+    for c in cust_rows:
+        cust_count[c["shop_id"]] = cust_count.get(c["shop_id"], 0) + 1
 
-    return [
-        {
+    result = []
+    for s in shops:
+        tier = normalize_tier(s.get("subscription_tier"))
+        result.append({
             "id": s["id"],
             "name": s.get("name"),
             "owner_email": emails.get(str(s.get("owner_id"))),
@@ -112,9 +173,12 @@ def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
             "orders": order_count.get(s["id"], 0),
             "fb_connected": bool(s.get("facebook_page_id")),
             "bot_enabled": bool(s.get("bot_enabled")),
-        }
-        for s in shops
-    ]
+            "tier": tier,
+            "tier_label": TIER_LABELS[tier],
+            "monthly_customers": cust_count.get(s["id"], 0),
+            "customer_limit": limits_for(tier)["customers"],
+        })
+    return result
 
 
 @router.get("/sellers")
@@ -181,9 +245,18 @@ def shop_detail(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
 
 @router.patch("/shops/{shop_id}")
 def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Depends(get_current_admin)):
-    """ბოტის ჩართვა/გამორთვა (admin kill-switch)."""
+    """ბოტის ჩართვა/გამორთვა (kill-switch) ან პაკეტის შეცვლა."""
+    upd = {}
+    if payload.bot_enabled is not None:
+        upd["bot_enabled"] = payload.bot_enabled
+    if payload.subscription_tier is not None:
+        if payload.subscription_tier not in TIER_LABELS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
+        upd["subscription_tier"] = payload.subscription_tier
+    if not upd:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "განსაახლებელი ველი არ არის")
     sc = get_service_client()
-    res = sc.table("shops").update({"bot_enabled": payload.bot_enabled}).eq("id", shop_id).execute()
+    res = sc.table("shops").update(upd).eq("id", shop_id).execute()
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
     return res.data[0]
@@ -200,6 +273,51 @@ def delete_shop(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
     sc.table("products").delete().eq("shop_id", shop_id).execute()
     sc.table("shops").delete().eq("id", shop_id).execute()
     return None
+
+
+@router.get("/upgrade-requests")
+def list_upgrade_requests(admin: CurrentAuth = Depends(get_current_admin)):
+    """მიმდინარე (pending) პაკეტის განახლების მოთხოვნები."""
+    sc = get_service_client()
+    try:
+        reqs = (
+            sc.table("upgrade_requests").select("*").eq("status", "pending")
+            .order("created_at", desc=True).execute().data or []
+        )
+    except Exception:
+        return []  # migration 0005 ჯერ არ გაშვებულა
+    shops = sc.table("shops").select("id,name,subscription_tier,owner_id").execute().data or []
+    smap = {s["id"]: s for s in shops}
+    emails = _email_map(sc)
+    for r in reqs:
+        s = smap.get(r.get("shop_id")) or {}
+        r["shop_name"] = s.get("name")
+        r["current_tier"] = normalize_tier(s.get("subscription_tier"))
+        r["owner_email"] = emails.get(str(s.get("owner_id")))
+        r["tier_label"] = TIER_LABELS.get(r.get("requested_tier"), r.get("requested_tier"))
+    return reqs
+
+
+@router.post("/upgrade-requests/{req_id}/resolve")
+def resolve_upgrade_request(
+    req_id: str, payload: ResolveRequest, admin: CurrentAuth = Depends(get_current_admin)
+):
+    """მოთხოვნის დადასტურება (პაკეტს ცვლის) ან უარყოფა."""
+    sc = get_service_client()
+    req = sc.table("upgrade_requests").select("*").eq("id", req_id).limit(1).execute().data
+    if not req:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მოთხოვნა ვერ მოიძებნა")
+    r = req[0]
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if payload.approve:
+        tier = r["requested_tier"]
+        if tier not in TIER_LABELS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
+        sc.table("shops").update({"subscription_tier": tier}).eq("id", r["shop_id"]).execute()
+        sc.table("upgrade_requests").update({"status": "approved", "resolved_at": now_iso}).eq("id", req_id).execute()
+    else:
+        sc.table("upgrade_requests").update({"status": "rejected", "resolved_at": now_iso}).eq("id", req_id).execute()
+    return {"ok": True}
 
 
 @router.post("/recovery")

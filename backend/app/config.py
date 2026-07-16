@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # ადმინ პანელის მფლობელი — მხოლოდ ეს email ხედავს /admin-ს (override .env-ში ADMIN_EMAIL-ით)
     admin_email: str = "giosib77@gmail.com"
 
+    # გადახდის რეკვიზიტები (გამოწერისთვის) — შეავსე .env-ში PAYMENT_IBAN / PAYMENT_CONTACT-ით
+    payment_iban: str = "[შენი ანგარიშის ნომერი — შეავსე PAYMENT_IBAN]"
+    payment_contact: str = "[ქვითრის გამოსაგზავნი კონტაქტი — შეავსე PAYMENT_CONTACT]"
+
     model_config = SettingsConfigDict(
         env_file=(_ROOT_ENV, _BACKEND_ENV),
         env_file_encoding="utf-8",

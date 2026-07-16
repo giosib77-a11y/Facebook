@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
+from app.core.tiers import limits_for
 from app.models.product import ProductCreate, ProductOut, ProductUpdate
 from app.services.import_products import parse_products_file
 
@@ -13,10 +14,32 @@ router = APIRouter(prefix="/products", tags=["products"])
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5MB
 
 
+def _product_limit_left(auth, shop_id) -> int | None:
+    """დარჩენილი პროდუქტების რაოდენობა პაკეტის მიხედვით. None = ულიმიტო.
+    თუ migration ჯერ არ გაშვებულა (subscription_tier არ არსებობს) — None (ლიმიტი გამორთ.)."""
+    try:
+        shop = auth.client.table("shops").select("subscription_tier").eq("id", str(shop_id)).limit(1).execute()
+        if not shop.data:
+            return None
+        limit = limits_for(shop.data[0].get("subscription_tier"))["products"]
+        if limit is None:
+            return None
+        cnt = auth.client.table("products").select("id", count="exact").eq("shop_id", str(shop_id)).limit(1).execute()
+        return max(0, limit - (cnt.count or 0))
+    except Exception:
+        return None
+
+
 @router.post("", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
 def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_current_auth)):
     """ამატებს პროდუქტს. RLS insert პოლისი ამოწმებს, რომ shop_id მომხმარებლის
     მაღაზიას ეკუთვნის — სხვისი მაღაზიისთვის ჩაწერა 403-ით ჩავარდება."""
+    left = _product_limit_left(auth, payload.shop_id)
+    if left is not None and left <= 0:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "პაკეტის ლიმიტს მიაღწიე — მეტი პროდუქტისთვის განაახლე პაკეტი.",
+        )
     res = run(auth.client.table("products").insert(payload.model_dump(mode="json")))
     if not res.data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "პროდუქტის შექმნა ვერ მოხერხდა")
@@ -61,6 +84,13 @@ async def import_products(
         )
     if not products:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "დასამატებელი პროდუქტი ვერ მოიძებნა")
+
+    left = _product_limit_left(auth, shop_id)
+    if left is not None and len(products) > left:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"პაკეტის ლიმიტი: კიდევ მხოლოდ {left} პროდუქტის დამატება შეგიძლია. განაახლე პაკეტი.",
+        )
 
     for p in products:
         p["shop_id"] = str(shop_id)
