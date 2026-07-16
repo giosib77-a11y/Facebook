@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
+    # ბოტის საუბრის მეხსიერება — ბოლო N შეტყობინება, ბოლო H საათში (0 = გამორთული)
+    bot_memory_messages: int = 20
+    bot_memory_hours: int = 24
+
     # Facebook Messenger (ნაბიჯი 5)
     fb_app_id: str = ""
     fb_app_secret: str = ""

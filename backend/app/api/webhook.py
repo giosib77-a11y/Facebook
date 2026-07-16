@@ -1,5 +1,6 @@
 """Facebook Messenger webhook — ვერიფიკაცია + შემოსული შეტყობინებები."""
 import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
 
@@ -11,6 +12,54 @@ from app.services.bot import get_bot_reply
 from app.services.facebook import send_text_message, verify_signature
 
 router = APIRouter(tags=["messenger webhook"])
+
+
+def _load_history(sc, shop_id: str, psid: str) -> list:
+    """კლიენტის ბოლო შეტყობინებები (მეხსიერება). migration 0008-ის გარეშე — [] (უმეხსიერებოდ)."""
+    s = get_settings()
+    if s.bot_memory_messages <= 0:
+        return []
+    try:
+        r = (
+            sc.table("bot_conversations").select("messages,updated_at")
+            .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
+        )
+        if not r.data:
+            return []
+        row = r.data[0]
+        try:
+            ts = datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) - ts > timedelta(hours=s.bot_memory_hours):
+                return []  # ძველი საუბარი — ახლიდან
+        except Exception:
+            pass
+        msgs = row.get("messages") or []
+        return msgs[-s.bot_memory_messages:]
+    except Exception:
+        return []
+
+
+def _save_turn(sc, shop_id: str, psid: str, history: list, user_text: str, bot_reply: str) -> None:
+    """ახალი წყვილის (კლიენტი+ბოტი) შენახვა, ბოლო N-მდე მოჭრით."""
+    s = get_settings()
+    if s.bot_memory_messages <= 0:
+        return
+    try:
+        new = list(history) + [
+            {"role": "user", "content": user_text},
+            {"role": "bot", "content": bot_reply},
+        ]
+        new = new[-s.bot_memory_messages:]
+        sc.table("bot_conversations").upsert(
+            {
+                "shop_id": shop_id,
+                "psid": psid,
+                "messages": new,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+    except Exception:
+        pass
 
 
 @router.get("/webhook")
@@ -116,11 +165,13 @@ def _process_events(data: dict) -> None:
                     pass
                 continue
 
+            history = _load_history(sc, shop["id"], str(sender_id))
             try:
-                reply = get_bot_reply(shop, products, text, [])
+                reply = get_bot_reply(shop, products, text, history)
             except Exception:
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."
             try:
                 send_text_message(page_token, sender_id, reply)
+                _save_turn(sc, shop["id"], str(sender_id), history, text, reply)
             except Exception:
                 pass  # ლოგირება მოგვიანებით
