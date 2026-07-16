@@ -91,7 +91,7 @@
       <div class="tabs-nav">
         <button class="tab-btn active" data-tab="products">🛒 პროდუქტები</button>
         <button class="tab-btn" data-tab="orders">📋 შეკვეთები</button>
-        <button class="tab-btn" data-tab="bot">🤖 ბოტი &amp; Facebook</button>
+        <button class="tab-btn" data-tab="bot">🤖 ბოტი · Facebook &amp; Instagram</button>
       </div>
 
       <!-- ===== ჩანართი: პროდუქტები ===== -->
@@ -163,7 +163,7 @@
         <!-- შესაკვეთი ლინკი (გასაზიარებლად) -->
         <div class="card" id="order-link-card">
           <h2 style="margin-top:0">🔗 შესაკვეთი ლინკი</h2>
-          <p class="import-hint">გაუგზავნე კლიენტებს ან დაამაგრე Facebook გვერდის ღილაკში. კლიენტი შეავსებს და შეკვეთა აქ გამოჩნდება.</p>
+          <p class="import-hint">გაუგზავნე კლიენტებს ან დაამაგრე Facebook/Instagram გვერდის ღილაკში. კლიენტი შეავსებს და შეკვეთა აქ გამოჩნდება.</p>
           <div class="import-row">
             <input type="text" id="order-link" readonly />
             <button id="copy-link-btn" class="btn btn-ghost">კოპირება</button>
@@ -197,8 +197,8 @@
 
         <!-- Facebook გვერდის დაკავშირება -->
         <div class="card">
-          <h2 style="margin-top:0">🔵 Facebook გვერდი</h2>
-          <p class="import-hint">დააკავშირე შენი Facebook გვერდი — ბოტი Messenger-ში კლიენტებს უპასუხებს მაღაზიის მარაგით.</p>
+          <h2 style="margin-top:0">🔵 Facebook &amp; 📸 Instagram</h2>
+          <p class="import-hint">დააკავშირე შენი Facebook გვერდი — ბოტი Messenger-ში კლიენტებს უპასუხებს მაღაზიის მარაგით. თუ გვერდზე Instagram Business ანგარიშია მიბმული, ბოტი Instagram Direct-შიც იმუშავებს (ერთი დაკავშირებით).</p>
           <div id="fb-section" class="fb-section">
             <div id="fb-status" class="fb-status"></div>
             <div class="fb-actions">
@@ -206,6 +206,20 @@
               <button id="fb-disconnect-btn" class="btn btn-danger hidden">გათიშვა</button>
             </div>
           </div>
+        </div>
+
+        <!-- ბოტის ენა -->
+        <div class="card">
+          <h2 style="margin-top:0">🌍 ბოტის ენა</h2>
+          <p class="import-hint">რომელ ენაზე უპასუხოს ბოტმა კლიენტებს Messenger/Instagram-ში.</p>
+          <label>ენა
+            <select id="bot-language">
+              <option value="auto">ავტომატური — კლიენტის ენა (ქართული/English/Русский)</option>
+              <option value="ka">მხოლოდ ქართული</option>
+              <option value="en">Only English</option>
+              <option value="ru">Только русский</option>
+            </select>
+          </label>
         </div>
 
         <!-- ბოტის ცოდნა (PDF) -->
@@ -256,6 +270,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=28"></script>
+  <script src="app.js?v=30"></script>
 </body>
 </html>

@@ -39,7 +39,7 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     except json.JSONDecodeError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON")
 
-    if data.get("object") != "page":
+    if data.get("object") not in ("page", "instagram"):
         return {"status": "ignored"}
 
     # Facebook ელოდება სწრაფ 200-ს — დამუშავება ფონზე
@@ -51,10 +51,17 @@ def _process_events(data: dict) -> None:
     """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
     sc = get_service_client()
     for entry in data.get("entry", []):
-        page_id = str(entry.get("id"))
-        shop_res = (
-            sc.table("shops").select("*").eq("facebook_page_id", page_id).limit(1).execute()
-        )
+        # entry.id შეიძლება იყოს Facebook გვერდის ან Instagram ანგარიშის ID
+        eid = str(entry.get("id"))
+        try:
+            shop_res = (
+                sc.table("shops").select("*")
+                .or_(f"facebook_page_id.eq.{eid},instagram_account_id.eq.{eid}")
+                .limit(1).execute()
+            )
+        except Exception:
+            # migration 0006 ჯერ არ გაშვებულა (instagram_account_id არ არსებობს) — fallback
+            shop_res = sc.table("shops").select("*").eq("facebook_page_id", eid).limit(1).execute()
         if not shop_res.data:
             continue
         shop = shop_res.data[0]

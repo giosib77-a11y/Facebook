@@ -21,6 +21,10 @@ class UpgradeRequestIn(BaseModel):
     tier: str
 
 
+class ShopSettingsUpdate(BaseModel):
+    bot_language: str
+
+
 @router.post("", response_model=ShopOut, status_code=status.HTTP_201_CREATED)
 def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_auth)):
     """ქმნის მაღაზიას მიმდინარე მომხმარებლის სახელზე.
@@ -46,6 +50,23 @@ def my_shops(auth: CurrentAuth = Depends(get_current_auth)):
         .order("created_at")
     )
     return res.data
+
+
+@router.patch("/{shop_id}", response_model=ShopOut)
+def update_shop_settings(
+    shop_id: uuid.UUID,
+    payload: ShopSettingsUpdate,
+    auth: CurrentAuth = Depends(get_current_auth),
+):
+    """მაღაზიის პარამეტრები — ბოტის ენა (auto / ka / en)."""
+    if payload.bot_language not in ("auto", "ka", "en", "ru"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი ენა")
+    res = run(
+        auth.client.table("shops").update({"bot_language": payload.bot_language}).eq("id", str(shop_id))
+    )
+    if not res.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    return res.data[0]
 
 
 @router.get("/{shop_id}/usage")

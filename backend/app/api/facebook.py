@@ -74,14 +74,26 @@ def connect_callback(
     except Exception as e:
         return _finish("error", reason=f"subscribe:{e}")
 
+    # გვერდზე მიბმული Instagram Business ანგარიში (თუ არსებობს) — IG-ბოტისთვის
+    ig_account_id = None
+    try:
+        ig_account_id = fb.get_page_instagram_account(page_id, page_token)
+    except Exception:
+        pass  # IG არასავალდებულოა — გვერდი მაინც დაუკავშირდება
+
     sc = get_service_client()
-    sc.table("shops").update(
-        {
-            "facebook_page_id": page_id,
-            "facebook_page_token": encrypt(page_token),
-            "bot_enabled": True,
-        }
-    ).eq("id", data["shop_id"]).eq("owner_id", data["user_id"]).execute()
+    upd = {
+        "facebook_page_id": page_id,
+        "facebook_page_token": encrypt(page_token),
+        "instagram_account_id": ig_account_id,
+        "bot_enabled": True,
+    }
+    try:
+        sc.table("shops").update(upd).eq("id", data["shop_id"]).eq("owner_id", data["user_id"]).execute()
+    except Exception:
+        # migration 0006 ჯერ არ გაშვებულა — IG-ის გარეშე მაინც დავაკავშიროთ
+        upd.pop("instagram_account_id", None)
+        sc.table("shops").update(upd).eq("id", data["shop_id"]).eq("owner_id", data["user_id"]).execute()
 
     return _finish("connected", page=page_name)
 
@@ -91,7 +103,7 @@ def disconnect(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
     """გვერდის გათიშვა — ასუფთავებს page მონაცემებს და თიშავს ბოტს."""
     res = run(
         auth.client.table("shops")
-        .update({"facebook_page_id": None, "facebook_page_token": None, "bot_enabled": False})
+        .update({"facebook_page_id": None, "facebook_page_token": None, "instagram_account_id": None, "bot_enabled": False})
         .eq("id", str(shop_id))
     )
     if not res.data:

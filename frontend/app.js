@@ -545,11 +545,16 @@
       return;
     }
     section.classList.remove("hidden");
+    const langSel = $("bot-language");
+    if (langSel) langSel.value = shop.bot_language || "auto";
     const connected = !!shop.facebook_page_id;
     if (connected) {
+      const ig = shop.instagram_account_id
+        ? ' <span class="fb-connected">+ 📸 Instagram</span>'
+        : ' <span class="fb-disconnected">(Instagram არ არის მიბმული ამ გვერდზე)</span>';
       $("fb-status").innerHTML =
-        '<span class="fb-connected">✅ დაკავშირებულია Facebook გვერდთან</span> ' +
-        "(ბოტი " + (shop.bot_enabled ? "ჩართულია" : "გამორთულია") + ")";
+        '<span class="fb-connected">✅ დაკავშირებულია Facebook გვერდთან</span>' + ig +
+        " (ბოტი " + (shop.bot_enabled ? "ჩართულია" : "გამორთულია") + ")";
       $("fb-connect-btn").classList.add("hidden");
       $("fb-disconnect-btn").classList.remove("hidden");
     } else {
@@ -559,6 +564,18 @@
       $("fb-disconnect-btn").classList.add("hidden");
     }
   }
+
+  on("bot-language", "change", async (e) => {
+    if (!currentShopId) return;
+    try {
+      await api("/shops/" + currentShopId, "PATCH", { bot_language: e.target.value });
+      const s = shops.find((x) => x.id === currentShopId);
+      if (s) s.bot_language = e.target.value;
+      toast("ბოტის ენა შეიცვალა");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
   on("fb-connect-btn", "click", async () => {
     if (!currentShopId) return toast("ჯერ აირჩიე მაღაზია", true);

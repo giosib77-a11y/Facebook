@@ -13,8 +13,11 @@ import httpx
 
 from app.config import get_settings
 
-# ---- OAuth scope: Messenger-ისთვის საჭირო ნებართვები ----
-OAUTH_SCOPES = "pages_show_list,pages_messaging,pages_manage_metadata"
+# ---- OAuth scope: Messenger + Instagram-ისთვის საჭირო ნებართვები ----
+OAUTH_SCOPES = (
+    "pages_show_list,pages_messaging,pages_manage_metadata,"
+    "instagram_basic,instagram_manage_messages"
+)
 
 
 def _graph_base() -> str:
@@ -131,6 +134,18 @@ def subscribe_page(page_id: str, page_token: str) -> None:
         timeout=15,
     )
     r.raise_for_status()
+
+
+def get_page_instagram_account(page_id: str, page_token: str) -> str | None:
+    """გვერდზე მიბმული Instagram Business ანგარიშის ID (თუ არსებობს)."""
+    r = httpx.get(
+        f"{_graph_base()}/{page_id}",
+        params={"access_token": page_token, "fields": "instagram_business_account"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    iba = r.json().get("instagram_business_account")
+    return iba.get("id") if iba else None
 
 
 # ---------------------------------------------------------------------------

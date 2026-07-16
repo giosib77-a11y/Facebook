@@ -18,7 +18,9 @@ class ShopOut(BaseModel):
     description: str | None = None
     currency: str
     facebook_page_id: str | None = None
+    instagram_account_id: str | None = None
     bot_enabled: bool
+    bot_language: str = "auto"
     knowledge_filename: str | None = None  # ატვირთული PDF-ის სახელი (ცოდნის ნიშანი)
     created_at: datetime
     updated_at: datetime

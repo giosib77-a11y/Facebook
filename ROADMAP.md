@@ -6,6 +6,10 @@
 
 ## 📸 Instagram-ის მხარდაჭერა (Messenger-ის გვერდით)
 
+> ✅ **კოდი გაკეთდა** (migration 0006 + webhook `object=="instagram"` + connect IG account id +
+> scopes). დარჩა **Meta-ს მხარის კონფიგი** — იხ. `INSTAGRAM_SETUP.md`. გადადებულია
+> (IG Business ანგარიშზე წვდომამდე).
+
 ბოტი ერთია, არხი ორი — Messenger + Instagram DM. იმავე Meta პლატფორმაზეა,
 ამიტომ ბოტის ლოგიკა (`get_bot_reply`) 100%-ით reuse-დება.
 

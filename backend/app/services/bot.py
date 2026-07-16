@@ -14,10 +14,18 @@ _TRANSIENT = ("503", "UNAVAILABLE", "500", "429", "RESOURCE_EXHAUSTED", "high de
 # ---------------------------------------------------------------------------
 # System prompt — ქართული. ჩაანაცვლე საჭიროებისამებრ.
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გაყიდვების ასისტენტი — ემსახურები ქართულ მაღაზიას Facebook Messenger-ში.
+# ბოტის ენა — მაღაზიის bot_language პარამეტრის მიხედვით
+_LANG_RULES = {
+    "auto": "პასუხობ იმ ენაზე, რომელზეც კლიენტი წერს (ქართული, English ან русский); თუ ვერ ხვდები — ქართულად.",
+    "ka": "პასუხობ ყოველთვის მხოლოდ ქართულად.",
+    "en": "Always reply in English only.",
+    "ru": "Отвечай всегда только на русском языке.",
+}
+
+SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გაყიდვების ასისტენტი — ემსახურები მაღაზიას Facebook Messenger-სა და Instagram-ში.
 
 მთავარი წესები:
-1. პასუხობ ყოველთვის და მხოლოდ ქართულად, თბილად, თავაზიანად და მოკლედ.
+1. {language_rule} პასუხობ თბილად, თავაზიანად და მოკლედ.
 2. იყენებ მხოლოდ ქვემოთ მოცემულ მარაგს. არ მოიგონო პროდუქტი, ფასი, მახასიათებელი ან ხელმისაწვდომობა.
 3. თუ კლიენტი ეძებს პროდუქტს, რომელიც მარაგში არ არის — თავაზიანად უთხარი რომ ამჟამად არ გვაქვს და, თუ შესაძლებელია, შესთავაზე მსგავსი მარაგიდან.
 4. ფასი ყოველთვის მიუთითე ვალუტით ({currency}). თუ რაოდენობა 0-ია — თქვი რომ პროდუქტი ამჟამად ამოწურულია.
@@ -73,6 +81,7 @@ def build_system_prompt(shop, products) -> str:
     knowledge_section = (
         f"\nდამატებითი ინფორმაცია (მაღაზიის დოკუმენტიდან):\n{knowledge}\n" if knowledge else ""
     )
+    language_rule = _LANG_RULES.get(shop.get("bot_language") or "auto", _LANG_RULES["auto"])
     return SYSTEM_PROMPT_TEMPLATE.format(
         shop_name=shop.get("name") or "მაღაზია",
         currency=currency,
@@ -80,6 +89,7 @@ def build_system_prompt(shop, products) -> str:
         inventory=_format_inventory(products, currency),
         order_link=order_link_for(shop),
         knowledge_section=knowledge_section,
+        language_rule=language_rule,
     )
 
 
