@@ -15,12 +15,13 @@
     }
     b.textContent = "⚠️ შეცდომა: " + msg;
   }
+  // გლობალური შეცდომები — მხოლოდ console-ში (მომხმარებელს ტექნიკურ შეცდომას არ ვაჩვენებთ)
   window.addEventListener("error", function (e) {
-    showBanner((e.message || "JS error") + "  @ " + (e.filename || "") + ":" + (e.lineno || ""));
+    console.error("JS error:", e.message, "@", e.filename + ":" + e.lineno);
   });
   window.addEventListener("unhandledrejection", function (e) {
     var r = e.reason;
-    showBanner("Promise: " + (r && r.message ? r.message : String(r)));
+    console.error("Unhandled promise:", r && r.message ? r.message : r);
   });
 
 

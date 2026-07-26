@@ -5,9 +5,10 @@ service_role-ით კითხულობს (როგორც რეალ
 Facebook-ის ინტეგრაცია მოვა მომდევნო ნაბიჯზე; production-ში ეს endpoint მოიხსნება
 ან დაიცვება.
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.config import get_settings
+from app.core.ratelimit import rate_limit
 from app.core.supabase_client import get_service_client
 from app.models.chat import TestChatRequest, TestChatResponse
 from app.services.bot import get_bot_reply
@@ -15,9 +16,16 @@ from app.services.bot import get_bot_reply
 router = APIRouter(tags=["bot (dev)"])
 
 
-@router.post("/test-chat", response_model=TestChatResponse)
+@router.post(
+    "/test-chat",
+    response_model=TestChatResponse,
+    dependencies=[Depends(rate_limit("test_chat", limit=15, window=60))],
+)
 def test_chat(payload: TestChatRequest):
     settings = get_settings()
+    # DEV-only endpoint — production-ში დახურულია (დაუცველად Gemini-ს იძახებს).
+    if settings.is_production:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     if not settings.gemini_api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

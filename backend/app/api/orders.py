@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.db import run
+from app.core.ratelimit import rate_limit
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.models.order import OrderCreate, OrderOut, OrderStatusUpdate
@@ -37,7 +38,7 @@ def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
 
 
 # ---------- საჯარო (კლიენტი, ავტორიზაციის გარეშე) ----------
-@router.get("/public-menu")
+@router.get("/public-menu", dependencies=[Depends(rate_limit("public_menu", limit=60, window=60))])
 def public_menu(shop_id: uuid.UUID):
     """მაღაზიის სახელი + აქტიური პროდუქტები — შესაკვეთი ფორმისთვის."""
     sc = get_service_client()
@@ -56,7 +57,11 @@ def public_menu(shop_id: uuid.UUID):
     return {"shop": shop.data[0], "products": products}
 
 
-@router.post("/orders", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/orders",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit("create_order", limit=10, window=60))],
+)
 def create_order(payload: OrderCreate):
     """კლიენტი ქმნის შეკვეთას (საჯარო). ჩაწერა service_role-ით."""
     sc = get_service_client()

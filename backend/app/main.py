@@ -1,9 +1,10 @@
 """FastAPI entrypoint."""
+import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.admin import router as admin_router
@@ -24,14 +25,43 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# დროებითი ღია CORS — production-ში შეიზღუდება frontend-ის დომენით
+logger = logging.getLogger("app")
+
+# CORS — origin-ები .env-ის CORS_ORIGINS-იდან ("*" = ყველა, მხოლოდ dev-ისთვის).
+# production-ში დააყენე CORS_ORIGINS="https://shendomen.ge".
+_origins = settings.cors_origins_list
+# credentials + "*" ერთად ბრაუზერში არ მუშაობს — კონკრეტულ დომენებზე ჩავრთავთ.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """უსაფრთხოების ჰედერები ყველა პასუხზე."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    if settings.is_production:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """მოულოდნელი შეცდომა — production-ში ზოგადი პასუხი (stack trace არ ჟონავს)."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    if settings.is_production:
+        return JSONResponse(status_code=500, content={"detail": "სერვერის შიდა შეცდომა"})
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 app.include_router(health_router)
 app.include_router(shops_router)

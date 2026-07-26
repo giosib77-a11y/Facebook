@@ -24,8 +24,9 @@
 - [ ] `frontend/config.js` → `API_BASE` (თუ backend სხ ვა დომენზეა)
 
 ### 3. CORS — შემოვფარგლოთ
-- [ ] backend CORS `*`-იდან → **მხ ოლოდ ჩვენი დომენი**
-      (`backend/app/main.py`, CORSMiddleware `allow_origins`)
+- [x] **კოდი მზადაა** — CORS ახლა `.env`-ის `CORS_ORIGINS`-იდან იკითხება
+      (`backend/app/main.py` + `config.py`). dev-ში `*`, production-ში კონკრეტული დომენი.
+- [ ] deploy-ზე: `.env`-ში `CORS_ORIGINS=https://shendomen.ge` (მხ ოლოდ env-ცვლადის დაყენება)
 
 ### 4. Supabase Auth — email დადასტურება ისევ ჩავრთოთ
 - [ ] "Confirm email" ისევ ჩართე (ტესტისთვის გამორთული იყო)
@@ -42,8 +43,11 @@
 ## 🟡 მნიშვნელოვანი
 
 ### 6. Rate limiting
-- [ ] ღია endpoint-ებს (`/orders`, login, register) დავამატოთ rate limit
-      (`slowapi` FastAPI-სთვის, ან Cloudflare level-ზე)
+- [x] **კოდი მზადაა** — საჯარო endpoint-ებზე per-IP rate limit ჩაშენდა
+      (`backend/app/core/ratelimit.py`, დამოკიდებულების გარეშე, in-memory):
+      `POST /orders` (10/წთ), `GET /public-menu` (60/წთ), `POST /test-chat` (15/წთ).
+      reverse-proxy-ს (`X-Forwarded-For`) ითვალისწინებს.
+- [ ] მრავალ-instance-ზე გადასვლისას → Redis/Cloudflare level (ერთ instance-ზე ეს საკმარისია)
 
 ### 7. მარაგის race condition
 - [ ] `create_order`-ში მარაგის კლება ატომური გავხ ადოთ
@@ -78,8 +82,12 @@
 > Advanced Access = ფართო საზოგადოება — სწორედ ეს სჭირდება App Review + Business Verification.
 
 ### 9. Debug/logs
-- [ ] პროდაქშენში debug/სიტყ ვიერი error-ები გამორთე (stack trace არ ჩანდეს)
-- [ ] მინიმალური logging (Sentry უფასო tier — error tracking)
+- [x] **კოდი მზადაა** — `APP_ENV=production`-ზე:
+      - გლობალური exception handler → კლიენტს ზოგადი „სერვერის შიდა შეცდომა" (stack trace არ ჟონავს)
+      - `db.py` → ბაზის ნედლი ტექსტი აღარ უბრუნდება კლიენტს (მხოლოდ ლოგში)
+      - dev endpoint `/test-chat` → 404 (დაუცველად Gemini-ს აღარ იძახებს)
+- [ ] deploy-ზე: `.env`-ში `APP_ENV=production` დაყენება
+- [ ] (სასურველი) Sentry უფასო tier — error tracking
 
 ---
 
@@ -88,7 +96,8 @@
 - [ ] JWT ლოკალური ვერიფიკაცია (ყოველ request-ზე Supabase-ს არ დაეკითხ ოს — სისწრაფე)
 - [ ] Pagination (პროდუქტები/შეკვეთები ბევრი რომ გახ დეს)
 - [ ] DB backups (Supabase-ში ჩართვა/შემოწმება)
-- [ ] Security headers (CSP, HSTS)
+- [x] Security headers — ჩაშენდა (`X-Content-Type-Options`, `X-Frame-Options`,
+      `Referrer-Policy`, `Permissions-Policy`; `HSTS` მხოლოდ production-ში). CSP — მოგვიანებით.
 - [ ] Uptime მონიტორინგი (ბოტი რომ დაწვეს, გავიგოთ)
 
 ---

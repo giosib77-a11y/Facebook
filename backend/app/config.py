@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
+    # CORS — ნებადართული origin-ები (მძიმით გამოყოფილი). "*" = ყველა (მხოლოდ dev-ისთვის).
+    # production-ში .env-ში: CORS_ORIGINS="https://shendomen.ge"
+    cors_origins: str = "*"
+
     # Gemini (ბოტი — ნაბიჯი 4)
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
@@ -52,6 +56,18 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in ("production", "prod")
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """CORS_ORIGINS-ს სიად აქცევს. '*' → ['*']."""
+        raw = (self.cors_origins or "").strip()
+        if not raw or raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 @lru_cache
