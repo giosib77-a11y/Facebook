@@ -1,7 +1,9 @@
 """Orders endpoints — საჯარო შესაკვეთი ფორმა + გამყიდველის შეკვეთების მართვა."""
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from postgrest.exceptions import APIError
 
 from app.core.db import run
 from app.core.ratelimit import rate_limit
@@ -10,6 +12,36 @@ from app.core.supabase_client import get_service_client
 from app.models.order import OrderCreate, OrderOut, OrderStatusUpdate
 
 router = APIRouter(tags=["orders"])
+
+
+def _decrement_stock_atomic(sc, shop_id: str, req_items: list) -> bool | None:
+    """ატომური მარაგის დაკლება migration 0009-ის RPC-ით.
+
+    აბრუნებს:
+      True  — დაიკლო წარმატებით (race-safe)
+      None  — RPC ჯერ არ არსებობს (migration 0009 არ გაშვებულა) → legacy fallback
+    არასაკმარის მარაგზე/არარსებულ პროდუქტზე → HTTPException 400.
+    """
+    try:
+        sc.rpc("decrement_stock", {"p_shop_id": shop_id, "p_items": req_items}).execute()
+        return True
+    except APIError as e:
+        msg = getattr(e, "message", None) or str(e)
+        code = getattr(e, "code", None)
+        m = re.search(r"INSUFFICIENT_STOCK\|(.*?)\|(\d+)", msg)
+        if m:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"„{m.group(1)}“ — მარაგში მხოლოდ {m.group(2)} ცალია",
+            )
+        if "PRODUCT_NOT_FOUND" in msg:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "პროდუქტი ვერ მოიძებნა მაღაზიაში")
+        if "INVALID_QTY" in msg:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "რაოდენობა არასწორია")
+        # ფუნქცია ჯერ არ არსებობს → legacy გზაზე გადავდივართ
+        if code in ("42883", "PGRST202") or "does not exist" in msg or "Could not find" in msg:
+            return None
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მარაგის განახლება ვერ მოხერხდა")
 
 
 def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
@@ -83,7 +115,8 @@ def create_order(payload: OrderCreate):
     )
     price_map = {p["id"]: p for p in db_products}
 
-    items, total = [], 0.0
+    # ფასი/სახელი ბაზიდან; მარაგის შემოწმებას ატომური RPC აკეთებს (ქვემოთ).
+    items, req_items, total = [], [], 0.0
     for i in payload.items:
         pid = str(i.product_id) if i.product_id else None
         prod = price_map.get(pid)
@@ -91,18 +124,27 @@ def create_order(payload: OrderCreate):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, f"პროდუქტი ვერ მოიძებნა მაღაზიაში: {i.name}"
             )
-        available = int(prod["quantity"])
-        if i.quantity > available:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                f"„{prod['name']}“ — მარაგში მხოლოდ {available} ცალია (ითხოვე {i.quantity})",
-            )
         price = float(prod["price"])
         items.append(
             {"product_id": pid, "name": prod["name"], "price": price, "quantity": i.quantity}
         )
+        req_items.append({"product_id": pid, "quantity": i.quantity})
         total += price * i.quantity
     total = round(total, 2)
+
+    # ── მარაგის ატომური დაკლება (race-safe) ──────────────────────────────────
+    # atomic=True → RPC-მ დააკლო; None → RPC არ არსებობს → legacy გზა (არა-ატომური).
+    atomic = _decrement_stock_atomic(sc, str(payload.shop_id), req_items)
+    if atomic is None:
+        for i in payload.items:
+            prod = price_map.get(str(i.product_id) if i.product_id else None)
+            if prod and i.quantity > int(prod["quantity"]):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"„{prod['name']}“ — მარაგში მხოლოდ {int(prod['quantity'])} ცალია "
+                    f"(ითხოვე {i.quantity})",
+                )
+        _apply_stock_delta(sc, str(payload.shop_id), items, -1)
 
     row = {
         "shop_id": str(payload.shop_id),
@@ -116,10 +158,10 @@ def create_order(payload: OrderCreate):
     }
     res = sc.table("orders").insert(row).execute()
     if not res.data:
+        # შეკვეთა ვერ ჩაიწერა — მარაგი უკან დავაბრუნოთ (თუ უკვე დავაკელით)
+        if atomic:
+            _apply_stock_delta(sc, str(payload.shop_id), items, +1)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთის შექმნა ვერ მოხერხდა")
-
-    # მარაგის დაკლება (შეკვეთა გაფორმდა)
-    _apply_stock_delta(sc, str(payload.shop_id), items, -1)
 
     return {"ok": True, "order_id": res.data[0]["id"], "total": total}
 
