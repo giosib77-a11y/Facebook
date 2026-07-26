@@ -87,6 +87,16 @@
         </form>
       </div>
 
+      <!-- 🔔 საუბრები, რომლებსაც ოპერატორი სჭირდება (handoff) — ჩანს მხოლოდ როცა არის -->
+      <div id="attention-card" class="card attention-card hidden">
+        <div class="list-header">
+          <h2 style="margin:0">🔔 ყურადღება სჭირდება (<span id="attention-count">0</span>)</h2>
+          <button id="attention-refresh-btn" class="btn btn-ghost">↻</button>
+        </div>
+        <p class="import-hint">ამ საუბრებში ბოტმა ვერ უპასუხა ან კლიენტმა ოპერატორი ითხოვა — შედი Messenger/Instagram-ში და უპასუხე. მოგვარების შემდეგ დააჭირე „მოგვარდა“.</p>
+        <div id="attention-list" class="product-list"></div>
+      </div>
+
       <!-- ჩანართები -->
       <div class="tabs-nav">
         <button class="tab-btn active" data-tab="products">🛒 პროდუქტები</button>
@@ -270,6 +280,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=32"></script>
 </body>
 </html>

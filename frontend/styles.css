@@ -63,6 +63,14 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+/* 🔔 handoff — „ყურადღება სჭირდება" ბარათი (გამოირჩევა ქარვისფერი აქცენტით) */
+.attention-card {
+  border-color: #f59e0b;
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+}
+.attention-card h2 { color: #b45309; }
+
 /* Auth */
 .auth-view { min-height: 80vh; display: flex; align-items: center; justify-content: center; }
 .auth-card { width: 100%; max-width: 400px; }

@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
 from app.core.tiers import DAILY_ABUSE_CAP, limits_for
-from app.services.bot import get_bot_reply
+from app.services.bot import get_bot_reply, parse_reply
 from app.services.facebook import send_text_message, verify_signature
 
 router = APIRouter(tags=["messenger webhook"])
@@ -39,27 +39,37 @@ def _load_history(sc, shop_id: str, psid: str) -> list:
         return []
 
 
-def _save_turn(sc, shop_id: str, psid: str, history: list, user_text: str, bot_reply: str) -> None:
-    """ახალი წყვილის (კლიენტი+ბოტი) შენახვა, ბოლო N-მდე მოჭრით."""
+def _save_turn(
+    sc, shop_id: str, psid: str, history: list, user_text: str, bot_reply: str,
+    needs_attention: bool = False,
+) -> None:
+    """ახალი წყვილის (კლიენტი+ბოტი) შენახვა, ბოლო N-მდე მოჭრით.
+
+    needs_attention=True → საუბარი ინიშნება „ყურადღება სჭირდება"-დ (handoff).
+    """
     s = get_settings()
-    if s.bot_memory_messages <= 0:
+    if s.bot_memory_messages <= 0 and not needs_attention:
         return
+    now = datetime.now(timezone.utc).isoformat()
+    new = list(history) + [
+        {"role": "user", "content": user_text},
+        {"role": "bot", "content": bot_reply},
+    ]
+    new = new[-s.bot_memory_messages:] if s.bot_memory_messages > 0 else new[-2:]
+    base = {"shop_id": shop_id, "psid": psid, "messages": new, "updated_at": now}
+    full = dict(base)
+    if needs_attention:
+        full["needs_attention"] = True
+        full["attention_at"] = now
     try:
-        new = list(history) + [
-            {"role": "user", "content": user_text},
-            {"role": "bot", "content": bot_reply},
-        ]
-        new = new[-s.bot_memory_messages:]
-        sc.table("bot_conversations").upsert(
-            {
-                "shop_id": shop_id,
-                "psid": psid,
-                "messages": new,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).execute()
+        sc.table("bot_conversations").upsert(full).execute()
     except Exception:
-        pass
+        # migration 0010 ჯერ არ გაშვებულა (needs_attention არ არსებობს) — მეხსიერება მაინც შევინახოთ
+        if needs_attention:
+            try:
+                sc.table("bot_conversations").upsert(base).execute()
+            except Exception:
+                pass
 
 
 @router.get("/webhook")
@@ -166,12 +176,13 @@ def _process_events(data: dict) -> None:
                 continue
 
             history = _load_history(sc, shop["id"], str(sender_id))
+            handoff = False
             try:
-                reply = get_bot_reply(shop, products, text, history)
+                reply, handoff = parse_reply(get_bot_reply(shop, products, text, history))
             except Exception:
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."
             try:
                 send_text_message(page_token, sender_id, reply)
-                _save_turn(sc, shop["id"], str(sender_id), history, text, reply)
+                _save_turn(sc, shop["id"], str(sender_id), history, text, reply, handoff)
             except Exception:
                 pass  # ლოგირება მოგვიანებით

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.config import get_settings
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
+from app.core.supabase_client import get_service_client
 from app.core.tiers import TIER_LABELS, TIER_PRICES, limits_for, normalize_tier
 from app.models.shop import ShopCreate, ShopOut
 from app.services.pdf_extract import extract_pdf_text
@@ -136,6 +137,60 @@ def request_upgrade(
             {"shop_id": str(shop_id), "requested_tier": payload.tier, "status": "pending"}
         )
     )
+    return {"ok": True}
+
+
+@router.get("/{shop_id}/attention")
+def list_attention(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
+    """საუბრები, რომლებსაც ოპერატორი სჭირდება (handoff). RLS მხოლოდ საკუთარ მაღაზიას აჩვენებს."""
+    try:
+        r = (
+            auth.client.table("bot_conversations")
+            .select("psid,messages,attention_at,updated_at")
+            .eq("shop_id", str(shop_id))
+            .eq("needs_attention", True)
+            .order("attention_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+    except Exception:
+        # migration 0010 ჯერ არ გაშვებულა
+        return {"items": [], "count": 0}
+
+    items = []
+    for row in r.data or []:
+        msgs = row.get("messages") or []
+        last_user = ""
+        for m in reversed(msgs):
+            if m.get("role") == "user":
+                last_user = (m.get("content") or "").strip()
+                break
+        items.append(
+            {
+                "psid": row["psid"],
+                "last_message": last_user,
+                "at": row.get("attention_at") or row.get("updated_at"),
+            }
+        )
+    return {"items": items, "count": len(items)}
+
+
+@router.post("/{shop_id}/attention/{psid}/resolve")
+def resolve_attention(
+    shop_id: uuid.UUID, psid: str, auth: CurrentAuth = Depends(get_current_auth)
+):
+    """გამყიდველი მონიშნავს, რომ საუბარი მოგვარდა (flag ჩამოიხსნება)."""
+    # მფლობელობის შემოწმება RLS-ით
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    # განახლება service_role-ით (bot_conversations-ს owner-update პოლისი არ აქვს)
+    try:
+        get_service_client().table("bot_conversations").update(
+            {"needs_attention": False}
+        ).eq("shop_id", str(shop_id)).eq("psid", psid).execute()
+    except Exception:
+        pass
     return {"ok": True}
 
 

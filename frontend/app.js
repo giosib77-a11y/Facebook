@@ -316,7 +316,7 @@
     updateOrderLink();
     updateKnowledgeStatus();
     updateUsage();
-    await Promise.all([loadProducts(), loadOrders()]);
+    await Promise.all([loadProducts(), loadOrders(), loadAttention()]);
   }
 
   $("shop-select").addEventListener("change", async (e) => {
@@ -325,7 +325,7 @@
     updateOrderLink();
     updateKnowledgeStatus();
     updateUsage();
-    await Promise.all([loadProducts(), loadOrders()]);
+    await Promise.all([loadProducts(), loadOrders(), loadAttention()]);
   });
 
   // ---------- გამოწერა / გამოყენება (usage) ----------
@@ -425,6 +425,7 @@
 
   on("orders-refresh-btn", "click", loadOrders);
   on("order-filter", "change", loadOrders);
+  on("attention-refresh-btn", "click", loadAttention);
 
   const ORDER_STATUS_LABELS = {
     new: "ახალი",
@@ -527,6 +528,71 @@
     });
     actions.appendChild(delBtn);
 
+    row.appendChild(info);
+    row.appendChild(actions);
+    return row;
+  }
+
+  // ---------- ოპერატორზე გადართვა (handoff — „ყურადღება სჭირდება") ----------
+  async function loadAttention() {
+    const card = $("attention-card");
+    const list = $("attention-list");
+    if (!card || !list) return;
+    if (!currentShopId) {
+      card.classList.add("hidden");
+      return;
+    }
+    let data;
+    try {
+      data = await api("/shops/" + currentShopId + "/attention");
+    } catch (err) {
+      card.classList.add("hidden");
+      return;
+    }
+    const items = (data && data.items) || [];
+    $("attention-count").textContent = items.length;
+    list.innerHTML = "";
+    if (!items.length) {
+      card.classList.add("hidden");
+      return;
+    }
+    card.classList.remove("hidden");
+    items.forEach((it) => list.appendChild(attentionRow(it)));
+  }
+
+  function attentionRow(it) {
+    const row = document.createElement("div");
+    row.className = "product-item";
+    const when = it.at ? new Date(it.at).toLocaleString("ka-GE") : "";
+    const info = document.createElement("div");
+    info.className = "product-info";
+    info.innerHTML =
+      '<div class="product-name">💬 ' +
+      (it.last_message ? escapeHtml(it.last_message) : "ბოტმა ვერ უპასუხა") +
+      "</div>" +
+      '<div class="product-meta" style="color:#9ca3af">' + escapeHtml(when) + "</div>";
+    const actions = document.createElement("div");
+    actions.className = "product-actions";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-primary btn-sm";
+    btn.textContent = "✓ მოგვარდა";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(
+          "/shops/" + currentShopId + "/attention/" + encodeURIComponent(it.psid) + "/resolve",
+          "POST"
+        );
+        row.remove();
+        toast("მონიშნულია მოგვარებულად");
+        loadAttention();
+      } catch (err) {
+        toast(err.message, true);
+        btn.disabled = false;
+      }
+    });
+    actions.appendChild(btn);
     row.appendChild(info);
     row.appendChild(actions);
     return row;
