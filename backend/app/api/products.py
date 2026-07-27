@@ -1,4 +1,5 @@
 """Products endpoints — მაღაზიის მარაგის CRUD."""
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -7,7 +8,7 @@ from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.tiers import limits_for
 from app.models.product import ProductCreate, ProductOut, ProductUpdate
-from app.services.import_products import parse_products_file
+from app.services.import_products import parse_products_file, preview_file
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -46,15 +47,42 @@ def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_curre
     return res.data[0]
 
 
-@router.post("/import")
-async def import_products(
+@router.post("/import/preview")
+async def import_preview(
     shop_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
 ):
+    """ფაილის სვეტების ნახვა ჩამატებამდე — „სვეტების მორგების" UI-სთვის.
+
+    აბრუნებს: headers (სვეტების სახელები), detected (ავტო-ამოცნობილი mapping),
+    preview (პირველი მწკრივები), total_rows.
+    """
+    content = await file.read()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
+    if len(content) > MAX_IMPORT_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ძალიან დიდია (მაქს. 5MB)")
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    try:
+        return preview_file(content, file.filename)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+
+@router.post("/import")
+async def import_products(
+    shop_id: uuid.UUID = Form(...),
+    file: UploadFile = File(...),
+    mapping: str | None = Form(default=None),
+    auth: CurrentAuth = Depends(get_current_auth),
+):
     """Excel (.xlsx) ან CSV ფაილიდან პროდუქტების bulk-ად დამატება.
 
-    სვეტები: სახელი (აუცილებელი), ფასი, მარაგი, დეტალები [, sku].
+    mapping (არასავალდებულო JSON): {"name": 0, "price": 1, "quantity": 2, ...} —
+    გამყიდვლის მიერ არჩეული სვეტები. თუ არ არის, სვეტები ავტომატურად ცნობა.
     „all-or-nothing": თუ ფაილში თუნდაც ერთი შეცდომაა, არცერთი არ ემატება და
     ბრუნდება ყველა შეცდომა მწკრივების ნომრებით.
     """
@@ -69,8 +97,16 @@ async def import_products(
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
 
+    override = None
+    if mapping:
+        try:
+            raw = json.loads(mapping)
+            override = {k: int(v) for k, v in raw.items() if v is not None and str(v) != ""}
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "სვეტების მითითება არასწორია")
+
     try:
-        products, errors = parse_products_file(content, file.filename)
+        products, errors = parse_products_file(content, file.filename, override)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

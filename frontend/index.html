@@ -154,14 +154,16 @@
         <div class="card" id="import-card">
           <h2>📄 ბევრი პროდუქტის ატვირთვა (Excel/CSV)</h2>
           <p class="import-hint">
-            სვეტები: <b>სახელი</b>, <b>ფასი</b>, <b>მარაგი</b>, <b>დეტალები</b>.
+            ატვირთე შენი ფაილი <b>ისე, როგორც არის</b> — შემდეგ თვითონ მიუთითებ
+            რომელი სვეტია სახელი, ფასი, მარაგი. სვეტების გადარქმევა საჭირო არ არის.
             <a href="sample-products.xlsx" download>Excel ნიმუში</a> ·
             <a href="sample-products.csv" download>CSV ნიმუში</a>
           </p>
           <div class="import-row">
             <input type="file" id="import-file" accept=".csv,.xlsx" />
-            <button id="import-btn" class="btn btn-primary">ატვირთვა</button>
+            <button id="import-btn" class="btn btn-primary">სვეტების ნახვა →</button>
           </div>
+          <div id="import-mapping" class="import-mapping hidden"></div>
           <div id="import-result" class="import-result"></div>
         </div>
 
@@ -280,6 +282,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=32"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

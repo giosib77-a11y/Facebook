@@ -811,26 +811,131 @@
 
   $("refresh-btn").addEventListener("click", loadProducts);
 
-  // ---------- Excel/CSV import ----------
-  on("import-btn", "click", async () => {
+  // ---------- Excel/CSV import (ორ ბიჯად: ნახვა → სვეტების მორგება → ატვირთვა) ----------
+  const IMPORT_FIELDS = [
+    { key: "name", label: "სახელი", required: true },
+    { key: "price", label: "ფასი" },
+    { key: "quantity", label: "მარაგი" },
+    { key: "description", label: "აღწერა" },
+    { key: "sku", label: "SKU / კოდი" },
+  ];
+
+  on("import-btn", "click", previewImport);
+
+  // ბიჯი 1 — ფაილის სვეტების ნახვა
+  async function previewImport() {
     if (!currentShopId) return toast("ჯერ აირჩიე მაღაზია", true);
     const fileInput = $("import-file");
     const resultBox = $("import-result");
+    const mapBox = $("import-mapping");
     const file = fileInput.files && fileInput.files[0];
     if (!file) return toast("ჯერ აირჩიე ფაილი (.xlsx ან .csv)", true);
 
     resultBox.className = "import-result";
-    resultBox.textContent = "მუშავდება...";
+    resultBox.textContent = "";
+    mapBox.classList.add("hidden");
+    mapBox.innerHTML = "";
 
     const token = await getToken();
-    if (!token) {
-      resultBox.textContent = "სესია არ არის — თავიდან შედი";
-      return;
-    }
+    if (!token) { resultBox.textContent = "სესია არ არის — თავიდან შედი"; return; }
+
     const fd = new FormData();
     fd.append("shop_id", currentShopId);
     fd.append("file", file);
+    try {
+      const res = await fetch(cfg.API_BASE + "/products/import/preview", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" },
+        body: fd,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg = data && data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : "შეცდომა (HTTP " + res.status + ")";
+        resultBox.className = "import-result import-err";
+        resultBox.textContent = "⚠️ " + msg;
+        return;
+      }
+      renderImportMapping(data);
+    } catch (err) {
+      resultBox.className = "import-result import-err";
+      resultBox.textContent = "⚠️ ფაილი ვერ წაიკითხა: " + err.message;
+    }
+  }
 
+  // ბიჯი 2 — სვეტების მორგების UI + preview ცხრილი
+  function renderImportMapping(data) {
+    const mapBox = $("import-mapping");
+    const headers = data.headers || [];
+    const detected = data.detected || {};
+    const preview = data.preview || [];
+
+    let html = '<div class="mapping-title">მიუთითე რომელი სვეტია რომელი (' + data.total_rows + " მწკრივი):</div>";
+    html += '<div class="mapping-grid">';
+    IMPORT_FIELDS.forEach((f) => {
+      const sel = detected[f.key];
+      html += '<label class="mapping-row"><span>' + f.label + (f.required ? " *" : "") + "</span>";
+      html += '<select data-field="' + f.key + '">';
+      html += '<option value="">— არცერთი —</option>';
+      headers.forEach((h, i) => {
+        const isSel = sel === i ? " selected" : "";
+        html += '<option value="' + i + '"' + isSel + ">" + escapeHtml(h || ("სვეტი " + (i + 1))) + "</option>";
+      });
+      html += "</select></label>";
+    });
+    html += "</div>";
+
+    if (headers.length) {
+      html += '<div class="mapping-preview"><table><thead><tr>';
+      headers.forEach((h) => (html += "<th>" + escapeHtml(h || "—") + "</th>"));
+      html += "</tr></thead><tbody>";
+      preview.forEach((row) => {
+        html += "<tr>";
+        headers.forEach((_, i) => (html += "<td>" + escapeHtml(row[i] || "") + "</td>"));
+        html += "</tr>";
+      });
+      html += "</tbody></table></div>";
+    }
+
+    html += '<div class="import-row"><button id="import-confirm" class="btn btn-primary">✓ დაადასტურე და ატვირთე</button>';
+    html += '<button id="import-cancel" class="btn btn-ghost">გაუქმება</button></div>';
+
+    mapBox.innerHTML = html;
+    mapBox.classList.remove("hidden");
+    $("import-confirm").addEventListener("click", confirmImport);
+    $("import-cancel").addEventListener("click", () => {
+      mapBox.classList.add("hidden");
+      mapBox.innerHTML = "";
+    });
+  }
+
+  // ბიჯი 3 — არჩეული mapping-ით ატვირთვა
+  async function confirmImport() {
+    const fileInput = $("import-file");
+    const resultBox = $("import-result");
+    const mapBox = $("import-mapping");
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return toast("ფაილი დაიკარგა — აირჩიე თავიდან", true);
+
+    const mapping = {};
+    mapBox.querySelectorAll("select[data-field]").forEach((s) => {
+      if (s.value !== "") mapping[s.dataset.field] = parseInt(s.value, 10);
+    });
+    if (mapping.name === undefined) {
+      return toast("აუცილებელია მიუთითო „სახელის“ სვეტი", true);
+    }
+
+    const confirmBtn = $("import-confirm");
+    if (confirmBtn) confirmBtn.disabled = true;
+    resultBox.className = "import-result";
+    resultBox.textContent = "მუშავდება...";
+
+    const token = await getToken();
+    if (!token) { resultBox.textContent = "სესია არ არის — თავიდან შედი"; return; }
+
+    const fd = new FormData();
+    fd.append("shop_id", currentShopId);
+    fd.append("file", file);
+    fd.append("mapping", JSON.stringify(mapping));
     try {
       const res = await fetch(cfg.API_BASE + "/products/import", {
         method: "POST",
@@ -842,26 +947,28 @@
         resultBox.className = "import-result import-ok";
         resultBox.textContent = "✅ " + (data.message || "დაემატა " + data.imported + " პროდუქტი");
         fileInput.value = "";
+        mapBox.classList.add("hidden");
+        mapBox.innerHTML = "";
         await loadProducts();
       } else if (res.status === 422 && data && data.detail && data.detail.errors) {
-        // მწკრივების შეცდომები
-        let html = '<div class="import-err-title">⚠️ ' + escapeHtml(data.detail.message) + "</div><ul>";
-        data.detail.errors.forEach((e) => {
-          html += "<li>მწკრივი " + e.row + ": " + escapeHtml(e.message) + "</li>";
-        });
-        html += "</ul>";
+        let h = '<div class="import-err-title">⚠️ ' + escapeHtml(data.detail.message) + "</div><ul>";
+        data.detail.errors.forEach((e) => { h += "<li>მწკრივი " + e.row + ": " + escapeHtml(e.message) + "</li>"; });
+        h += "</ul>";
         resultBox.className = "import-result import-err";
-        resultBox.innerHTML = html;
+        resultBox.innerHTML = h;
+        if (confirmBtn) confirmBtn.disabled = false;
       } else {
         const msg = data && data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : "შეცდომა (HTTP " + res.status + ")";
         resultBox.className = "import-result import-err";
         resultBox.textContent = "⚠️ " + msg;
+        if (confirmBtn) confirmBtn.disabled = false;
       }
     } catch (err) {
       resultBox.className = "import-result import-err";
       resultBox.textContent = "⚠️ ატვირთვა ვერ მოხერხდა: " + err.message;
+      if (confirmBtn) confirmBtn.disabled = false;
     }
-  });
+  }
 
   let allProducts = []; // ჩატვირთული პროდუქტები (ძებნისთვის)
 

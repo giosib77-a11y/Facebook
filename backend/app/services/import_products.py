@@ -52,7 +52,8 @@ def _read_xlsx(content: bytes):
     return [list(row) for row in ws.iter_rows(values_only=True)]
 
 
-def parse_products_file(content: bytes, filename: str):
+def read_rows(content: bytes, filename: str):
+    """ფაილს კითხულობს და აბრუნებს არა-ცარიელ მწკრივებს (list[list])."""
     name = (filename or "").lower()
     if name.endswith(".csv"):
         rows = _read_csv(content)
@@ -65,13 +66,46 @@ def parse_products_file(content: bytes, filename: str):
     rows = [r for r in rows if any(_norm(c) != "" for c in r)]
     if not rows:
         raise ValueError("ფაილი ცარიელია.")
+    return rows
+
+
+def preview_file(content: bytes, filename: str, sample: int = 5) -> dict:
+    """ფაილის სათაურები + ავტო-ამოცნობილი mapping + პირველი მწკრივები.
+
+    გამოიყენება „სვეტების მორგების" UI-სთვის: გამყიდველი ხედავს თავის სვეტებს
+    და ადასტურებს/ასწორებს რომელია სახელი/ფასი/მარაგი.
+    """
+    rows = read_rows(content, filename)
+    headers = [_norm(h) for h in rows[0]]
+    detected = _map_headers(rows[0])  # {field: col_index}
+    data_rows = rows[1:]
+    preview = [[_norm(c) for c in r] for r in data_rows[:sample]]
+    return {
+        "headers": headers,
+        "detected": detected,
+        "preview": preview,
+        "total_rows": len(data_rows),
+    }
+
+
+def parse_products_file(content: bytes, filename: str, mapping_override: dict | None = None):
+    """ფაილიდან პროდუქტების წაკითხვა/ვალიდაცია.
+
+    mapping_override: {field: col_index} — გამყიდვლის მიერ არჩეული სვეტები.
+      თუ მითითებულია, ავტო-ამოცნობის ნაცვლად ეს გამოიყენება.
+    """
+    rows = read_rows(content, filename)
 
     headers = rows[0]
-    mapping = _map_headers(headers)
-    if "name" not in mapping:
+    if mapping_override:
+        mapping = {k: v for k, v in mapping_override.items() if v is not None}
+    else:
+        mapping = _map_headers(headers)
+    if mapping.get("name") is None:
         found = ", ".join(_norm(h) for h in headers if _norm(h))
         raise ValueError(
-            "აუცილებელია სვეტი 'სახელი'. ნაპოვნი სათაურები: " + (found or "(ცარიელი)")
+            "აუცილებელია მიუთითო რომელი სვეტია 'სახელი'. ნაპოვნი სათაურები: "
+            + (found or "(ცარიელი)")
         )
 
     data_rows = rows[1:]
