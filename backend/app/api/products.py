@@ -165,9 +165,12 @@ async def import_products(
             "name": p["name"],
             "price": p["price"],
             "quantity": p["quantity"],
-            "description": p["description"],
             "sku": p["sku"],
         }
+        # აღწერას ვანახლებთ მხოლოდ თუ ფაილში რამე წერია —
+        # ცარიელით არ ვშლით არსებულს (ხელით გამდიდრებული / წინა extra შენარჩუნდეს)
+        if p.get("description"):
+            upd["description"] = p["description"]
         run(auth.client.table("products").update(upd).eq("id", match_id))
 
     added = 0
