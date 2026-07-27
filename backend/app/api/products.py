@@ -125,17 +125,63 @@ async def import_products(
     if not products:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "დასამატებელი პროდუქტი ვერ მოიძებნა")
 
+    # ── ჭკვიანი sync (upsert): არსებულს ვანახლებთ, ახალს ვამატებთ, დუბლიკატს არ ვქმნით ──
+    # შედარება: ჯერ SKU-ით (თუ აქვს), მერე სახელით (case-insensitive).
+    existing = (
+        auth.client.table("products").select("id,sku,name").eq("shop_id", str(shop_id)).execute().data
+    )
+    by_sku, by_name = {}, {}
+    for e in existing:
+        esku = (e.get("sku") or "").strip().lower()
+        if esku:
+            by_sku.setdefault(esku, e["id"])
+        enm = (e.get("name") or "").strip().lower()
+        if enm:
+            by_name.setdefault(enm, e["id"])
+
+    to_insert, to_update = [], []
+    for p in products:
+        psku = (p.get("sku") or "").strip().lower()
+        pnm = (p.get("name") or "").strip().lower()
+        match_id = by_sku.get(psku) if psku else None
+        if match_id is None:
+            match_id = by_name.get(pnm)
+        if match_id:
+            to_update.append((match_id, p))
+        else:
+            to_insert.append(p)
+
+    # ლიმიტი მხოლოდ ახალ პროდუქტებს ეხება (განახლება არ ითვლება)
     left = _product_limit_left(auth, shop_id)
-    if left is not None and len(products) > left:
+    if left is not None and len(to_insert) > left:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            f"პაკეტის ლიმიტი: კიდევ მხოლოდ {left} პროდუქტის დამატება შეგიძლია. განაახლე პაკეტი.",
+            f"პაკეტის ლიმიტი: კიდევ მხოლოდ {left} ახალი პროდუქტის დამატება შეგიძლია. განაახლე პაკეტი.",
         )
 
-    for p in products:
-        p["shop_id"] = str(shop_id)
-    res = run(auth.client.table("products").insert(products))
-    return {"imported": len(res.data or []), "message": f"დაემატა {len(res.data or [])} პროდუქტი"}
+    # განახლება (is_active-ს არ ვცვლით — გამყიდვლის ხელით არჩევანი შენარჩუნდეს)
+    for match_id, p in to_update:
+        upd = {
+            "name": p["name"],
+            "price": p["price"],
+            "quantity": p["quantity"],
+            "description": p["description"],
+            "sku": p["sku"],
+        }
+        run(auth.client.table("products").update(upd).eq("id", match_id))
+
+    added = 0
+    if to_insert:
+        for p in to_insert:
+            p["shop_id"] = str(shop_id)
+        res = run(auth.client.table("products").insert(to_insert))
+        added = len(res.data or [])
+
+    return {
+        "imported": added,
+        "updated": len(to_update),
+        "message": f"დაემატა {added}, განახლდა {len(to_update)}",
+    }
 
 
 @router.get("", response_model=list[ProductOut])
