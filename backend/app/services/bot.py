@@ -73,7 +73,12 @@ def _format_inventory(products, currency: str) -> str:
         price = p.get("price", 0)
         qty = p.get("quantity", 0)
         stock = f"მარაგშია: {qty}" if qty and qty > 0 else "ამოწურულია"
-        line = f"- {name} — {price} {currency}, {stock}"
+        try:
+            has_price = float(price) > 0
+        except (TypeError, ValueError):
+            has_price = False
+        price_str = f"{price} {currency}" if has_price else "ფასი დასაზუსტებელია"
+        line = f"- {name} — {price_str}, {stock}"
         if p.get("sku"):
             line += f", SKU: {p['sku']}"
         if p.get("description"):
