@@ -176,6 +176,9 @@ input:focus, select:focus, textarea:focus {
 .mapping-preview table { border-collapse: collapse; width: 100%; font-size: 0.8rem; background: var(--card); }
 .mapping-preview th, .mapping-preview td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; white-space: nowrap; }
 .mapping-preview th { background: var(--primary-light); font-weight: 600; }
+.mapping-extra { margin-bottom: 12px; }
+.mapping-extra-title { font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+.extra-chk { display: inline-flex; align-items: center; gap: 4px; margin: 0 12px 6px 0; font-size: 0.85rem; }
 
 /* Facebook section */
 .fb-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }

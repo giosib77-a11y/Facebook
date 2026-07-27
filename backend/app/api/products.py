@@ -98,15 +98,19 @@ async def import_products(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
 
     override = None
+    extra_cols = None
     if mapping:
         try:
             raw = json.loads(mapping)
+            extra_raw = raw.pop("extra", None)
             override = {k: int(v) for k, v in raw.items() if v is not None and str(v) != ""}
+            if extra_raw:
+                extra_cols = [int(x) for x in extra_raw]
         except (ValueError, TypeError, AttributeError):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "სვეტების მითითება არასწორია")
 
     try:
-        products, errors = parse_products_file(content, file.filename, override)
+        products, errors = parse_products_file(content, file.filename, override, extra_cols)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

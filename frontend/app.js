@@ -884,6 +884,15 @@
     });
     html += "</div>";
 
+    // დამატებითი სვეტები — აღწერაში ჩასაწერად (ფერი, ზომა, მასალა...)
+    if (headers.length) {
+      html += '<div class="mapping-extra"><div class="mapping-extra-title">დამატებითი ინფორმაცია აღწერაში (არჩევითი — მაგ. ფერი, ზომა):</div>';
+      headers.forEach((h, i) => {
+        html += '<label class="extra-chk"><input type="checkbox" data-extra="' + i + '"> ' + escapeHtml(h || ("სვეტი " + (i + 1))) + "</label>";
+      });
+      html += "</div>";
+    }
+
     if (headers.length) {
       html += '<div class="mapping-preview"><table><thead><tr>';
       headers.forEach((h) => (html += "<th>" + escapeHtml(h || "—") + "</th>"));
@@ -923,6 +932,14 @@
     if (mapping.name === undefined) {
       return toast("აუცილებელია მიუთითო „სახელის“ სვეტი", true);
     }
+    // დამატებითი სვეტები აღწერისთვის (გამოვრიცხოთ ის, რაც უკვე ველად შეირჩა)
+    const usedCols = Object.values(mapping);
+    const extra = [];
+    mapBox.querySelectorAll("input[data-extra]:checked").forEach((c) => {
+      const idx = parseInt(c.dataset.extra, 10);
+      if (!usedCols.includes(idx)) extra.push(idx);
+    });
+    if (extra.length) mapping.extra = extra;
 
     const confirmBtn = $("import-confirm");
     if (confirmBtn) confirmBtn.disabled = true;

@@ -88,11 +88,18 @@ def preview_file(content: bytes, filename: str, sample: int = 5) -> dict:
     }
 
 
-def parse_products_file(content: bytes, filename: str, mapping_override: dict | None = None):
+def parse_products_file(
+    content: bytes,
+    filename: str,
+    mapping_override: dict | None = None,
+    extra_cols: list | None = None,
+):
     """ფაილიდან პროდუქტების წაკითხვა/ვალიდაცია.
 
     mapping_override: {field: col_index} — გამყიდვლის მიერ არჩეული სვეტები.
       თუ მითითებულია, ავტო-ამოცნობის ნაცვლად ეს გამოიყენება.
+    extra_cols: [col_index, ...] — დამატებითი სვეტები, რომლებიც აღწერის ტექსტში
+      ჩაიწერება „სათაური: მნიშვნელობა" ფორმატით (ბაზაში ახალი სვეტი არ ემატება).
     """
     rows = read_rows(content, filename)
 
@@ -114,6 +121,27 @@ def parse_products_file(content: bytes, filename: str, mapping_override: dict | 
 
     products, errors = [], []
     seen_skus = set()
+
+    # დამატებითი სვეტები აღწერისთვის — გამოვრიცხოთ ის, რაც უკვე mapping-შია
+    used_cols = {v for v in mapping.values() if v is not None}
+    clean_extra = [c for c in (extra_cols or []) if c is not None and c not in used_cols]
+
+    def build_description(row):
+        d_idx = mapping.get("description")
+        base = _norm(row[d_idx]) if (d_idx is not None and d_idx < len(row)) else ""
+        extras = []
+        for idx in clean_extra:
+            if idx >= len(row):
+                continue
+            val = _norm(row[idx])
+            if not val:
+                continue
+            label = _norm(headers[idx]) if idx < len(headers) else ""
+            extras.append(f"{label}: {val}" if label else val)
+        extra_text = ", ".join(extras)
+        if base and extra_text:
+            return f"{base} — {extra_text}"
+        return base or extra_text or None
 
     for offset, row in enumerate(data_rows):
         line = offset + 2  # Excel-ის ნუმერაცია (1 = სათაური)
@@ -164,7 +192,7 @@ def parse_products_file(content: bytes, filename: str, mapping_override: dict | 
             "name": name_s,
             "price": price,
             "quantity": qty,
-            "description": _norm(cell("description")) or None,
+            "description": build_description(row),
             "sku": sku,
             "is_active": True,
         })
