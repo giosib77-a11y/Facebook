@@ -135,3 +135,26 @@
 - `frontend/config.js` → `API_BASE`
 - Facebook App დაფა (გარე) → Redirect + Webhook URL
 - Supabase დაფა (გარე) → Redirect URLs + email confirm + SMTP
+
+---
+
+## 🌐 custom დომენზე გადასვლისას — რა შევცვალო (URL swap)
+
+> როცა .ge დომენს დაარეგისტრირებ და Render-ში Custom Domain-ად დაამატებ,
+> onrender-URL 3 ადგილას უნდა შეიცვალოს დომენით. იგივე ცვლილებაა, რაც
+> ngrok → Render-ზე გადასვლისას. კოდი არ იცვლება, onrender-URL მაინც მუშაობს.
+
+**1. Render → Environment (env ცვლადები):**
+- `PUBLIC_BASE_URL`  → `https://<დომენი>`
+- `CORS_ORIGINS`     → `https://<დომენი>`
+- `FB_REDIRECT_URI`  → `https://<დომენი>/facebook/connect/callback`
+- `FRONTEND_URL`     → `https://<დომენი>`
+
+**2. Meta App (jemo):**
+- Webhooks → Callback URL → `https://<დომენი>/webhook`
+- Facebook Login for Business → Valid OAuth Redirect URIs → `https://<დომენი>/facebook/connect/callback`
+
+**3. Supabase → Authentication → URL Configuration:**
+- Site URL + Redirect URLs → `https://<დომენი>/panel/reset.html` (და დომენი)
+
+> ⚠️ Meta-ს webhook-ის შეცვლის შემდეგ ისევ „Verify and save" (handshake).
