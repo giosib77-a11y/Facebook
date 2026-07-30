@@ -202,6 +202,11 @@ img { max-width: 100%; display: block; }
 .legal ul { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 .legal a { color: var(--brand-dark); font-weight: 600; }
 .legal .back { display: inline-block; margin-top: 40px; }
+.confirm-box { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 16px 20px; margin: 0 0 28px; }
+.confirm-box b { color: #065f46; }
+.confirm-box p { margin: 8px 0 0; color: #334155; }
+.confirm-box .conf-code { margin-top: 12px; }
+.legal code { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 2px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .92rem; }
 
 /* Footer */
 .footer { border-top: 1px solid var(--line); padding: 40px 0; color: var(--muted); font-size: .9rem; }

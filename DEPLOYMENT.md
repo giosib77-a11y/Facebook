@@ -63,10 +63,17 @@
 
 თანმიმდევრობა:
 - [ ] **8.1 ფიქსირებული HTTPS დომენი** — deploy დასრულებული (იხ. პუნქტი 2)
-- [ ] **8.2 Privacy Policy + Terms + Data Deletion** — რეალურ დომენზე ხელმისაწვდომი
-      - Privacy Policy URL (გვაქვს `privacy.html`)
-      - Terms URL (გვაქვს `terms.html`)
-      - Data Deletion ინსტრუქცია ან callback URL (Meta ითხოვს) — დასამატებელი
+- [x] **8.2 Privacy Policy + Terms + Data Deletion** — გვერდები მზადაა, რეალურ დომენზე ხელმისაწვდომია
+      - Privacy Policy URL: `<base>/panel/privacy.html`
+      - Terms URL: `<base>/panel/terms.html`
+      - Data Deletion **Instructions** URL: `<base>/panel/delete-data.html`
+      - Data Deletion **Callback** URL: `<base>/facebook/data-deletion`
+        (Meta POST-ავს `signed_request`-ს → ვშლით კლიენტის საუბრებს PSID-ით → ვაბრუნებთ
+        `{url, confirmation_code}`. კოდი: `services/facebook.parse_signed_request` +
+        `api/facebook.data_deletion_callback`.)
+      - [ ] Meta App → Settings → Basic-ში ეს URL-ები ჩაწერე (`<base>` = `https://shop-bot-7q7r.onrender.com`,
+            მოგვიანებით custom დომენი). Meta-ს „Data Deletion Instructions URL" ველში
+            ჩააგდე Instructions URL **ან** Callback URL — ორივე გვაქვს.
 - [ ] **8.3 Business Verification** — ბიზნესის დადასტურება Meta-ში (დოკუმენტები/რეკვიზიტები);
       საჭიროა `pages_messaging`-ის Advanced Access-ისთვის
 - [ ] **8.4 App-ის სავალდებულო ველები**

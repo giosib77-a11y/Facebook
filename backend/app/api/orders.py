@@ -164,9 +164,10 @@ def create_order(payload: OrderCreate):
     except Exception:
         order_id = None
     if order_id is None:
-        # შეკვეთა ვერ ჩაიწერა (ცარიელი ან შეცდომა) — ატომურად დაკლებული მარაგი უკან
-        if atomic:
-            _apply_stock_delta(sc, str(payload.shop_id), items, +1)
+        # შეკვეთა ვერ ჩაიწერა — დაკლებული მარაგი უკან დავაბრუნოთ.
+        # ორივე გზაზე (atomic RPC ან legacy) მარაგი უკვე დაკლებულია აქ მოსვლისას,
+        # ამიტომ კომპენსაცია ყოველთვის ხდება (თორემ legacy-ზე მარაგი დაიკარგებოდა).
+        _apply_stock_delta(sc, str(payload.shop_id), items, +1)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთის შექმნა ვერ მოხერხდა")
 
     return {"ok": True, "order_id": order_id, "total": total}

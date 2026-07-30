@@ -759,6 +759,54 @@
     }
   });
 
+  // მონაცემთა ჩამოტვირთვა (portability/backup) — JSON ფაილად, blob-ით
+  on("export-btn", "click", async () => {
+    const resultBox = $("export-result");
+    const btn = $("export-btn");
+    if (!currentShopId) return toast("ჯერ აირჩიე მაღაზია", true);
+    resultBox.className = "import-result";
+    resultBox.textContent = "მუშავდება...";
+    btn.classList.add("is-loading");
+    const token = await getToken();
+    if (!token) {
+      btn.classList.remove("is-loading");
+      resultBox.textContent = "სესია არ არის — თავიდან შედი";
+      return;
+    }
+    try {
+      const res = await fetch(cfg.API_BASE + "/shops/" + currentShopId + "/export", {
+        headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const msg = data && data.detail ? data.detail : "შეცდომა (HTTP " + res.status + ")";
+        resultBox.className = "import-result import-err";
+        resultBox.textContent = "⚠️ " + msg;
+        return;
+      }
+      const blob = await res.blob();
+      let fname = "shopbot-export.json";
+      const cd = res.headers.get("Content-Disposition");
+      const m = cd && cd.match(/filename="([^"]+)"/);
+      if (m) fname = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      resultBox.className = "import-result import-ok";
+      resultBox.textContent = "✅ ჩამოიტვირთა: " + fname;
+    } catch (err) {
+      resultBox.className = "import-result import-err";
+      resultBox.textContent = "⚠️ ჩამოტვირთვა ვერ მოხერხდა: " + err.message;
+    } finally {
+      btn.classList.remove("is-loading");
+    }
+  });
+
   function updateProductFormState() {
     const disabled = !currentShopId;
     $("product-form").querySelectorAll("input, textarea, button").forEach((el) => {

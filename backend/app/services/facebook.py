@@ -36,6 +36,33 @@ def verify_signature(app_secret: str, raw_body: bytes, signature_header: str | N
     return hmac.compare_digest(expected, sent)
 
 
+def _b64url_decode(s: str) -> bytes:
+    """base64url პადინგის დამატებით (Meta signed_request-ს პადინგი აკლია)."""
+    s += "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s.encode())
+
+
+def parse_signed_request(signed_request: str, app_secret: str) -> dict | None:
+    """Meta-ს `signed_request`-ის ვერიფიკაცია/გახსნა (Data Deletion callback-ისთვის).
+
+    ფორმატი: "<base64url_signature>.<base64url_payload>". ხელმოწერა = HMAC-SHA256
+    payload-ის (base64url სტრიქონის) app_secret-ით. აბრუნებს payload dict-ს
+    ან None თუ ფორმატი/ხელმოწერა არასწორია.
+    """
+    if not signed_request or "." not in signed_request:
+        return None
+    try:
+        encoded_sig, payload = signed_request.split(".", 1)
+        sig = _b64url_decode(encoded_sig)
+        data = json.loads(_b64url_decode(payload))
+    except Exception:
+        return None
+    expected = hmac.new(app_secret.encode(), payload.encode(), hashlib.sha256).digest()
+    if not hmac.compare_digest(expected, sig):
+        return None
+    return data
+
+
 # ---------------------------------------------------------------------------
 # OAuth state — ხელმოწერილი (CSRF + shop/user-ის გადატანა)
 # ---------------------------------------------------------------------------
@@ -124,6 +151,17 @@ def get_user_pages(user_token: str) -> list[dict]:
     )
     r.raise_for_status()
     return r.json().get("data", [])
+
+
+def get_user_id(user_token: str) -> str | None:
+    """დამაკავშირებელი Facebook მომხმარებლის app-scoped ID (Data Deletion callback-ისთვის)."""
+    r = httpx.get(
+        f"{_graph_base()}/me",
+        params={"access_token": user_token, "fields": "id"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json().get("id")
 
 
 def subscribe_page(page_id: str, page_token: str) -> None:

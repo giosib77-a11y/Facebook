@@ -1,8 +1,9 @@
 """Shops endpoints — გამყიდველის მაღაზიები."""
+import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -192,6 +193,40 @@ def resolve_attention(
     except Exception:
         pass
     return {"ok": True}
+
+
+@router.get("/{shop_id}/export")
+def export_shop_data(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
+    """მონაცემთა გადატანა (portability) — გამყიდველი ჩამოტვირთავს თავის მაღაზიას,
+    პროდუქტებსა და შეკვეთებს ერთ JSON ფაილად. RLS-ით მხოლოდ საკუთარი მაღაზია;
+    დაშიფრულ ტოკენს არ ვაბრუნებთ (credential-ია, არა მომხმარებლის მონაცემი)."""
+    shop = run(auth.client.table("shops").select("*").eq("id", str(shop_id)).limit(1))
+    if not shop.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    shop_row = dict(shop.data[0])
+    shop_row.pop("facebook_page_token", None)  # საიდუმლო — არ გადის ექსპორტში
+
+    products = run(
+        auth.client.table("products").select("*").eq("shop_id", str(shop_id)).order("name")
+    ).data
+    orders = run(
+        auth.client.table("orders").select("*").eq("shop_id", str(shop_id))
+        .order("created_at", desc=True)
+    ).data
+
+    payload = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "shop": shop_row,
+        "products": products,
+        "orders": orders,
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    fname = f"shopbot-export-{datetime.now(timezone.utc):%Y-%m-%d}.json"
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @router.post("/{shop_id}/knowledge", response_model=ShopOut)
