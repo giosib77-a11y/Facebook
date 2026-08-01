@@ -785,7 +785,7 @@
         return;
       }
       const blob = await res.blob();
-      let fname = "shopbot-export.json";
+      let fname = "chatassist-export.json";
       const cd = res.headers.get("Content-Disposition");
       const m = cd && cd.match(/filename="([^"]+)"/);
       if (m) fname = m[1];

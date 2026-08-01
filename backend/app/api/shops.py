@@ -221,7 +221,7 @@ def export_shop_data(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current
         "orders": orders,
     }
     body = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-    fname = f"shopbot-export-{datetime.now(timezone.utc):%Y-%m-%d}.json"
+    fname = f"chatassist-export-{datetime.now(timezone.utc):%Y-%m-%d}.json"
     return Response(
         content=body,
         media_type="application/json",

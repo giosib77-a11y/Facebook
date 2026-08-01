@@ -81,7 +81,7 @@ def root():
 
 @app.get("/status")
 def status():
-    return {"name": "shop-ai-bot", "version": "0.1.0", "env": settings.app_env}
+    return {"name": "chatassist", "version": "0.1.0", "env": settings.app_env}
 
 
 # გამყიდველის პანელის მომსახურება იმავე backend-იდან — ngrok-ით გასაზიარებლად.

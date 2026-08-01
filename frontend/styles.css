@@ -76,7 +76,8 @@ body {
 .auth-card { width: 100%; max-width: 400px; }
 .auth-back { display: inline-block; font-size: .85rem; color: var(--muted); text-decoration: none; margin-bottom: 12px; }
 .auth-back:hover { color: var(--primary); }
-.auth-title { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 16px; }
+.auth-title { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 6px; }
+.auth-subtitle { text-align: center; color: #6b7280; font-size: .9rem; margin: 0 0 18px; }
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
 .tab {
   flex: 1; padding: 10px; border: 1px solid var(--border);
