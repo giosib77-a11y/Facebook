@@ -1,6 +1,8 @@
 """Shops endpoints — გამყიდველის მაღაზიები."""
 import json
+import re
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
@@ -17,6 +19,15 @@ from app.services.pdf_extract import extract_pdf_text
 router = APIRouter(prefix="/shops", tags=["shops"])
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10MB
+
+# ანალიტიკისთვის — ხშირი სასაუბრო სიტყვები (თემად არ ჩავთვლით)
+_ANALYTICS_STOPWORDS = {
+    "მინდა", "გინდა", "გაქვთ", "გაქვს", "აქვს", "უნდა", "რამე", "კარგი", "არის",
+    "როგორ", "ფასი", "ღირს", "რამდენი", "გამარჯობა", "მოიცა", "რომელი", "ხომ",
+    "თუ", "რას", "რაში", "ვის", "ვისთვის", "საჩუქრად", "მაჩვენე", "მიჩვენე",
+    "გმადლობთ", "მადლობა", "კიდევ", "ესეც", "სხვა", "სურათი", "დიახ", "არა",
+    "the", "and", "for", "you", "have", "this", "that", "with",
+}
 
 
 class UpgradeRequestIn(BaseModel):
@@ -227,6 +238,55 @@ def export_shop_data(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+@router.get("/{shop_id}/analytics")
+def shop_analytics(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
+    """ბოტის ანალიტიკა — რას კითხულობენ კლიენტები + უპასუხო (handoff) საუბრები.
+
+    RLS-ით მხოლოდ საკუთარი მაღაზიის საუბრები. მიგრაცია 0008/0010-მდე — ცარიელი.
+    """
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+
+    empty = {"total_conversations": 0, "needs_attention": 0, "top_terms": [], "recent_questions": []}
+    try:
+        rows = (
+            auth.client.table("bot_conversations")
+            .select("messages,needs_attention,updated_at")
+            .eq("shop_id", str(shop_id))
+            .order("updated_at", desc=True)
+            .limit(500)
+            .execute()
+            .data
+        ) or []
+    except Exception:
+        return empty  # migration ჯერ არ გაშვებულა
+
+    attention = 0
+    questions: list[str] = []
+    for r in rows:
+        if r.get("needs_attention"):
+            attention += 1
+        for m in r.get("messages") or []:
+            if m.get("role") == "user":
+                c = (m.get("content") or "").strip()
+                if c and c != "[სურათი]":
+                    questions.append(c)
+
+    counter: Counter = Counter()
+    for q in questions:
+        for t in re.split(r"\W+", q.lower()):
+            if len(t) >= 3 and t not in _ANALYTICS_STOPWORDS:
+                counter[t] += 1
+
+    return {
+        "total_conversations": len(rows),
+        "needs_attention": attention,
+        "top_terms": [{"term": t, "count": c} for t, c in counter.most_common(12)],
+        "recent_questions": questions[:25],
+    }
 
 
 @router.post("/{shop_id}/knowledge", response_model=ShopOut)

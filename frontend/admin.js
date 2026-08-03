@@ -40,14 +40,26 @@
     return null;
   }
 
-  async function req(method, path, body) {
+  async function req(method, path, body, _retry) {
     var token = readStoredToken();
     if (!token) { location.href = "index.html"; throw new Error("no session"); }
     var opts = { method: method, headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" } };
     if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-    var res = await fetch(API + path, opts);
+    var res;
+    try {
+      res = await fetch(API + path, opts);
+    } catch (netErr) {
+      // ქსელის შეცდომა (მაგ. სერვერი იღვიძებს) — ერთხელ ვცდით ხელახლა
+      if (!_retry) { await new Promise(function (r) { setTimeout(r, 2000); }); return req(method, path, body, true); }
+      throw netErr;
+    }
     if (res.status === 401) { location.href = "index.html"; throw new Error("401"); }
     if (res.status === 403) { throw { forbidden: true }; }
+    // წამიერ 5xx-ზე (cold start / ჩავარდნა) — ერთხელ ხელახლა, რომ მთელი პანელი არ დაემხოს
+    if (res.status >= 500 && !_retry) {
+      await new Promise(function (r) { setTimeout(r, 2000); });
+      return req(method, path, body, true);
+    }
     if (res.status === 204) return null;
     var data = await res.json().catch(function () { return null; });
     if (!res.ok) throw new Error((data && data.detail) || "HTTP " + res.status);

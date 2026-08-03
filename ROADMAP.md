@@ -89,7 +89,9 @@
       webhook სურათ-დანართს ამოიღებს → `facebook.download_image` → `get_bot_reply(images=...)`
       → Gemini multimodal → მარაგს ადარებს. მუშაობს Messenger + Instagram. prompt წესი #11.
 - [ ] #6 ჩატშივე შეკვეთა — ბოტმა თვითონ შეადგინოს შეკვეთა (function calling)
-- [ ] #7 ბოტის ანალიტიკა — რას კითხულობენ, უპასუხო კითხვები (ადმინ პანელში)
+- [x] #7 ბოტის ანალიტიკა — რას კითხულობენ, უპასუხო კითხვები (გამყიდვლის პანელში).
+      `GET /shops/{id}/analytics`: საუბრების რაოდ., needs_attention, top-terms
+      (keyword-frequency, stopword-ფილტრი), ბოლო შეკითხვები. პანელში „📊 ბოტის ანალიტიკა" ბარათი.
 - [ ] #8 პროაქტული follow-up — ვინც არ დაასრულა შეკვეთა, შეხსენება (Meta 24სთ ფანჯარა)
 - [ ] #9 AI მოდელის A/B ტესტი — **deploy-ის შემდეგ**, ცოცხალ ქართულ შეკითხვებზე:
       Gemini 2.5 Flash (ახლანდელი) vs Flash-Lite (იაფი) vs Gemini 3 Flash (ხარისხი).

@@ -316,6 +316,7 @@
     updateOrderLink();
     updateKnowledgeStatus();
     updateUsage();
+    loadAnalytics();
     await Promise.all([loadProducts(), loadOrders(), loadAttention()]);
   }
 
@@ -325,6 +326,7 @@
     updateOrderLink();
     updateKnowledgeStatus();
     updateUsage();
+    loadAnalytics();
     await Promise.all([loadProducts(), loadOrders(), loadAttention()]);
   });
 
@@ -596,6 +598,33 @@
     row.appendChild(info);
     row.appendChild(actions);
     return row;
+  }
+
+  // ---------- ბოტის ანალიტიკა (#7) ----------
+  async function loadAnalytics() {
+    const box = $("analytics-body");
+    if (!box || !currentShopId) return;
+    box.textContent = "იტვირთება...";
+    try {
+      const a = await api("/shops/" + currentShopId + "/analytics");
+      if (!a.total_conversations) {
+        box.innerHTML = '<span class="fb-disconnected">ჯერ საუბრები არ არის — კლიენტები ბოტთან რომ დაიწყებენ წერას, აქ გამოჩნდება.</span>';
+        return;
+      }
+      const terms = (a.top_terms || []).map((t) =>
+        '<span class="term-chip">' + escapeHtml(t.term) + " <b>" + t.count + "</b></span>"
+      ).join("");
+      const qs = (a.recent_questions || []).slice(0, 15).map((q) =>
+        '<div class="q-item">💬 ' + escapeHtml(q) + "</div>"
+      ).join("");
+      box.innerHTML =
+        '<div class="analytics-nums">🗨️ საუბრები: <b>' + a.total_conversations +
+        "</b> · 🔔 ყურადღება სჭირდება: <b>" + (a.needs_attention || 0) + "</b></div>" +
+        (terms ? '<div class="analytics-lbl">ხშირად კითხულობენ:</div><div class="term-chips">' + terms + "</div>" : "") +
+        (qs ? '<div class="analytics-lbl">ბოლო შეკითხვები:</div>' + qs : "");
+    } catch (e) {
+      box.innerHTML = '<span class="fb-disconnected">ანალიტიკა ვერ ჩაიტვირთა.</span>';
+    }
   }
 
   // ---------- Facebook გვერდის დაკავშირება ----------
