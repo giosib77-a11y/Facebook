@@ -4,6 +4,7 @@
 system prompt გამოტანილია ცალკე ფუნქციად (build_system_prompt), რომ ადვილად
 ჩაანაცვლო შენი საბოლოო ვერსიით და offline-ად დატესტო.
 """
+import re
 import time
 
 from app.config import get_settings
@@ -68,7 +69,56 @@ SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გამ�
 {knowledge_section}"""
 
 
-def _format_inventory(products, currency: str) -> str:
+# ---------------------------------------------------------------------------
+# #3 ჭკვიანი პროდუქტ-ძებნა — დიდ მარაგზე მოდელს მხოლოდ რელევანტურ პროდუქტებს ვუგზავნით
+# ---------------------------------------------------------------------------
+# ამ ზღვარს ზემოთ ვრთავთ retrieval-ს (ქვემოთ — ყველა პროდუქტი პირდაპირ prompt-ში)
+RETRIEVE_LIMIT = 30
+
+# ხშირი სასაუბრო სიტყვები — ესენი პროდუქტს არ განსაზღვრავს, ამიტომ არ ვითვლით
+_STOPWORDS = {
+    "მინდა", "გინდა", "გაქვთ", "გაქვს", "აქვს", "უნდა", "ეს", "ის", "რა", "რას",
+    "რამე", "კარგი", "არის", "და", "თუ", "ხომ", "მე", "შენ", "თქვენ", "რომელი",
+    "როგორ", "ფასი", "ღირს", "რამდენი", "გამარჯობა", "მოიცა", "კი", "არა", "ჯერ",
+    "ახლა", "ხო", "ან", "ვის", "ვისთვის", "საჩუქრად", "მაჩვენე", "მიჩვენე",
+}
+
+
+def select_relevant_products(products, message, history=None, max_products: int = RETRIEVE_LIMIT):
+    """დიდ ასორტიმენტზე — მოდელს მხოლოდ რელევანტურ პროდუქტებს ვუბრუნებთ.
+
+    პატარა მარაგზე (≤ max_products) — ყველა (უცვლელი ქცევა).
+    დიდზე — keyword-ს ვადარებთ კლიენტის მიმდინარე + ბოლო შეტყობინებას და
+    ვაბრუნებთ ყველაზე რელევანტურ max_products-ს. თუ საკვანძო სიტყვა არ ემთხვევა
+    (ზოგადი კითხვა) — პირველ max_products-ს (ბოტი მაინც დააზუსტებს კლიენტთან).
+    """
+    if not products or len(products) <= max_products:
+        return products or []
+
+    parts = [message or ""]
+    for turn in reversed(history or []):
+        if turn.get("role") == "user":
+            parts.append(turn.get("content") or "")
+            break
+    tokens = {
+        t for t in re.split(r"\W+", " ".join(parts).lower())
+        if len(t) >= 2 and t not in _STOPWORDS
+    }
+    if not tokens:
+        return products[:max_products]
+
+    scored = []
+    for p in products:
+        hay = " ".join(str(p.get(k) or "") for k in ("name", "description", "sku")).lower()
+        score = sum(1 for t in tokens if t in hay)
+        if score:
+            scored.append((score, p))
+    scored.sort(key=lambda sp: sp[0], reverse=True)
+    top = [p for _, p in scored[:max_products]]
+    return top if top else products[:max_products]
+
+
+def _format_inventory(products, currency: str, total: int | None = None) -> str:
     """მარაგის ტექსტად ჩამოყალიბება prompt-ისთვის."""
     if not products:
         return "(მარაგი ცარიელია — ამ მომენტში პროდუქტი არ არის ხელმისაწვდომი.)"
@@ -89,7 +139,14 @@ def _format_inventory(products, currency: str) -> str:
         if p.get("description"):
             line += f". {p['description']}"
         lines.append(line)
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    # თუ დიდი მარაგიდან მხოლოდ ნაწილი ჩავრთეთ — ბოტს ვამცნობთ (რომ „ეს არის ყველაფერი" არ თქვას)
+    if total is not None and total > len(products):
+        body += (
+            f"\n\n(ეს {len(products)} პროდუქტი შენს შეკითხვას ყველაზე უკეთ ესადაგება "
+            f"სულ {total}-დან. თუ კლიენტი სხვას ეძებს, დააზუსტე რას ეძებს.)"
+        )
+    return body
 
 
 def _public_base() -> str:
@@ -107,8 +164,12 @@ def order_link_for(shop) -> str:
     return f"{_public_base()}/panel/order.html?shop={shop.get('id')}"
 
 
-def build_system_prompt(shop, products) -> str:
-    """ქმნის system prompt-ს მაღაზიისა და მარაგის მიხედვით (offline, network-ის გარეშე)."""
+def build_system_prompt(shop, products, total: int | None = None) -> str:
+    """ქმნის system prompt-ს მაღაზიისა და მარაგის მიხედვით (offline, network-ის გარეშე).
+
+    total: მარაგის სრული რაოდენობა (თუ products უკვე გაფილტრულია retrieval-ით) —
+    ბოტი გაიგებს, რომ ნაჩვენები არ არის სრული მარაგი.
+    """
     currency = shop.get("currency") or "GEL"
     knowledge = (shop.get("knowledge") or "").strip()
     knowledge_section = (
@@ -119,7 +180,7 @@ def build_system_prompt(shop, products) -> str:
         shop_name=shop.get("name") or "მაღაზია",
         currency=currency,
         shop_description=shop.get("description") or "—",
-        inventory=_format_inventory(products, currency),
+        inventory=_format_inventory(products, currency, total),
         order_link=order_link_for(shop),
         knowledge_section=knowledge_section,
         language_rule=language_rule,
@@ -175,9 +236,13 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
     from google import genai
     from google.genai import types
 
+    # #3 ჭკვიანი ძებნა — დიდ მარაგზე მოდელს მხოლოდ რელევანტურ პროდუქტებს ვუგზავნით
+    total = len(products) if products else 0
+    relevant = select_relevant_products(products, message, history)
+
     client = genai.Client(api_key=settings.gemini_api_key)
     config = types.GenerateContentConfig(
-        system_instruction=build_system_prompt(shop, products),
+        system_instruction=build_system_prompt(shop, relevant, total=total),
         temperature=0.3,
         max_output_tokens=800,
     )
