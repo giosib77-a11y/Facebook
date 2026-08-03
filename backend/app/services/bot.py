@@ -51,6 +51,7 @@ SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გამ�
 8. მიწოდება, გადახდა, გარანტია, დაბრუნება — უპასუხე **მხოლოდ** ქვემოთ „დამატებითი ინფორმაციის" მიხედვით. თუ იქ არ წერია — თქვი რომ ოპერატორი დააზუსტებს; ნუ მოიგონებ.
 9. როცა კლიენტი მზადაა შესაკვეთად (ან კითხულობს როგორ იყიდოს) — მიეცი ეს ბმული: {order_link}
 10. თუ ვერ ეხმარები ან კლიენტი ადამიან-ოპერატორს ითხოვს — უპასუხე „ერთ წამში, ოპერატორი დაგიკავშირდებათ 🙏" და პასუხის ბოლოს დაამატე ზუსტად ეს ნიშანი: [[HANDOFF]] (კლიენტი მას ვერ ხედავს — სისტემა წაშლის და გამყიდველს შეატყობინებს). ეს ნიშანი დაამატე მხოლოდ მაშინ, როცა ნამდვილად საჭიროა ადამიანის ჩართვა.
+11. 📷 თუ კლიენტი ფოტოს გამოგზავნის — ყურადღებით დაათვალიერე. შეეცადე მარაგში იგივე ან მსგავსი პროდუქტის მოძებნას და მასზე უპასუხე (სახელი, ფასი, მარაგი). თუ ზუსტად ვერ ცნობ, აღწერე რას ხედავ და დააზუსტე კლიენტთან, ან შესთავაზე ალტერნატივა მარაგიდან. არასდროს მოიგონო პროდუქტი, რომელიც მარაგში არ არის.
 
 მაგალითები (ტონისა და ბუნებრივი ქართულისთვის):
 კლიენტი: გამარჯობა
@@ -125,10 +126,11 @@ def build_system_prompt(shop, products) -> str:
     )
 
 
-def _build_contents(message: str, history):
-    """საუბრის ისტორია + ახალი შეტყობინება Gemini-ის ფორმატში.
+def _build_contents(message: str, history, images=None):
+    """საუბრის ისტორია + ახალი შეტყობინება (და სურათები) Gemini-ის ფორმატში.
 
     history: სია ელემენტებით {"role": "user"|"bot", "content": "..."}.
+    images:  სია (bytes, mime_type) წყვილებით — კლიენტის გამოგზავნილი ფოტოები.
     """
     from google.genai import types
 
@@ -138,17 +140,33 @@ def _build_contents(message: str, history):
         text = (turn.get("content") or "").strip()
         if text:
             contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
-    contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
+
+    parts = []
+    for item in images or []:
+        try:
+            data, mime = item
+            parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+        except Exception:
+            pass  # გატეხილი სურათი — გამოვტოვოთ, ტექსტით მაინც ვუპასუხოთ
+    msg = (message or "").strip()
+    if msg:
+        parts.append(types.Part(text=msg))
+    elif parts:  # მხოლოდ სურათი, ტექსტის გარეშე — მივცეთ ინსტრუქცია
+        parts.append(types.Part(text="(კლიენტმა ეს ფოტო(ები) გამოგზავნა — დაათვალიერე და უპასუხე მარაგზე დაყრდნობით.)"))
+    if not parts:
+        parts.append(types.Part(text=msg))
+    contents.append(types.Content(role="user", parts=parts))
     return contents
 
 
-def get_bot_reply(shop, products, message: str, history=None) -> str:
+def get_bot_reply(shop, products, message: str, history=None, images=None) -> str:
     """აბრუნებს ბოტის ქართულ პასუხს Gemini-ით.
 
     shop:     dict (name, currency, description, ...)
     products: list[dict] (მხოლოდ აქტიური პროდუქტები უნდა გადმოეცეს)
     message:  კლიენტის შეტყობინება
     history:  წინა საუბარი (არასავალდებულო)
+    images:   სია (bytes, mime_type) — კლიენტის ფოტოები (multimodal, არასავალდებულო)
     """
     settings = get_settings()
     if not settings.gemini_api_key:
@@ -163,7 +181,7 @@ def get_bot_reply(shop, products, message: str, history=None) -> str:
         temperature=0.3,
         max_output_tokens=800,
     )
-    contents = _build_contents(message, history)
+    contents = _build_contents(message, history, images)
 
     # დროებითი 503/429-ებზე ხელახლა ვცდით მცირე დაყოვნებით
     last_err = None

@@ -9,7 +9,7 @@ from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
 from app.core.tiers import DAILY_ABUSE_CAP, limits_for
 from app.services.bot import get_bot_reply, parse_reply
-from app.services.facebook import send_text_message, verify_signature
+from app.services.facebook import download_image, send_text_message, verify_signature
 
 router = APIRouter(tags=["messenger webhook"])
 
@@ -144,8 +144,14 @@ def _process_events(data: dict) -> None:
         for ev in entry.get("messaging", []):
             message = ev.get("message", {})
             sender_id = (ev.get("sender") or {}).get("id")
-            text = message.get("text")
-            if message.get("is_echo") or not sender_id or not text:
+            text = message.get("text") or ""
+            # სურათის დანართები (Messenger/Instagram) — Gemini multimodal-ისთვის
+            image_urls = [
+                (a.get("payload") or {}).get("url")
+                for a in (message.get("attachments") or [])
+                if a.get("type") == "image" and (a.get("payload") or {}).get("url")
+            ]
+            if message.get("is_echo") or not sender_id or (not text and not image_urls):
                 continue
 
             # --- მონეტიზაცია: კლიენტის თვლა + ლიმიტების შემოწმება ---
@@ -175,14 +181,28 @@ def _process_events(data: dict) -> None:
                     pass
                 continue
 
+            # შემოსული სურათების ჩამოტვირთვა (მაქს 3) — Gemini-სთვის
+            images = []
+            for url in image_urls[:3]:
+                try:
+                    img = download_image(url)
+                    if img:
+                        images.append(img)
+                except Exception:
+                    pass  # ერთი სურათი ვერ ჩამოიტვირთა — დანარჩენით/ტექსტით ვაგრძელებთ
+
             history = _load_history(sc, shop["id"], str(sender_id))
             handoff = False
             try:
-                reply, handoff = parse_reply(get_bot_reply(shop, products, text, history))
+                reply, handoff = parse_reply(
+                    get_bot_reply(shop, products, text, history, images=images)
+                )
             except Exception:
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."
+            # მეხსიერებაში ტექსტი ვინახოთ; უტექსტო ფოტოზე — ნიშანი
+            saved_text = text or ("[სურათი]" if images else "")
             try:
                 send_text_message(page_token, sender_id, reply)
-                _save_turn(sc, shop["id"], str(sender_id), history, text, reply, handoff)
+                _save_turn(sc, shop["id"], str(sender_id), history, saved_text, reply, handoff)
             except Exception:
                 pass  # ლოგირება მოგვიანებით

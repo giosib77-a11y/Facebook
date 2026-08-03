@@ -201,3 +201,23 @@ def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
         timeout=20,
     )
     r.raise_for_status()
+
+
+# ---------------------------------------------------------------------------
+# შემოსული სურათის ჩამოტვირთვა (Gemini multimodal-ისთვის)
+# ---------------------------------------------------------------------------
+def download_image(url: str, max_bytes: int = 8 * 1024 * 1024) -> tuple[bytes, str] | None:
+    """კლიენტის გამოგზავნილი სურათის ჩამოტვირთვა FB/IG CDN-იდან.
+
+    აბრუნებს (bytes, mime_type) ან None (თუ ვერ ჩამოიტვირთა / არ არის სურათი /
+    ძალიან დიდია). ბოტი უსურათოდ მაინც აგრძელებს.
+    """
+    r = httpx.get(url, timeout=20, follow_redirects=True)
+    r.raise_for_status()
+    data = r.content
+    if not data or len(data) > max_bytes:
+        return None
+    mime = (r.headers.get("content-type") or "image/jpeg").split(";")[0].strip().lower()
+    if not mime.startswith("image/"):
+        mime = "image/jpeg"
+    return data, mime
