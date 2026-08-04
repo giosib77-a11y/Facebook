@@ -104,10 +104,16 @@ def build_login_url(state: str) -> str:
     params = {
         "client_id": s.fb_app_id,
         "redirect_uri": s.fb_redirect_uri,
-        "scope": OAUTH_SCOPES,
         "response_type": "code",
         "state": state,
     }
+    if s.fb_login_config_id:
+        # Facebook Login for Business — config-based (business-owned გვერდები/assets).
+        # ნებართვები/აქტივები კონფიგში განისაზღვრება, არა scope-ით.
+        params["config_id"] = s.fb_login_config_id
+    else:
+        # კლასიკური scope-based (პირადი პროფილის გვერდები)
+        params["scope"] = OAUTH_SCOPES
     return f"https://www.facebook.com/{s.fb_graph_version}/dialog/oauth?{urlencode(params)}"
 
 

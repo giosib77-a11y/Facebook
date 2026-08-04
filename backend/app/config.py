@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     fb_verify_token: str = ""              # ჩვენი არჩეული token webhook-ის ვერიფიკაციისთვის
     fb_graph_version: str = "v21.0"
     fb_redirect_uri: str = ""              # backend callback (ngrok https + /facebook/connect/callback)
+    # Facebook Login for Business — Login Configuration ID (business asset/page flow).
+    # თუ დაყენებულია → config-based login (business-owned გვერდებისთვის); თუ არა → scope-based.
+    fb_login_config_id: str = ""
     frontend_url: str = "http://localhost:5500"
     fb_token_encryption_key: str = ""      # Fernet key page token-ის დასაშიფრად
 
