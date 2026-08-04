@@ -13,11 +13,11 @@ import httpx
 
 from app.config import get_settings
 
-# ---- OAuth scope: Messenger + Instagram-ისთვის საჭირო ნებართვები ----
-OAUTH_SCOPES = (
-    "pages_show_list,pages_messaging,pages_manage_metadata,"
-    "instagram_basic,instagram_manage_messages"
-)
+# ---- OAuth scope: Messenger-ისთვის საჭირო ნებართვები ----
+# Instagram-ის scopes (instagram_basic, instagram_manage_messages) დროებით მოხსნილია —
+# ახალ აპზე ჯერ არ არის ვალიდური/კონფიგურირებული. დაბრუნდება Instagram-ის setup +
+# App Review-ის დროს (webhook.py უკვე ამუშავებს object=="instagram"-ს).
+OAUTH_SCOPES = "pages_show_list,pages_messaging,pages_manage_metadata"
 
 
 def _graph_base() -> str:

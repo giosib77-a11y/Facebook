@@ -100,6 +100,24 @@
 
 ---
 
+## 🌐 საიტის ჩატი (web widget) + საიტის კითხვა
+
+> ⭐ სტრატეგიულად ღირებული — **Meta-ს საერთოდ არ სჭირდება** (browser → ჩვენი endpoint → Gemini).
+> App Review/ad-restriction-ის მიღმაა; გამყიდველს დღესვე შეუძლია ბოტი თავის საიტზე.
+
+- [ ] **Web chat widget** — ჩასაშენებელი `<script src=".../widget.js?shop=ID">`:
+      გამყიდვლის საიტზე ჩნდება ჩატის ბუშტი (💬); იგივე ბოტი (მარაგი, ქართული, #3/#5/#4).
+      საჭირო: საჯარო `POST /web-chat` (rate-limit + abuse-cap + tier-limit) + widget.js +
+      embed-კოდი პანელში. web-საუბრები ითვლება პაკეტ-ლიმიტში (session-id ≈ psid).
+- [ ] **საიტის კითხვა (website ingestion)** — გამყიდველი შეიყვანს URL-ს → ვკითხულობთ
+      გვერდებს → სუფთა ტექსტი → `shop.knowledge` (არსებული მექანიზმის გაფართოება,
+      PDF-knowledge-ის მსგავსად). Gemini-ს ~1M კონტექსტი → საშუალო საიტი პირდაპირ prompt-ში.
+      v1: httpx fetch + HTML-to-text. JS-საიტებზე (Zoommer-ტიპი) → Playwright/headless.
+      დიდ საიტზე → v3 RAG (chunk + embeddings + Supabase pgvector). ჰიბრიდი სჯობს:
+      პროდუქტები სტრუქტურირებულად (Excel/Sheets), ზოგადი ინფო (FAQ/მიწოდება) — საიტიდან.
+
+---
+
 ## 💡 სხვა იდეები (მოსაფიქრებელი)
 
 - [ ] პანელის ინტერფეისის თარგმნა (English/Русский) — გადადებული (გამყიდვლები ქართველები არიან)
