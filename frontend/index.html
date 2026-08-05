@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChatAssist — გამყიდველის პანელი</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <!-- შეტყობინებების ზოლი -->
@@ -71,6 +71,25 @@
 
     <!-- ====== DASHBOARD ====== -->
     <section id="app-view" class="hidden">
+     <div class="dash">
+      <aside class="dash-side">
+        <nav class="tabs-nav">
+          <button class="tab-btn active" data-tab="overview">📊 მთავარი</button>
+          <button class="tab-btn" data-tab="products">🛒 პროდუქტები</button>
+          <button class="tab-btn" data-tab="orders">📋 შეკვეთები</button>
+          <button class="tab-btn" data-tab="bot">🤖 ბოტი · არხები</button>
+        </nav>
+        <div class="dash-side-foot">💬 დახმარება:<br><a href="mailto:chatassistbusiness@gmail.com">chatassistbusiness@gmail.com</a></div>
+      </aside>
+      <div class="dash-main">
+
+      <!-- overview — სტატ-ბარათები -->
+      <div class="stat-cards">
+        <div class="stat-card"><div class="si">👥</div><div class="sv" id="stat-clients">—</div><div class="sl">კლიენტი ამ თვეს</div></div>
+        <div class="stat-card"><div class="si">🛒</div><div class="sv" id="stat-orders">—</div><div class="sl">შეკვეთა</div></div>
+        <div class="stat-card" id="stat-attention-card"><div class="si">🔔</div><div class="sv" id="stat-attention">0</div><div class="sl">ყურადღება სჭირდება</div></div>
+        <div class="stat-card"><div class="si">📦</div><div class="sv" id="stat-products">—</div><div class="sl">პროდუქტი</div></div>
+      </div>
 
       <!-- მაღაზიის არჩევა / შექმნა (ყოველთვის ჩანს) -->
       <div class="card">
@@ -98,15 +117,22 @@
         <div id="attention-list" class="product-list"></div>
       </div>
 
-      <!-- ჩანართები -->
-      <div class="tabs-nav">
-        <button class="tab-btn active" data-tab="products">🛒 პროდუქტები</button>
-        <button class="tab-btn" data-tab="orders">📋 შეკვეთები</button>
-        <button class="tab-btn" data-tab="bot">🤖 ბოტი · Facebook &amp; Instagram</button>
+      <!-- ===== ჩანართი: მთავარი (overview) ===== -->
+      <div class="tab-panel" data-panel="overview">
+        <div class="two-col">
+          <div class="card">
+            <div class="list-header"><h2 style="margin:0">🤖 ბოტი &amp; არხები</h2><button type="button" class="tab-btn-link" data-goto="bot">მართვა →</button></div>
+            <div id="overview-bot"></div>
+          </div>
+          <div class="card">
+            <div class="list-header"><h2 style="margin:0">🧾 ბოლო შეკვეთები</h2><button type="button" class="tab-btn-link" data-goto="orders">ყველა →</button></div>
+            <div id="overview-orders" class="overview-orders"></div>
+          </div>
+        </div>
       </div>
 
       <!-- ===== ჩანართი: პროდუქტები ===== -->
-      <div class="tab-panel" data-panel="products">
+      <div class="tab-panel hidden" data-panel="products">
 
         <!-- პროდუქტის ფორმა (დამატება/რედაქტირება) -->
         <div class="card" id="product-form-card">
@@ -273,6 +299,8 @@
 
       </div>
 
+      </div><!-- /dash-main -->
+     </div><!-- /dash -->
     </section>
   </main>
 
@@ -307,6 +335,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=39"></script>
+  <script src="app.js?v=41"></script>
 </body>
 </html>

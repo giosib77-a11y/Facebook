@@ -15,6 +15,7 @@ from app.core.supabase_client import get_service_client
 from app.core.tiers import (
     TIER_LABELS,
     TIER_PRICES,
+    best_tier,
     bulk_import_allowed,
     limits_for,
     normalize_tier,
@@ -57,7 +58,8 @@ def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_aut
         auth.client.table("shops").select("subscription_tier").eq("owner_id", auth.user_id)
     )
     owned = existing.data or []
-    limit = owner_shop_limit([s.get("subscription_tier") for s in owned])
+    tiers = [s.get("subscription_tier") for s in owned]
+    limit = owner_shop_limit(tiers)
     if limit is not None and len(owned) >= limit:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -66,6 +68,9 @@ def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_aut
         )
     data = payload.model_dump(mode="json")
     data["owner_id"] = auth.user_id
+    # per-account: ახალი მაღაზია მემკვიდრეობით იღებს მფლობელის მიმდინარე პაკეტს —
+    # ერთი გამოწერა ფარავს ყველა მაღაზიას (მაგ. სტანდარტის მე-2 მაღაზია ცალკე გადახდას არ ითხოვს)
+    data["subscription_tier"] = best_tier(tiers)
     res = run(auth.client.table("shops").insert(data))
     if not res.data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მაღაზიის შექმნა ვერ მოხერხდა")
@@ -174,20 +179,21 @@ def request_upgrade(
 
 @router.post("/{shop_id}/downgrade-free")
 def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
-    """გამყიდველი აუქმებს გამოწერას და უფასო პაკეტზე ბრუნდება (თვითმომსახურება).
+    """გამყიდველი აუქმებს გამოწერას → მთელი ანგარიში (ყველა მისი მაღაზია) უფასოზე ბრუნდება.
 
-    უფასოზე გადასვლა პრივილეგიის აწევა არ არის, ამიტომ RLS-ის ქვეშ, გამყიდვლის
-    საკუთარი client-ითვე ვასრულებთ (მხოლოდ თავის მაღაზიას ცვლის). თუ pending
-    upgrade მოთხოვნა იყო — ის უქმდება.
+    გამოწერა per-account-ია (ერთი გადახდა ფარავს ყველა მაღაზიას), ამიტომ გაუქმებაც
+    ყველა მაღაზიას ეხება. უფასოზე გადასვლა პრივილეგიის აწევა არ არის → RLS-ის ქვეშ,
+    გამყიდვლის საკუთარი client-ითვე. pending upgrade მოთხოვნებიც უქმდება.
     """
     res = run(
-        auth.client.table("shops").update({"subscription_tier": "free"}).eq("id", str(shop_id))
+        auth.client.table("shops").update({"subscription_tier": "free"}).eq("owner_id", auth.user_id)
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     try:
-        auth.client.table("upgrade_requests").update({"status": "cancelled"}).eq(
-            "shop_id", str(shop_id)
+        shop_ids = [s["id"] for s in res.data]
+        auth.client.table("upgrade_requests").update({"status": "cancelled"}).in_(
+            "shop_id", shop_ids
         ).eq("status", "pending").execute()
     except Exception:
         pass

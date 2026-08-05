@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ადმინ პანელი — ChatAssist</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="stylesheet" href="styles.css?v=3" />
   <style>
     .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
     .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow-sm); }
@@ -27,12 +27,12 @@
     .chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 5px; }
     .chart-bars { display: flex; align-items: flex-end; gap: 4px; height: 100%; }
     .chart-bars .bar { width: 14px; border-radius: 4px 4px 0 0; min-height: 2px; transition: height .3s ease; }
-    .bar.orders { background: linear-gradient(180deg, #818cf8, #6366f1); }
-    .bar.shops { background: linear-gradient(180deg, #a78bfa, #8b5cf6); }
+    .bar.orders { background: linear-gradient(180deg, #34d399, #059669); }
+    .bar.shops { background: linear-gradient(180deg, #6ee7d7, #14b8a6); }
     .chart-lbl { font-size: .72rem; color: var(--muted); }
     .chart-legend { display: flex; gap: 18px; font-size: .82rem; color: var(--muted); margin-top: 10px; }
     .chart-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
-    .stat.mrr { background: linear-gradient(135deg, var(--primary), #8b5cf6); color: #fff; }
+    .stat.mrr { background: linear-gradient(135deg, #10b981, #047857); color: #fff; }
     .stat.mrr .lbl { color: rgba(255,255,255,.85); }
     .row-actions { display: flex; gap: 6px; }
     .icon-btn { cursor: pointer; border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 5px 9px; font-size: .85rem; }
@@ -92,7 +92,7 @@
         <div class="chart" id="growth-chart"></div>
         <div class="chart-legend">
           <span><i style="background:var(--primary)"></i>შეკვეთები</span>
-          <span><i style="background:#8b5cf6"></i>ახალი მაღაზიები</span>
+          <span><i style="background:#14b8a6"></i>ახალი მაღაზიები</span>
         </div>
       </div>
 

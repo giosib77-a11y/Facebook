@@ -78,6 +78,49 @@
     });
   });
 
+  // dashboard overview — სტატ-ბარათების განახლება (იგივე მონაცემი, სხვა ადგილას)
+  function setStat(id, val) { const e = $(id); if (e) e.textContent = val; }
+
+  // overview „მართვა →" / „ყველა →" — შესაბამის ტაბზე გადასვლა
+  document.addEventListener("click", (e) => {
+    const g = e.target.closest && e.target.closest("[data-goto]");
+    if (!g) return;
+    const btn = document.querySelector('.tab-btn[data-tab="' + g.dataset.goto + '"]');
+    if (btn) btn.click();
+  });
+
+  // overview — ბოტი & არხები (მიმდინარე მაღაზიის კავშირის სტატუსი)
+  function renderBotChannels() {
+    const box = $("overview-bot");
+    if (!box) return;
+    const shop = currentShop();
+    if (!shop) { box.innerHTML = '<p class="ov-empty">აირჩიე ან შექმენი მაღაზია.</p>'; return; }
+    const fb = !!shop.facebook_page_id, ig = !!shop.instagram_account_id;
+    const botOn = fb && shop.bot_enabled !== false;
+    box.innerHTML =
+      '<div class="ov-conn">' +
+        '<div class="ov-ch' + (fb ? " on" : "") + '">📘<b>Facebook</b><span class="s ' + (fb ? "yes" : "no") + '">' + (fb ? "✓ დაკავშირებული" : "არ არის") + "</span></div>" +
+        '<div class="ov-ch' + (ig ? " on" : "") + '">📸<b>Instagram</b><span class="s ' + (ig ? "yes" : "no") + '">' + (ig ? "✓ დაკავშირებული" : "არ არის") + "</span></div>" +
+      "</div>" +
+      '<div class="ov-bot"><span class="led ' + (botOn ? "on" : "off") + '"></span><div><b>' +
+        (botOn ? "ბოტი აქტიურია" : "ბოტი ჯერ არ მუშაობს") + "</b><br><span>" +
+        (fb ? "პასუხობს კლიენტებს ქართულად, 24/7" : "დააკავშირე Facebook გვერდი „ბოტი · არხები“ ტაბში") +
+      "</span></div></div>";
+  }
+
+  // overview — ბოლო შეკვეთები (top 3)
+  function renderRecentOrders(orders) {
+    const box = $("overview-orders");
+    if (!box) return;
+    const top = (orders || []).slice(0, 3);
+    if (!top.length) { box.innerHTML = '<p class="ov-empty">შეკვეთები ჯერ არ არის.</p>'; return; }
+    box.innerHTML = top.map((o) => {
+      const items = (o.items || []).map((i) => escapeHtml(i.name) + " ×" + i.quantity).join(", ");
+      return '<div class="ov-ord"><span class="oi">🧾</span><div class="oinfo"><b>' + escapeHtml(o.customer_name) +
+        '</b><div class="m">' + (items || "—") + '</div></div><span class="pr">' + Number(o.total).toFixed(0) + " ₾</span></div>";
+    }).join("");
+  }
+
   // ---------- helpers ----------
   function toast(msg, isError) {
     const t = $("toast");
@@ -364,10 +407,11 @@
   async function updateUsage() {
     const box = $("usage-box");
     if (!box) return;
-    if (!currentShopId) { box.classList.add("hidden"); return; }
+    if (!currentShopId) { box.classList.add("hidden"); setStat("stat-clients", "0"); return; }
     try {
       const u = await api("/shops/" + currentShopId + "/usage");
       applyBulkImportGate(u.bulk_import !== false);
+      setStat("stat-clients", u.monthly_customers);
       const climit = u.customer_limit;
       const cpct = climit ? Math.min(100, Math.round((u.monthly_customers / climit) * 100)) : 0;
       const near = cpct >= 90;
@@ -437,9 +481,9 @@
     const d = e.target.closest && e.target.closest("[data-downgrade-free]");
     if (!d || !currentShopId) return;
     if (!confirm(
-      "უფასო პაკეტზე დაბრუნდები. ფასიანი პაკეტის უპირატესობები გაუქმდება " +
-      "(მეტი კლიენტი და პროდუქტი, Excel/PDF ატვირთვა, პრიორიტეტული მხარდაჭერა), " +
-      "ხოლო ლიმიტები უფასო პაკეტისა გახდება.\n\nგავაგრძელო?"
+      "უფასო პაკეტზე დაბრუნდები — გამოწერა ერთიანია, ამიტომ ეს ეხება ყველა შენს მაღაზიას. " +
+      "ფასიანი პაკეტის უპირატესობები გაუქმდება (მეტი კლიენტი და პროდუქტი, " +
+      "Excel/PDF ატვირთვა, პრიორიტეტული მხარდაჭერა).\n\nგავაგრძელო?"
     )) return;
     try {
       await api("/shops/" + currentShopId + "/downgrade-free", "POST");
@@ -495,6 +539,8 @@
     if (!currentShopId) {
       list.innerHTML = "";
       $("order-count").textContent = "0";
+      setStat("stat-orders", "0");
+      renderRecentOrders([]);
       return;
     }
     const filter = ($("order-filter") || {}).value || "";
@@ -511,6 +557,8 @@
       return;
     }
     $("order-count").textContent = orders.length;
+    setStat("stat-orders", orders.length);
+    renderRecentOrders(orders);
     list.innerHTML = "";
     $("orders-empty").classList.toggle("hidden", orders.length > 0);
     orders.forEach((o) => list.appendChild(orderRow(o)));
@@ -606,6 +654,8 @@
     }
     const items = (data && data.items) || [];
     $("attention-count").textContent = items.length;
+    setStat("stat-attention", items.length);
+    { const ac = $("stat-attention-card"); if (ac) ac.classList.toggle("alert", items.length > 0); }
     list.innerHTML = "";
     if (!items.length) {
       card.classList.add("hidden");
@@ -686,6 +736,7 @@
   }
 
   function updateFbSection() {
+    renderBotChannels(); // overview „ბოტი & არხები" სინქრონში
     const section = $("fb-section");
     if (!section) return; // ძველი HTML — FB სექცია არ არსებობს
     const shop = currentShop();
@@ -1125,6 +1176,7 @@
       allProducts = [];
       list.innerHTML = "";
       $("product-count").textContent = "0";
+      setStat("stat-products", "0");
       $("empty-state").classList.add("hidden");
       return;
     }
@@ -1132,6 +1184,7 @@
     $("empty-state").classList.add("hidden");
     allProducts = await api("/products?shop_id=" + encodeURIComponent(currentShopId));
     $("product-count").textContent = allProducts.length;
+    setStat("stat-products", allProducts.length);
     renderProductList();
   }
 

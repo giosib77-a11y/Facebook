@@ -313,7 +313,12 @@ def resolve_upgrade_request(
         tier = r["requested_tier"]
         if tier not in TIER_LABELS:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
-        sc.table("shops").update({"subscription_tier": tier}).eq("id", r["shop_id"]).execute()
+        # per-account: მფლობელის ყველა მაღაზია გადადის ამ პაკეტზე (ერთი გამოწერა — ყველა მაღაზია)
+        owner = sc.table("shops").select("owner_id").eq("id", r["shop_id"]).limit(1).execute().data
+        if owner:
+            sc.table("shops").update({"subscription_tier": tier}).eq("owner_id", owner[0]["owner_id"]).execute()
+        else:
+            sc.table("shops").update({"subscription_tier": tier}).eq("id", r["shop_id"]).execute()
         sc.table("upgrade_requests").update({"status": "approved", "resolved_at": now_iso}).eq("id", req_id).execute()
     else:
         sc.table("upgrade_requests").update({"status": "rejected", "resolved_at": now_iso}).eq("id", req_id).execute()
