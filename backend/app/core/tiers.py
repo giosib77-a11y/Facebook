@@ -2,14 +2,21 @@
 
 customers = უნიკალური Messenger-კლიენტი თვეში (მთავარი ლიმიტი).
 products  = მაქს. პროდუქტი მაღაზიაზე. None = ულიმიტო.
+shops     = მაქს. მაღაზია/გვერდი მფლობელზე (მისი უმაღლესი პაკეტით). None = ულიმიტო.
 """
 
 TIER_LIMITS = {
-    "free":     {"customers": 30,   "products": 20},
-    "basic":    {"customers": 200,  "products": 150},
-    "standard": {"customers": 800,  "products": 1000},
-    "business": {"customers": 3000, "products": None},
+    "free":     {"customers": 30,   "products": 20,   "shops": 1},
+    "basic":    {"customers": 200,  "products": 150,  "shops": 1},
+    "standard": {"customers": 800,  "products": 1000, "shops": 2},
+    "business": {"customers": 3000, "products": None, "shops": None},
 }
+
+# პაკეტის რიგი (დაბლიდან მაღლა) — უმაღლესი პაკეტის დასათვლელად
+TIER_ORDER = ["free", "basic", "standard", "business"]
+
+# რომელ პაკეტებს აქვთ Excel/CSV + PDF ატვირთვა (bulk import / ბოტის ცოდნა)
+BULK_IMPORT_TIERS = {"basic", "standard", "business"}
 
 TIER_LABELS = {
     "free": "უფასო",
@@ -36,3 +43,23 @@ def normalize_tier(tier: str | None) -> str:
 
 def limits_for(tier: str | None) -> dict:
     return TIER_LIMITS[normalize_tier(tier)]
+
+
+def bulk_import_allowed(tier: str | None) -> bool:
+    """Excel/CSV/PDF ატვირთვა ხელმისაწვდომია თუ არა ამ პაკეტზე."""
+    return normalize_tier(tier) in BULK_IMPORT_TIERS
+
+
+def best_tier(tiers) -> str:
+    """მოცემული პაკეტებიდან უმაღლესი (მფლობელს რამდენიმე მაღაზია შეიძლება ჰქონდეს)."""
+    best = "free"
+    for t in tiers:
+        nt = normalize_tier(t)
+        if TIER_ORDER.index(nt) > TIER_ORDER.index(best):
+            best = nt
+    return best
+
+
+def owner_shop_limit(tiers) -> int | None:
+    """მფლობელის მაღაზიების ჭერი — მისი უმაღლესი პაკეტის მიხედვით. None = ულიმიტო."""
+    return TIER_LIMITS[best_tier(tiers)]["shops"]

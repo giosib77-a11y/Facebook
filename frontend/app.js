@@ -334,12 +334,40 @@
   const TIER_NAMES = { free: "უფასო", basic: "საბაზისო", standard: "სტანდარტი", business: "ბიზნესი" };
   const PAID_TIERS = ["basic", "standard", "business"];
 
+  // Excel/PDF ატვირთვის ბარათების ჩაკეტვა უფასო პაკეტზე (backend-იც ამოწმებს)
+  function applyBulkImportGate(allowed) {
+    ["import-file", "import-btn", "knowledge-file", "knowledge-upload-btn"].forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = !allowed;
+    });
+    ["import-card", "knowledge-card"].forEach((cid) => {
+      const card = $(cid);
+      if (!card) return;
+      let hint = card.querySelector(".tier-lock");
+      if (allowed) {
+        card.classList.remove("locked");
+        if (hint) hint.remove();
+      } else {
+        card.classList.add("locked");
+        if (!hint) {
+          hint = document.createElement("div");
+          hint.className = "tier-lock";
+          hint.textContent = "🔒 ეს ფუნქცია ფასიან პაკეტშია ხელმისაწვდომი — განაახლე პაკეტი ზემოთ.";
+          const h2 = card.querySelector("h2");
+          if (h2 && h2.nextSibling) card.insertBefore(hint, h2.nextSibling);
+          else card.appendChild(hint);
+        }
+      }
+    });
+  }
+
   async function updateUsage() {
     const box = $("usage-box");
     if (!box) return;
     if (!currentShopId) { box.classList.add("hidden"); return; }
     try {
       const u = await api("/shops/" + currentShopId + "/usage");
+      applyBulkImportGate(u.bulk_import !== false);
       const climit = u.customer_limit;
       const cpct = climit ? Math.min(100, Math.round((u.monthly_customers / climit) * 100)) : 0;
       const near = cpct >= 90;
@@ -367,6 +395,13 @@
         upgrade = '<div class="usage-upgrade"><span>პაკეტის განახლება:</span> ' + btns + "</div>";
       }
 
+      // უფასო პაკეტზე დაბრუნება (გამოწერის გაუქმება) — მხოლოდ ფასიან პაკეტზე
+      const downgrade = u.tier !== "free"
+        ? '<div class="usage-downgrade-row">' +
+            '<button type="button" class="usage-downgrade" data-downgrade-free>' +
+            "↩ უფასო პაკეტზე დაბრუნება</button></div>"
+        : "";
+
       box.innerHTML =
         '<div class="usage-head">' +
           '<span class="usage-tier">📦 პაკეტი: <b>' + escapeHtml(u.tier_label) + "</b></span>" +
@@ -375,7 +410,7 @@
         '<div class="usage-bar"><span style="width:' + cpct + '%"' + (near ? ' class="near"' : "") + "></span></div>" +
         '<div class="usage-foot">პროდუქტი: ' + u.products + " / " + plimit +
           (near ? ' · <b style="color:#d97706">ლიმიტს უახლოვდები — განაახლე პაკეტი</b>' : "") + "</div>" +
-        upgrade;
+        upgrade + downgrade;
       box.classList.remove("hidden");
     } catch (e) {
       box.classList.add("hidden");
@@ -391,6 +426,24 @@
     try {
       await api("/shops/" + currentShopId + "/upgrade-request", "POST", { tier });
       toast("მოთხოვნა გაიგზავნა");
+      updateUsage();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // უფასო პაკეტზე დაბრუნება (გამოწერის გაუქმება)
+  document.addEventListener("click", async (e) => {
+    const d = e.target.closest && e.target.closest("[data-downgrade-free]");
+    if (!d || !currentShopId) return;
+    if (!confirm(
+      "უფასო პაკეტზე დაბრუნდები. ფასიანი პაკეტის უპირატესობები გაუქმდება " +
+      "(მეტი კლიენტი და პროდუქტი, Excel/PDF ატვირთვა, პრიორიტეტული მხარდაჭერა), " +
+      "ხოლო ლიმიტები უფასო პაკეტისა გახდება.\n\nგავაგრძელო?"
+    )) return;
+    try {
+      await api("/shops/" + currentShopId + "/downgrade-free", "POST");
+      toast("უფასო პაკეტზე დაბრუნდი");
       updateUsage();
     } catch (err) {
       toast(err.message, true);

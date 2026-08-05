@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
-from app.core.tiers import limits_for
+from app.core.tiers import bulk_import_allowed, limits_for
 from app.models.product import ProductCreate, ProductOut, ProductUpdate
 from app.services.import_products import parse_products_file, preview_file
 
@@ -63,9 +63,16 @@ async def import_preview(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
     if len(content) > MAX_IMPORT_BYTES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ძალიან დიდია (მაქს. 5MB)")
-    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    owns = run(
+        auth.client.table("shops").select("id,subscription_tier").eq("id", str(shop_id)).limit(1)
+    )
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    if not bulk_import_allowed(owns.data[0].get("subscription_tier")):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Excel/CSV ატვირთვა ფასიან პაკეტშია ხელმისაწვდომი — განაახლე პაკეტი.",
+        )
     try:
         return preview_file(content, file.filename)
     except ValueError as e:
@@ -93,9 +100,16 @@ async def import_products(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ძალიან დიდია (მაქს. 5MB)")
 
     # მაღაზია მომხმარებლის უნდა იყოს (RLS-იც ამოწმებს, მაგრამ ნათელი შეცდომისთვის)
-    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    owns = run(
+        auth.client.table("shops").select("id,subscription_tier").eq("id", str(shop_id)).limit(1)
+    )
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    if not bulk_import_allowed(owns.data[0].get("subscription_tier")):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Excel/CSV ატვირთვა ფასიან პაკეტშია ხელმისაწვდომი — განაახლე პაკეტი.",
+        )
 
     override = None
     extra_cols = None

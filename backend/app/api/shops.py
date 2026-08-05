@@ -12,7 +12,14 @@ from app.config import get_settings
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
-from app.core.tiers import TIER_LABELS, TIER_PRICES, limits_for, normalize_tier
+from app.core.tiers import (
+    TIER_LABELS,
+    TIER_PRICES,
+    bulk_import_allowed,
+    limits_for,
+    normalize_tier,
+    owner_shop_limit,
+)
 from app.models.shop import ShopCreate, ShopOut
 from app.services.pdf_extract import extract_pdf_text
 
@@ -45,6 +52,18 @@ def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_aut
     owner_id ავტომატურად ისმება auth.uid()-ით; RLS insert პოლისი ამოწმებს, რომ
     owner_id == ავტორიზებული მომხმარებელი.
     """
+    # მაღაზიების ჭერი — მფლობელის უმაღლესი პაკეტის მიხედვით (free/basic=1, standard=2, business=∞)
+    existing = run(
+        auth.client.table("shops").select("subscription_tier").eq("owner_id", auth.user_id)
+    )
+    owned = existing.data or []
+    limit = owner_shop_limit([s.get("subscription_tier") for s in owned])
+    if limit is not None and len(owned) >= limit:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "პაკეტის ლიმიტი: მეტი მაღაზიის დასამატებლად განაახლე პაკეტი "
+            "(სტანდარტი — 2 მაღაზია, ბიზნესი — ულიმიტო).",
+        )
     data = payload.model_dump(mode="json")
     data["owner_id"] = auth.user_id
     res = run(auth.client.table("shops").insert(data))
@@ -121,6 +140,7 @@ def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
         "customer_limit": limits["customers"],
         "products": prods.count or 0,
         "product_limit": limits["products"],
+        "bulk_import": bulk_import_allowed(tier),
         "pending_request": pending,
         "prices": TIER_PRICES,
         "payment_iban": settings.payment_iban,
@@ -150,6 +170,28 @@ def request_upgrade(
         )
     )
     return {"ok": True}
+
+
+@router.post("/{shop_id}/downgrade-free")
+def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
+    """გამყიდველი აუქმებს გამოწერას და უფასო პაკეტზე ბრუნდება (თვითმომსახურება).
+
+    უფასოზე გადასვლა პრივილეგიის აწევა არ არის, ამიტომ RLS-ის ქვეშ, გამყიდვლის
+    საკუთარი client-ითვე ვასრულებთ (მხოლოდ თავის მაღაზიას ცვლის). თუ pending
+    upgrade მოთხოვნა იყო — ის უქმდება.
+    """
+    res = run(
+        auth.client.table("shops").update({"subscription_tier": "free"}).eq("id", str(shop_id))
+    )
+    if not res.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    try:
+        auth.client.table("upgrade_requests").update({"status": "cancelled"}).eq(
+            "shop_id", str(shop_id)
+        ).eq("status", "pending").execute()
+    except Exception:
+        pass
+    return {"ok": True, "tier": "free"}
 
 
 @router.get("/{shop_id}/attention")
@@ -296,6 +338,17 @@ async def upload_knowledge(
     auth: CurrentAuth = Depends(get_current_auth),
 ):
     """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახება მაღაზიის ცოდნად (ბოტი იყენებს)."""
+    # PDF ცოდნა — მხოლოდ ფასიან პაკეტზე (ტიპის შემოწმება + მფლობელობა RLS-ით)
+    shop = run(
+        auth.client.table("shops").select("subscription_tier").eq("id", str(shop_id)).limit(1)
+    )
+    if not shop.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    if not bulk_import_allowed(shop.data[0].get("subscription_tier")):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "PDF ცოდნის ატვირთვა ფასიან პაკეტშია ხელმისაწვდომი — განაახლე პაკეტი.",
+        )
     name = (file.filename or "").lower()
     if not name.endswith(".pdf"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მხოლოდ .pdf ფაილია მხარდაჭერილი")
