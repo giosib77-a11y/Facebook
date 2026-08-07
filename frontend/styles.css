@@ -290,6 +290,13 @@ input:focus, select:focus, textarea:focus {
 .badge-on { background: #dcfce7; color: var(--ok); }
 .badge-off { background: #fee2e2; color: var(--danger); }
 
+/* პროდუქტის ფოტო — thumbnail სიაში + preview ფორმაში */
+.product-thumb { width: 50px; height: 50px; border-radius: 11px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border); background: var(--bg); }
+.product-item > .product-info { flex: 1; min-width: 0; }
+.img-preview { position: relative; display: inline-block; margin-top: 2px; }
+.img-preview img { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); display: block; background: var(--bg); }
+.img-remove { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; background: var(--danger); color: #fff; cursor: pointer; font-size: .72rem; line-height: 1; display: grid; place-items: center; box-shadow: var(--shadow-sm); }
+
 /* შეკვეთის სტატუსის ფერადი აქცენტი (მარცხენა ზოლი) */
 .order-item { border-left-width: 4px; }
 .order-new { border-left-color: var(--primary); }

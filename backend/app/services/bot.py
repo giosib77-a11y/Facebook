@@ -53,7 +53,7 @@ SYSTEM_PROMPT_TEMPLATE = """შენ ხარ "{shop_name}"-ის გამ�
 8. მიწოდება, გადახდა, გარანტია, დაბრუნება — უპასუხე **მხოლოდ** ქვემოთ „დამატებითი ინფორმაციის" მიხედვით. თუ იქ არ წერია — თქვი რომ ოპერატორი დააზუსტებს; ნუ მოიგონებ.
 9. როცა კლიენტი მზადაა შესაკვეთად (ან კითხულობს როგორ იყიდოს) — მიეცი ეს ბმული: {order_link}
 10. თუ ვერ ეხმარები ან კლიენტი ადამიან-ოპერატორს ითხოვს — უპასუხე „ერთ წამში, ოპერატორი დაგიკავშირდებათ 🙏" და პასუხის ბოლოს დაამატე ზუსტად ეს ნიშანი: [[HANDOFF]] (კლიენტი მას ვერ ხედავს — სისტემა წაშლის და გამყიდველს შეატყობინებს). ეს ნიშანი დაამატე მხოლოდ მაშინ, როცა ნამდვილად საჭიროა ადამიანის ჩართვა.
-11. 📷 თუ კლიენტი ფოტოს გამოგზავნის — ყურადღებით დაათვალიერე. შეეცადე მარაგში იგივე ან მსგავსი პროდუქტის მოძებნას და მასზე უპასუხე (სახელი, ფასი, მარაგი). თუ ზუსტად ვერ ცნობ, აღწერე რას ხედავ და დააზუსტე კლიენტთან, ან შესთავაზე ალტერნატივა მარაგიდან. არასდროს მოიგონო პროდუქტი, რომელიც მარაგში არ არის.
+11. 📷 თუ კლიენტი ფოტოს გამოგზავნის — ყურადღებით დაათვალიერე. თუ შენს პროდუქტებს ფოტოები აქვთ, ისინიც მოგეწოდება შესადარებლად — გამოიყენე ვიზუალურად ზუსტი ამოცნობისთვის და დაასახელე კონკრეტული პროდუქტი (სახელი, ფასი, მარაგი). თუ ზუსტად ვერ ცნობ, აღწერე რას ხედავ და დააზუსტე კლიენტთან, ან შესთავაზე ალტერნატივა მარაგიდან. არასდროს მოიგონო პროდუქტი, რომელიც მარაგში არ არის.
 
 მაგალითები (ტონისა და ბუნებრივი ქართულისთვის):
 კლიენტი: გამარჯობა
@@ -194,11 +194,53 @@ def build_system_prompt(shop, products, total: int | None = None) -> str:
     )
 
 
-def _build_contents(message: str, history, images=None):
+def _fetch_product_images(products, max_images: int = 12):
+    """რელევანტური პროდუქტების ფოტოებს ჩამოტვირთავს ვიზუალური შედარებისთვის.
+
+    აბრუნებს [(label, (bytes, mime)), ...] — მხოლოდ იმ პროდუქტების, რომლებსაც
+    ფოტო აქვთ (image_url). max_images — ჭერი (ხარჯი/სისწრაფე; ბევრი სურათი
+    Gemini-ს ძვირი/ნელი უჯდება). ჩამოტვირთვა პარალელურია და მოკლე timeout-ით,
+    რომ ბოტის პასუხი არ შეყოვნდეს (webhook სინქრონულია).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.services.facebook import download_image
+
+    # კანდიდატები — მხოლოდ ფოტოიანი, max_images-მდე
+    candidates = []
+    for p in products or []:
+        if (p.get("image_url") or "").strip():
+            candidates.append(p)
+        if len(candidates) >= max_images:
+            break
+    if not candidates:
+        return []
+
+    def _one(p):
+        try:
+            return p, download_image(p["image_url"], timeout=8)
+        except Exception:
+            return p, None
+
+    refs = []
+    with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
+        for p, got in ex.map(_one, candidates):
+            if not got:
+                continue
+            label = f"• {p.get('name', '?')} — {p.get('price', 0)}"
+            if p.get("sku"):
+                label += f" (SKU: {p['sku']})"
+            refs.append((label, got))
+    return refs
+
+
+def _build_contents(message: str, history, images=None, product_refs=None):
     """საუბრის ისტორია + ახალი შეტყობინება (და სურათები) Gemini-ის ფორმატში.
 
-    history: სია ელემენტებით {"role": "user"|"bot", "content": "..."}.
-    images:  სია (bytes, mime_type) წყვილებით — კლიენტის გამოგზავნილი ფოტოები.
+    history:      სია ელემენტებით {"role": "user"|"bot", "content": "..."}.
+    images:       სია (bytes, mime_type) — კლიენტის გამოგზავნილი ფოტოები.
+    product_refs: სია (label, (bytes, mime)) — მარაგის პროდუქტების საცნობარო
+                  ფოტოები, კლიენტის ფოტოსთან ვიზუალურად შესადარებლად.
     """
     from google.genai import types
 
@@ -210,17 +252,36 @@ def _build_contents(message: str, history, images=None):
             contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
 
     parts = []
-    for item in images or []:
-        try:
-            data, mime = item
-            parts.append(types.Part.from_bytes(data=data, mime_type=mime))
-        except Exception:
-            pass  # გატეხილი სურათი — გამოვტოვოთ, ტექსტით მაინც ვუპასუხოთ
+    has_client_img = bool(images)
+    if has_client_img:
+        parts.append(types.Part(text="📷 კლიენტმა გამოგზავნა ეს ფოტო(ები):"))
+        for item in images or []:
+            try:
+                data, mime = item
+                parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+            except Exception:
+                pass  # გატეხილი სურათი — გამოვტოვოთ
+
+    # პროდუქტების საცნობარო ფოტოები — ვიზუალური ამოცნობისთვის
+    if product_refs:
+        parts.append(types.Part(text=(
+            "🛍️ შენს მარაგში ქვემოთ ჩამოთვლილ პროდუქტებს აქვთ ფოტოები. ყურადღებით შეადარე "
+            "კლიენტის ფოტოს. თუ რომელიმე ემთხვევა (იგივე ან ძალიან მსგავსი), ზუსტად ის პროდუქტი "
+            "დაასახელე ფასითა და მარაგით. თუ ვერცერთს ვერ ადარებ — აღწერე რას ხედავ და დააზუსტე კლიენტთან:"
+        )))
+        for label, got in product_refs:
+            parts.append(types.Part(text=label))
+            try:
+                data, mime = got
+                parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+            except Exception:
+                pass
+
     msg = (message or "").strip()
     if msg:
         parts.append(types.Part(text=msg))
-    elif parts:  # მხოლოდ სურათი, ტექსტის გარეშე — მივცეთ ინსტრუქცია
-        parts.append(types.Part(text="(კლიენტმა ეს ფოტო(ები) გამოგზავნა — დაათვალიერე და უპასუხე მარაგზე დაყრდნობით.)"))
+    elif has_client_img:  # მხოლოდ ფოტო, ტექსტის გარეშე
+        parts.append(types.Part(text="(კლიენტმა ფოტო გამოგზავნა ტექსტის გარეშე — ამოიცანი და უპასუხე მარაგზე დაყრდნობით.)"))
     if not parts:
         parts.append(types.Part(text=msg))
     contents.append(types.Content(role="user", parts=parts))
@@ -247,13 +308,17 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
     total = len(products) if products else 0
     relevant = select_relevant_products(products, message, history)
 
+    # ვიზუალური ამოცნობა — თუ კლიენტმა ფოტო გამოგზავნა, რელევანტური პროდუქტების
+    # ფოტოებსაც ვურთავთ, რომ Gemini-მ ვიზუალურად შეადაროს და კონკრეტული ამოიცნოს.
+    product_refs = _fetch_product_images(relevant) if images else None
+
     client = genai.Client(api_key=settings.gemini_api_key)
     config = types.GenerateContentConfig(
         system_instruction=build_system_prompt(shop, relevant, total=total),
         temperature=0.3,
         max_output_tokens=800,
     )
-    contents = _build_contents(message, history, images)
+    contents = _build_contents(message, history, images, product_refs=product_refs)
 
     # დროებითი 503/429-ებზე ხელახლა ვცდით მცირე დაყოვნებით
     last_err = None

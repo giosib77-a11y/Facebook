@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
+from app.core.supabase_client import get_service_client
 from app.core.tiers import bulk_import_allowed, limits_for
 from app.models.product import ProductCreate, ProductOut, ProductUpdate
 from app.services.import_products import parse_products_file, preview_file
@@ -13,6 +14,13 @@ from app.services.import_products import parse_products_file, preview_file
 router = APIRouter(prefix="/products", tags=["products"])
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5MB
+MAX_IMAGE_BYTES = 8 * 1024 * 1024   # 8MB — პროდუქტის ფოტო
+# დაშვებული სურათის ტიპები → ფაილის გაფართოება
+_IMAGE_EXT = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+    "image/webp": "webp", "image/gif": "gif",
+}
+PRODUCT_IMAGES_BUCKET = "product-images"
 
 
 def _product_limit_left(auth, shop_id) -> int | None:
@@ -45,6 +53,43 @@ def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_curre
     if not res.data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "პროდუქტის შექმნა ვერ მოხერხდა")
     return res.data[0]
+
+
+@router.post("/upload-image")
+async def upload_product_image(
+    shop_id: uuid.UUID = Form(...),
+    file: UploadFile = File(...),
+    auth: CurrentAuth = Depends(get_current_auth),
+):
+    """პროდუქტის ფოტოს ატვირთვა → Supabase Storage → public URL.
+
+    frontend ამ დაბრუნებულ URL-ს ინახავს პროდუქტის `image_url`-ად (create/update).
+    """
+    # 1) მაღაზია მომხმარებლის უნდა იყოს (RLS)
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    # 2) ფაილის შემოწმება — ტიპი და ზომა
+    content = await file.read()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "სურათი ძალიან დიდია (მაქს. 8MB)")
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    ext = _IMAGE_EXT.get(mime)
+    if not ext:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მხოლოდ სურათი დაშვებულია (JPG / PNG / WEBP / GIF)")
+    # 3) ატვირთვა Storage-ში + public URL
+    path = f"{shop_id}/{uuid.uuid4().hex}.{ext}"
+    sc = get_service_client()
+    try:
+        sc.storage.from_(PRODUCT_IMAGES_BUCKET).upload(
+            path, content, {"content-type": mime, "cache-control": "3600"}
+        )
+    except Exception as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"ატვირთვა ვერ მოხერხდა: {e}")
+    url = sc.storage.from_(PRODUCT_IMAGES_BUCKET).get_public_url(path)
+    return {"url": (url or "").rstrip("?"), "path": path}
 
 
 @router.post("/import/preview")

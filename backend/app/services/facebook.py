@@ -215,13 +215,16 @@ def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
 # ---------------------------------------------------------------------------
 # შემოსული სურათის ჩამოტვირთვა (Gemini multimodal-ისთვის)
 # ---------------------------------------------------------------------------
-def download_image(url: str, max_bytes: int = 8 * 1024 * 1024) -> tuple[bytes, str] | None:
-    """კლიენტის გამოგზავნილი სურათის ჩამოტვირთვა FB/IG CDN-იდან.
+def download_image(
+    url: str, max_bytes: int = 8 * 1024 * 1024, timeout: float = 20
+) -> tuple[bytes, str] | None:
+    """სურათის ჩამოტვირთვა URL-იდან (კლიენტის FB/IG CDN ან პროდუქტის Storage).
 
     აბრუნებს (bytes, mime_type) ან None (თუ ვერ ჩამოიტვირთა / არ არის სურათი /
-    ძალიან დიდია). ბოტი უსურათოდ მაინც აგრძელებს.
+    ძალიან დიდია). ბოტი უსურათოდ მაინც აგრძელებს. timeout — მაქს. წამი (პროდუქტის
+    ფოტოებზე უფრო მოკლეს ვაძლევთ, რომ ბოტის პასუხი არ შეყოვნდეს).
     """
-    r = httpx.get(url, timeout=20, follow_redirects=True)
+    r = httpx.get(url, timeout=timeout, follow_redirects=True)
     r.raise_for_status()
     data = r.content
     if not data or len(data) > max_bytes:

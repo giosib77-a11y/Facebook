@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChatAssist — გამყიდველის პანელი</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
 </head>
 <body>
   <!-- შეტყობინებების ზოლი -->
@@ -156,6 +156,14 @@
             <label>აღწერა (არასავალდებულო)
               <textarea id="p-description" rows="2" placeholder="მოკლე აღწერა"></textarea>
             </label>
+            <label>ფოტო (არასავალდებულო)
+              <input type="file" id="p-image-file" accept="image/*" />
+            </label>
+            <div id="p-image-preview" class="img-preview hidden">
+              <img id="p-image-thumb" alt="პროდუქტის ფოტო" />
+              <button type="button" id="p-image-remove" class="img-remove" title="ფოტოს მოცილება">✕</button>
+            </div>
+            <input type="hidden" id="p-image-url" />
             <label class="checkbox-label">
               <input type="checkbox" id="p-active" checked /> აქტიური (ჩანს ბოტში)
             </label>
@@ -335,6 +343,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=41"></script>
+  <script src="app.js?v=43"></script>
 </body>
 </html>

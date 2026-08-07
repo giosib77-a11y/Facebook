@@ -954,6 +954,7 @@
     productForm.reset();
     $("product-id").value = "";
     $("p-active").checked = true;
+    clearProductImage();
     $("product-form-title").textContent = "ახალი პროდუქტი";
     $("product-submit").textContent = "დამატება";
     $("product-cancel").classList.add("hidden");
@@ -961,6 +962,53 @@
   }
 
   $("product-cancel").addEventListener("click", resetProductForm);
+
+  // --- პროდუქტის ფოტო: preview + მოცილება ---
+  function showImagePreview(url) {
+    if (!url) return;
+    $("p-image-thumb").src = url;
+    $("p-image-preview").classList.remove("hidden");
+  }
+  function clearProductImage() {
+    const f = $("p-image-file"); if (f) f.value = "";
+    $("p-image-url").value = "";
+    $("p-image-thumb").removeAttribute("src");
+    $("p-image-preview").classList.add("hidden");
+  }
+  // ფოტოს შემცირება ატვირთვამდე (max 1280px, JPEG) — რომ დიდი ფაილიც აიტვირთოს
+  // და storage/AI იაფი დარჩეს. ვერ შემცირდა → აბრუნებს ორიგინალს (8MB ლიმიტი მაინც).
+  function resizeImage(file, maxDim, quality) {
+    return new Promise((resolve) => {
+      try {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let w = img.width, h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w >= h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+            else { w = Math.round((w * maxDim) / h); h = maxDim; }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", quality);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+        img.src = url;
+      } catch (e) { resolve(file); }
+    });
+  }
+  // როცა ფაილს ირჩევ — მაშინვე ვაჩვენებთ ლოკალურ preview-ს (ატვირთვამდე)
+  on("p-image-file", "change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const objUrl = URL.createObjectURL(file);
+    const thumb = $("p-image-thumb");
+    thumb.onload = () => { URL.revokeObjectURL(objUrl); thumb.onload = null; };
+    showImagePreview(objUrl);
+  });
+  on("p-image-remove", "click", clearProductImage);
 
   productForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -975,6 +1023,30 @@
       is_active: $("p-active").checked,
     };
     try {
+      // ფოტო: თუ ახალი ფაილი აირჩა — ჯერ ავტვირთოთ Storage-ში და URL მივიღოთ.
+      // თუ არა — ვინახავთ არსებულს (p-image-url), ან null-ს (თუ მოცილდა).
+      let imageUrl = $("p-image-url").value || null;
+      const fileInput = $("p-image-file");
+      const file = fileInput && fileInput.files && fileInput.files[0];
+      if (file) {
+        const uploadBlob = await resizeImage(file, 1280, 0.85);
+        const token = await getToken();
+        const fd = new FormData();
+        fd.append("shop_id", currentShopId);
+        fd.append("file", uploadBlob, "photo.jpg");
+        const r = await fetch(cfg.API_BASE + "/products/upload-image", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token, "ngrok-skip-browser-warning": "1" },
+          body: fd,
+        });
+        if (!r.ok) {
+          const t = await r.json().catch(() => ({}));
+          throw new Error(t.detail || "ფოტოს ატვირთვა ვერ მოხერხდა");
+        }
+        imageUrl = (await r.json()).url;
+      }
+      payload.image_url = imageUrl;
+
       if (id) {
         await api("/products/" + id, "PUT", payload);
         toast("პროდუქტი განახლდა");
@@ -1218,6 +1290,15 @@
     const row = document.createElement("div");
     row.className = "product-item";
 
+    if (p.image_url) {
+      const thumb = document.createElement("img");
+      thumb.className = "product-thumb";
+      thumb.src = p.image_url;
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      row.appendChild(thumb);
+    }
+
     const info = document.createElement("div");
     info.className = "product-info";
     const badge = p.is_active
@@ -1254,6 +1335,11 @@
     $("p-sku").value = p.sku || "";
     $("p-description").value = p.description || "";
     $("p-active").checked = p.is_active;
+    // ფოტო: არსებული ვაჩვენოთ, ფაილის ველი გავასუფთაოთ
+    const fi = $("p-image-file"); if (fi) fi.value = "";
+    $("p-image-url").value = p.image_url || "";
+    if (p.image_url) showImagePreview(p.image_url);
+    else $("p-image-preview").classList.add("hidden");
     $("product-form-title").textContent = "პროდუქტის რედაქტირება";
     $("product-submit").textContent = "შენახვა";
     $("product-cancel").classList.remove("hidden");
