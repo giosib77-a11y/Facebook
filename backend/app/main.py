@@ -30,6 +30,11 @@ logger = logging.getLogger("app")
 # CORS — origin-ები .env-ის CORS_ORIGINS-იდან ("*" = ყველა, მხოლოდ dev-ისთვის).
 # production-ში დააყენე CORS_ORIGINS="https://shendomen.ge".
 _origins = settings.cors_origins_list
+if settings.is_production and _origins == ["*"]:
+    logger.warning(
+        "CORS: production-ში wildcard '*' გამოიყენება — დააყენე CORS_ORIGINS "
+        "კონკრეტულ დომენზე (მაგ. https://chatassist.ge) .env-ში."
+    )
 # credentials + "*" ერთად ბრაუზერში არ მუშაობს — კონკრეტულ დომენებზე ჩავრთავთ.
 app.add_middleware(
     CORSMiddleware,

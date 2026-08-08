@@ -11,7 +11,6 @@
   var shops = [], sellers = [], orders = [], requests = [], growth = [];
   var STATUS = { new: "ახალი", processing: "მუშავდება", done: "დასრულებული", cancelled: "გაუქმებული" };
   var TIERS = [["free", "უფასო"], ["basic", "საბაზისო"], ["standard", "სტანდარტი"], ["business", "ბიზნესი"]];
-  var TIER_CUST = { free: 30, basic: 200, standard: 800, business: 3000 };
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -291,10 +290,8 @@
     var id = sel.dataset.tier, tier = sel.value;
     try {
       await req("PATCH", "/admin/shops/" + id, { subscription_tier: tier });
-      var s = shops.find(function (x) { return x.id === id; });
-      if (s) { s.tier = tier; s.customer_limit = TIER_CUST[tier] || s.customer_limit; }
-      renderShops();
       toast("პაკეტი შეიცვალა: " + tier);
+      load();  // per-account — მფლობელის ყველა მაღაზია განახლდა → თავიდან ჩავტვირთოთ
     } catch (e2) { toast("ვერ შეიცვალა", true); }
   });
   $("sellers-body").addEventListener("click", function (e) {
@@ -342,24 +339,35 @@
 
   /* ---------- load ---------- */
   async function load() {
-    try {
-      var r = await Promise.all([
-        api("/admin/overview"), api("/admin/shops"), api("/admin/sellers"),
-        api("/admin/orders"), api("/admin/upgrade-requests"), api("/admin/growth"),
-      ]);
-      renderStats(r[0]);
-      shops = r[1] || []; sellers = r[2] || []; orders = r[3] || []; requests = r[4] || []; growth = r[5] || [];
-      renderShops(); renderSellers(); renderOrders(); renderRequests(); renderGrowth();
-      $("loading").classList.add("hidden");
-      $("admin-content").classList.remove("hidden");
-      sb.auth.getUser(readStoredToken()).then(function (u) {
-        if (u && u.data && u.data.user) $("user-email").textContent = u.data.user.email || "";
-      }).catch(function () {});
-    } catch (e) {
-      $("loading").classList.add("hidden");
-      if (e && e.forbidden) $("not-admin").classList.remove("hidden");
-      else toast("ჩატვირთვა ვერ მოხერხდა", true);
+    // allSettled — ერთი endpoint-ის ჩავარდნა მთელ პანელს აღარ შლის
+    var results = await Promise.allSettled([
+      api("/admin/overview"), api("/admin/shops"), api("/admin/sellers"),
+      api("/admin/orders"), api("/admin/upgrade-requests"), api("/admin/growth"),
+    ]);
+    $("loading").classList.add("hidden");
+
+    // არა-ადმინი (403) — overview-ს ვამოწმებთ (მთავარი admin-gate)
+    var overview = results[0];
+    if (overview.status === "rejected") {
+      if (overview.reason && overview.reason.forbidden) {
+        $("not-admin").classList.remove("hidden");
+        return;
+      }
+      toast("ზოგი მონაცემი ვერ ჩაიტვირთა", true); // მაინც ვაჩვენებთ რაც მოვიდა
     }
+
+    $("admin-content").classList.remove("hidden");
+    var val = function (i, dflt) {
+      return results[i].status === "fulfilled" && results[i].value != null ? results[i].value : dflt;
+    };
+    if (overview.status === "fulfilled") renderStats(overview.value);
+    shops = val(1, []); sellers = val(2, []); orders = val(3, []);
+    requests = val(4, []); growth = val(5, []);
+    renderShops(); renderSellers(); renderOrders(); renderRequests(); renderGrowth();
+
+    sb.auth.getUser(readStoredToken()).then(function (u) {
+      if (u && u.data && u.data.user) $("user-email").textContent = u.data.user.email || "";
+    }).catch(function () {});
   }
 
   $("refresh-btn").addEventListener("click", function () {

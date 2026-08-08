@@ -1,4 +1,5 @@
 """Facebook Messenger webhook — ვერიფიკაცია + შემოსული შეტყობინებები."""
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -80,7 +81,12 @@ def verify_webhook(
 ):
     """Meta-ს ვერიფიკაცია: სწორ verify_token-ზე ვაბრუნებთ challenge-ს."""
     settings = get_settings()
-    if hub_mode == "subscribe" and hub_verify_token and hub_verify_token == settings.fb_verify_token:
+    if (
+        hub_mode == "subscribe"
+        and hub_verify_token
+        and settings.fb_verify_token
+        and hmac.compare_digest(hub_verify_token, settings.fb_verify_token)
+    ):
         return Response(content=hub_challenge or "", media_type="text/plain")
     raise HTTPException(status.HTTP_403_FORBIDDEN, "verification failed")
 
@@ -110,8 +116,12 @@ def _process_events(data: dict) -> None:
     """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
     sc = get_service_client()
     for entry in data.get("entry", []):
-        # entry.id შეიძლება იყოს Facebook გვერდის ან Instagram ანგარიშის ID
-        eid = str(entry.get("id"))
+        # entry.id შეიძლება იყოს Facebook გვერდის ან Instagram ანგარიშის ID.
+        # ID ყოველთვის ციფრულია — ვამოწმებთ, რადგან ქვემოთ PostgREST .or_() ფილტრში
+        # f-string-ით ერთვის (არა-ციფრს არ ვუშვებთ: filter-injection-ის დაცვა).
+        eid = str(entry.get("id") or "")
+        if not eid.isdigit():
+            continue
         try:
             shop_res = (
                 sc.table("shops").select("*")
@@ -185,7 +195,7 @@ def _process_events(data: dict) -> None:
             images = []
             for url in image_urls[:3]:
                 try:
-                    img = download_image(url)
+                    img = download_image(url, timeout=8)
                     if img:
                         images.append(img)
                 except Exception:

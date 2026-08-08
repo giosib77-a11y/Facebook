@@ -983,16 +983,20 @@
         const img = new Image();
         const url = URL.createObjectURL(file);
         img.onload = () => {
-          URL.revokeObjectURL(url);
-          let w = img.width, h = img.height;
-          if (w > maxDim || h > maxDim) {
-            if (w >= h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-            else { w = Math.round((w * maxDim) / h); h = maxDim; }
-          }
-          const canvas = document.createElement("canvas");
-          canvas.width = w; canvas.height = h;
-          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-          canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", quality);
+          try {
+            URL.revokeObjectURL(url);
+            let w = img.width, h = img.height;
+            if (w > maxDim || h > maxDim) {
+              if (w >= h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+              else { w = Math.round((w * maxDim) / h); h = maxDim; }
+            }
+            const canvas = document.createElement("canvas");
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) { resolve(file); return; }
+            ctx.drawImage(img, 0, 0, w, h);
+            canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", quality);
+          } catch (e) { resolve(file); }  // ვერ დამუშავდა → ორიგინალი (submit არ იჭედება)
         };
         img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
         img.src = url;
@@ -1006,6 +1010,11 @@
     const objUrl = URL.createObjectURL(file);
     const thumb = $("p-image-thumb");
     thumb.onload = () => { URL.revokeObjectURL(objUrl); thumb.onload = null; };
+    thumb.onerror = () => {
+      URL.revokeObjectURL(objUrl); thumb.onerror = null;
+      clearProductImage();
+      toast("ეს ფაილი სურათი არ არის ან დაზიანებულია", true);
+    };
     showImagePreview(objUrl);
   });
   on("p-image-remove", "click", clearProductImage);

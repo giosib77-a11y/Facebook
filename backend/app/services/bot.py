@@ -321,7 +321,6 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
     contents = _build_contents(message, history, images, product_refs=product_refs)
 
     # დროებითი 503/429-ებზე ხელახლა ვცდით მცირე დაყოვნებით
-    last_err = None
     for attempt in range(4):
         try:
             response = client.models.generate_content(
@@ -329,9 +328,7 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
             )
             return (response.text or "").strip()
         except Exception as e:
-            last_err = e
             if attempt < 3 and any(k in str(e) for k in _TRANSIENT):
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise
-    raise last_err

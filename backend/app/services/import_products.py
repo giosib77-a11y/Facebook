@@ -49,6 +49,8 @@ def _read_xlsx(content: bytes):
     except Exception:
         raise ValueError("Excel ფაილის გახსნა ვერ მოხერხდა — დარწმუნდი, რომ .xlsx ფორმატია.")
     ws = wb.active
+    if ws is None:
+        raise ValueError("Excel ფაილში აქტიური ფურცელი ვერ მოიძებნა.")
     return [list(row) for row in ws.iter_rows(values_only=True)]
 
 

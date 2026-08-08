@@ -127,7 +127,8 @@
     e.preventDefault();
     var items = [];
     products.forEach(function (p) {
-      var qty = parseInt($("qty-" + p.id).value, 10) || 0;
+      var el = $("qty-" + p.id);
+      var qty = el ? parseInt(el.value, 10) || 0 : 0;
       if (qty > 0) {
         items.push({ product_id: p.id, name: p.name, price: Number(p.price) || 0, quantity: qty });
       }

@@ -30,13 +30,26 @@ def _public_base() -> str:
 def _finish(result: str, **params) -> HTMLResponse:
     """ამთავრებს OAuth-ს: თუ popup-ია, შეტყობინებას უგზავნის მთავარ ფანჯარას დაიხურება;
     თუ არა (popup დაბლოკილი), მთავარ პანელზე გადაამისამართებს (fallback)."""
+    s = get_settings()
     data = {"fb": result, **params}
-    fallback = f"{get_settings().frontend_url.rstrip('/')}/?{urlencode(data)}"
+    fallback = f"{s.frontend_url.rstrip('/')}/?{urlencode(data)}"
+    # postMessage-ს კონკრეტულ origin-ებზე ვგზავნით (არა '*'), რომ შედეგი უცხო
+    # გვერდმა ვერ წაიკითხოს. პანელი ორ ადგილას შეიძლება იხსნებოდეს (frontend_url ან
+    # backend /panel), ამიტომ ორივე ცნობილ origin-ზე ვცდით — არასწორ origin-ზე
+    # postMessage ჩუმად იგნორდება, ამიტომ არაფერი „ჟონავს" და flow-ც არ იტეხება.
+    allowed: list[str] = []
+    for u in (s.frontend_url, _public_base()):
+        o = (u or "").rstrip("/")
+        if o and o not in allowed:
+            allowed.append(o)
     html = (
         "<!doctype html><html><head><meta charset='utf-8'></head>"
         "<body style='font-family:sans-serif;text-align:center;padding:40px'>"
         "<p>მუშავდება, დაიცადეთ...</p><script>(function(){var msg=" + json.dumps(data) + ";"
-        "try{if(window.opener&&!window.opener.closed){window.opener.postMessage(msg,'*');window.close();return;}}catch(e){}"
+        "var origins=" + json.dumps(allowed) + ";"
+        "try{if(window.opener&&!window.opener.closed){"
+        "for(var i=0;i<origins.length;i++){try{window.opener.postMessage(msg,origins[i]);}catch(e){}}"
+        "window.close();return;}}catch(e){}"
         "window.location.replace(" + json.dumps(fallback) + ");})();</script></body></html>"
     )
     return HTMLResponse(html)

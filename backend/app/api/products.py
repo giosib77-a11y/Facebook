@@ -23,6 +23,20 @@ _IMAGE_EXT = {
 PRODUCT_IMAGES_BUCKET = "product-images"
 
 
+def _sniff_image_mime(content: bytes) -> str | None:
+    """ფაილის რეალურ ტიპს ადგენს magic bytes-ით (client-ის content-type-ს არ ვენდობით —
+    ის იოლად ყალბდება). აბრუნებს mime-ს ან None (თუ არ არის დაშვებული სურათი)."""
+    if content[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if content[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def _product_limit_left(auth, shop_id) -> int | None:
     """დარჩენილი პროდუქტების რაოდენობა პაკეტის მიხედვით. None = ულიმიტო.
     თუ migration ჯერ არ გაშვებულა (subscription_tier არ არსებობს) — None (ლიმიტი გამორთ.)."""
@@ -75,10 +89,11 @@ async def upload_product_image(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "სურათი ძალიან დიდია (მაქს. 8MB)")
-    mime = (file.content_type or "").split(";")[0].strip().lower()
-    ext = _IMAGE_EXT.get(mime)
+    # რეალურ ბაიტებს ვამოწმებთ (content-type კლიენტისგან იოლად ყალბდება)
+    mime = _sniff_image_mime(content)
+    ext = _IMAGE_EXT.get(mime) if mime else None
     if not ext:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მხოლოდ სურათი დაშვებულია (JPG / PNG / WEBP / GIF)")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი არ არის დაშვებული სურათი (JPG / PNG / WEBP / GIF)")
     # 3) ატვირთვა Storage-ში + public URL
     path = f"{shop_id}/{uuid.uuid4().hex}.{ext}"
     sc = get_service_client()

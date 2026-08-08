@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app.config import get_settings
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
-from app.core.tiers import TIER_LABELS, TIER_PRICES, limits_for, normalize_tier
+from app.core.tiers import TIER_LABELS, TIER_PRICES, best_tier, limits_for, normalize_tier
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -44,18 +44,42 @@ def _parse_ts(v):
         return None
 
 
+def _all_auth_users(sc) -> list:
+    """ყველა Auth-მომხმარებელი, გვერდ-გვერდ.
+
+    `list_users()` default-ად მხოლოდ ერთ გვერდს (~50) აბრუნებს — 50+ მომხმარებელზე
+    ზოგი „გამოცურდებოდა". აქ გვერდებს ბოლომდე ვკითხულობთ (ჭერით — უსასრულო ციკლის დაზღვევა).
+    """
+    out: list = []
+    per_page = 200
+    for page in range(1, 51):  # ჭერი ~10000 მომხმარებელი
+        try:
+            res = sc.auth.admin.list_users(page=page, per_page=per_page)
+        except TypeError:
+            # ძველი gotrue — page/per_page არ იღებს → რასაც აბრუნებს, იმას ავიღებთ
+            try:
+                res = sc.auth.admin.list_users()
+                out.extend(list(getattr(res, "users", res) or []))
+            except Exception:
+                pass
+            break
+        except Exception:
+            break
+        batch = list(getattr(res, "users", res) or [])
+        if not batch:
+            break  # ცარიელ გვერდზე ვჩერდებით — per_page-ს სერვერი შეიძლება ჩუმად შეზღუდოს,
+                   # ამიტომ „< per_page"-ს არ ვენდობით (თორემ ზოგი მომხმარებელი გამოგვრჩება)
+        out.extend(batch)
+    return out
+
+
 def _email_map(sc) -> dict:
     """user_id -> email (Supabase Auth admin API-დან)."""
     out = {}
-    try:
-        res = sc.auth.admin.list_users()
-        users = getattr(res, "users", res)  # ვერსიის მიხედვით list ან .users
-        for u in users:
-            uid = getattr(u, "id", None)
-            if uid:
-                out[str(uid)] = getattr(u, "email", None)
-    except Exception:
-        pass
+    for u in _all_auth_users(sc):
+        uid = getattr(u, "id", None)
+        if uid:
+            out[str(uid)] = getattr(u, "email", None)
     return out
 
 
@@ -82,11 +106,18 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         if ts and ts >= cutoff:
             orders_30d += 1
 
-    # MRR + პაკეტების განაწილება
+    # MRR + პაკეტების განაწილება — გამოწერა per-account-ია (ერთი გადახდა ფარავს
+    # მფლობელის ყველა მაღაზიას), ამიტომ მფლობელობით ვთვლით, არა მაღაზიაზე —
+    # თორემ მრავალ-მაღაზიიანი მფლობელი MRR-ს ხელოვნურად ბერავს.
+    owner_tiers: dict[str, list] = {}
+    for s in shops:
+        oid = s.get("owner_id")
+        if oid:
+            owner_tiers.setdefault(str(oid), []).append(s.get("subscription_tier"))
     mrr = 0
     tier_counts = {"free": 0, "basic": 0, "standard": 0, "business": 0}
-    for s in shops:
-        t = normalize_tier(s.get("subscription_tier"))
+    for tiers in owner_tiers.values():
+        t = best_tier(tiers)
         tier_counts[t] = tier_counts.get(t, 0) + 1
         mrr += TIER_PRICES.get(t, 0)
 
@@ -192,21 +223,16 @@ def all_sellers(admin: CurrentAuth = Depends(get_current_admin)):
         shop_count[oid] = shop_count.get(oid, 0) + 1
 
     out = []
-    try:
-        res = sc.auth.admin.list_users()
-        users = getattr(res, "users", res)
-        for u in users:
-            uid = str(getattr(u, "id", ""))
-            out.append({
-                "id": uid,
-                "email": getattr(u, "email", None),
-                "confirmed": bool(getattr(u, "email_confirmed_at", None) or getattr(u, "confirmed_at", None)),
-                "last_sign_in": getattr(u, "last_sign_in_at", None),
-                "created_at": getattr(u, "created_at", None),
-                "shops": shop_count.get(uid, 0),
-            })
-    except Exception:
-        pass
+    for u in _all_auth_users(sc):
+        uid = str(getattr(u, "id", ""))
+        out.append({
+            "id": uid,
+            "email": getattr(u, "email", None),
+            "confirmed": bool(getattr(u, "email_confirmed_at", None) or getattr(u, "confirmed_at", None)),
+            "last_sign_in": getattr(u, "last_sign_in_at", None),
+            "created_at": getattr(u, "created_at", None),
+            "shops": shop_count.get(uid, 0),
+        })
     return out
 
 
@@ -245,21 +271,33 @@ def shop_detail(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
 
 @router.patch("/shops/{shop_id}")
 def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Depends(get_current_admin)):
-    """ბოტის ჩართვა/გამორთვა (kill-switch) ან პაკეტის შეცვლა."""
-    upd = {}
-    if payload.bot_enabled is not None:
-        upd["bot_enabled"] = payload.bot_enabled
-    if payload.subscription_tier is not None:
-        if payload.subscription_tier not in TIER_LABELS:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
-        upd["subscription_tier"] = payload.subscription_tier
-    if not upd:
+    """ბოტის ჩართვა/გამორთვა (kill-switch — per-shop) ან პაკეტის შეცვლა (per-account)."""
+    if payload.bot_enabled is None and payload.subscription_tier is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "განსაახლებელი ველი არ არის")
+    if payload.subscription_tier is not None and payload.subscription_tier not in TIER_LABELS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
+
     sc = get_service_client()
-    res = sc.table("shops").update(upd).eq("id", shop_id).execute()
-    if not res.data:
+    shop = sc.table("shops").select("owner_id").eq("id", shop_id).limit(1).execute().data
+    if not shop:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
-    return res.data[0]
+    owner_id = shop[0].get("owner_id")
+
+    # bot_enabled — per-shop (ერთი გვერდის kill-switch)
+    if payload.bot_enabled is not None:
+        sc.table("shops").update({"bot_enabled": payload.bot_enabled}).eq("id", shop_id).execute()
+
+    # subscription_tier — per-account (გამოწერა მფლობელზეა → ყველა მისი მაღაზია,
+    # approve/downgrade-ის მსგავსად; თორემ შერეული ტარიფები გაჩნდება)
+    if payload.subscription_tier is not None:
+        q = sc.table("shops").update({"subscription_tier": payload.subscription_tier})
+        (q.eq("owner_id", owner_id) if owner_id else q.eq("id", shop_id)).execute()
+
+    res = sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
+    row = dict(res[0]) if res else {}
+    row.pop("facebook_page_token", None)  # ტოკენს/ცოდნას პასუხში არ ვაბრუნებთ
+    row.pop("knowledge", None)
+    return row
 
 
 @router.delete("/shops/{shop_id}", status_code=status.HTTP_204_NO_CONTENT)

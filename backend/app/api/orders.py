@@ -1,4 +1,5 @@
 """Orders endpoints — საჯარო შესაკვეთი ფორმა + გამყიდველის შეკვეთების მართვა."""
+import logging
 import re
 import uuid
 
@@ -12,6 +13,7 @@ from app.core.supabase_client import get_service_client
 from app.models.order import OrderCreate, OrderOut, OrderStatusUpdate
 
 router = APIRouter(tags=["orders"])
+logger = logging.getLogger("app")
 
 
 def _decrement_stock_atomic(sc, shop_id: str, req_items: list) -> bool | None:
@@ -162,6 +164,7 @@ def create_order(payload: OrderCreate):
         if res.data:
             order_id = res.data[0]["id"]
     except Exception:
+        logger.exception("order insert failed (shop=%s)", payload.shop_id)
         order_id = None
     if order_id is None:
         # შეკვეთა ვერ ჩაიწერა — დაკლებული მარაგი უკან დავაბრუნოთ.
