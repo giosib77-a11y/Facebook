@@ -118,7 +118,7 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
 def _process_events(data: dict) -> None:
     """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
     sc = get_service_client()
-    logger.info("IGDEBUG in object=%s entries=%s", data.get("object"), [e.get("id") for e in data.get("entry", [])])
+    logger.warning("IGDEBUG in object=%s entries=%s", data.get("object"), [e.get("id") for e in data.get("entry", [])])
     for entry in data.get("entry", []):
         # entry.id შეიძლება იყოს Facebook გვერდის ან Instagram ანგარიშის ID.
         # ID ყოველთვის ციფრულია — ვამოწმებთ, რადგან ქვემოთ PostgREST .or_() ფილტრში
@@ -134,10 +134,10 @@ def _process_events(data: dict) -> None:
             )
         except Exception as _qe:
             # migration 0006 ჯერ არ გაშვებულა (instagram_account_id არ არსებობს) — fallback
-            logger.info("IGDEBUG or_ query failed: %s — fallback fb_page_id only", _qe)
+            logger.warning("IGDEBUG or_ query failed: %s — fallback fb_page_id only", _qe)
             shop_res = sc.table("shops").select("*").eq("facebook_page_id", eid).limit(1).execute()
         if not shop_res.data:
-            logger.info("IGDEBUG no shop matched eid=%s", eid)
+            logger.warning("IGDEBUG no shop matched eid=%s", eid)
             continue
         shop = shop_res.data[0]
         logger.info(
@@ -146,7 +146,7 @@ def _process_events(data: dict) -> None:
             shop.get("bot_enabled"), bool(shop.get("facebook_page_token")),
         )
         if not shop.get("bot_enabled") or not shop.get("facebook_page_token"):
-            logger.info("IGDEBUG shop not ready bot_enabled=%s has_token=%s",
+            logger.warning("IGDEBUG shop not ready bot_enabled=%s has_token=%s",
                         shop.get("bot_enabled"), bool(shop.get("facebook_page_token")))
             continue
 
@@ -168,7 +168,7 @@ def _process_events(data: dict) -> None:
             message = ev.get("message", {})
             sender_id = (ev.get("sender") or {}).get("id")
             text = message.get("text") or ""
-            logger.info("IGDEBUG event sender=%s is_echo=%s text=%r",
+            logger.warning("IGDEBUG event sender=%s is_echo=%s text=%r",
                         sender_id, message.get("is_echo"), (text or "")[:60])
             # სურათის დანართები (Messenger/Instagram) — Gemini multimodal-ისთვის
             image_urls = [
@@ -229,6 +229,6 @@ def _process_events(data: dict) -> None:
             try:
                 send_text_message(page_token, sender_id, reply)
                 _save_turn(sc, shop["id"], str(sender_id), history, saved_text, reply, handoff)
-                logger.info("IGDEBUG reply sent ok to %s", sender_id)
+                logger.warning("IGDEBUG reply sent ok to %s", sender_id)
             except Exception as _se:
                 logger.exception("IGDEBUG send failed to %s: %s", sender_id, _se)
