@@ -1,7 +1,6 @@
 """Facebook Messenger webhook — ვერიფიკაცია + შემოსული შეტყობინებები."""
 import hmac
 import json
-import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
@@ -14,8 +13,6 @@ from app.services.bot import get_bot_reply, parse_reply
 from app.services.facebook import download_image, send_text_message, verify_signature
 
 router = APIRouter(tags=["messenger webhook"])
-
-logger = logging.getLogger("webhook")  # IGDEBUG — დროებითი დიაგნოსტიკა Instagram-ისთვის
 
 
 def _load_history(sc, shop_id: str, psid: str) -> list:
@@ -118,7 +115,6 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
 def _process_events(data: dict) -> None:
     """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
     sc = get_service_client()
-    logger.warning("IGDEBUG in object=%s entries=%s", data.get("object"), [e.get("id") for e in data.get("entry", [])])
     for entry in data.get("entry", []):
         # entry.id შეიძლება იყოს Facebook გვერდის ან Instagram ანგარიშის ID.
         # ID ყოველთვის ციფრულია — ვამოწმებთ, რადგან ქვემოთ PostgREST .or_() ფილტრში
@@ -132,22 +128,13 @@ def _process_events(data: dict) -> None:
                 .or_(f"facebook_page_id.eq.{eid},instagram_account_id.eq.{eid}")
                 .limit(1).execute()
             )
-        except Exception as _qe:
+        except Exception:
             # migration 0006 ჯერ არ გაშვებულა (instagram_account_id არ არსებობს) — fallback
-            logger.warning("IGDEBUG or_ query failed: %s — fallback fb_page_id only", _qe)
             shop_res = sc.table("shops").select("*").eq("facebook_page_id", eid).limit(1).execute()
         if not shop_res.data:
-            logger.warning("IGDEBUG no shop matched eid=%s", eid)
             continue
         shop = shop_res.data[0]
-        logger.info(
-            "IGDEBUG matched shop=%s fb_page=%s ig=%s bot_enabled=%s has_token=%s",
-            shop.get("id"), shop.get("facebook_page_id"), shop.get("instagram_account_id"),
-            shop.get("bot_enabled"), bool(shop.get("facebook_page_token")),
-        )
         if not shop.get("bot_enabled") or not shop.get("facebook_page_token"):
-            logger.warning("IGDEBUG shop not ready bot_enabled=%s has_token=%s",
-                        shop.get("bot_enabled"), bool(shop.get("facebook_page_token")))
             continue
 
         try:
@@ -168,8 +155,6 @@ def _process_events(data: dict) -> None:
             message = ev.get("message", {})
             sender_id = (ev.get("sender") or {}).get("id")
             text = message.get("text") or ""
-            logger.warning("IGDEBUG event sender=%s is_echo=%s text=%r",
-                        sender_id, message.get("is_echo"), (text or "")[:60])
             # სურათის დანართები (Messenger/Instagram) — Gemini multimodal-ისთვის
             image_urls = [
                 (a.get("payload") or {}).get("url")
@@ -229,6 +214,5 @@ def _process_events(data: dict) -> None:
             try:
                 send_text_message(page_token, sender_id, reply)
                 _save_turn(sc, shop["id"], str(sender_id), history, saved_text, reply, handoff)
-                logger.warning("IGDEBUG reply sent ok to %s", sender_id)
-            except Exception as _se:
-                logger.exception("IGDEBUG send failed to %s: %s", sender_id, _se)
+            except Exception:
+                pass  # ლოგირება მოგვიანებით
