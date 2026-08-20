@@ -92,14 +92,42 @@ def status():
 # გამყიდველის პანელის მომსახურება იმავე backend-იდან — ngrok-ით გასაზიარებლად.
 # პანელი ხელმისაწვდომია: <backend-url>/panel/
 class _NoCacheStatic(StaticFiles):
-    """ბრაუზერმა პანელის ფაილები რომ არ დააქეშოს (ცვლილებები მაშინვე ჩანდეს)."""
+    """ბრაუზერმა პანელის ფაილები რომ არ დააქეშოს (ცვლილებები მაშინვე ჩანდეს).
+
+    extra_dirs — დამატებითი საქაღალდეები, სადაც ფაილი უნდა მოიძებნოს, თუ მთავარში არაა.
+    საჭიროა fallback-რეჟიმისთვის: build-ის გარეშე `config.js`/`favicon.svg`
+    `frontend/public/`-შია, HTML კი მათ ძირიდან ითხოვს.
+    """
+
+    def __init__(self, *args, extra_dirs=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.all_directories = list(self.all_directories) + [Path(d) for d in extra_dirs]
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        # Vite-ის ჰეშირებული ასეტები (assets/index-AbC123.js) — სახელი შიგთავსზეა
+        # დამოკიდებული, ანუ ცვლილებისას სახელიც იცვლება. ამიტომ სამუდამოდ ქეშირებადია.
+        # ⚠️ HTML და config.js აქ არ ხვდება — ისინი no-store რჩება, რომ ცვლილება
+        # (მაგ. ახალი bundle-ის სახელი ან შეცვლილი კონფიგი) მაშინვე ჩანდეს.
+        if path.replace("\\", "/").startswith("assets/"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         return resp
 
 
-_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+_FRONTEND_SRC = Path(__file__).resolve().parents[2] / "frontend"
+_FRONTEND_DIST = _FRONTEND_SRC / "dist"
+# React-ის build-ის გამოსავალი (frontend/dist), თუ არსებობს; თუ არა — ძველი frontend/.
+# ეს fallback უსაფრთხოების ბადეა: build რომ ვერ აეწყოს, საიტი მაინც მუშაობს.
+_FRONTEND_DIR = _FRONTEND_DIST if (_FRONTEND_DIST / "index.html").exists() else _FRONTEND_SRC
 if _FRONTEND_DIR.exists():
-    app.mount("/panel", _NoCacheStatic(directory=str(_FRONTEND_DIR), html=True), name="panel")
+    # fallback-რეჟიმში (dist არ არსებობს) public/-იც უნდა ჩანდეს ძირად, თორემ
+    # config.js ვერ ჩაიტვირთება და პანელი მკვდარი იქნება.
+    _extra = [] if _FRONTEND_DIR == _FRONTEND_DIST else [_FRONTEND_SRC / "public"]
+    _extra = [d for d in _extra if d.exists()]
+    app.mount(
+        "/panel",
+        _NoCacheStatic(directory=str(_FRONTEND_DIR), html=True, extra_dirs=_extra),
+        name="panel",
+    )

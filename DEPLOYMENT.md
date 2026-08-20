@@ -5,6 +5,33 @@
 
 ---
 
+## 🏗️ ყოველ deploy-ზე — ჯერ BUILD (2026-08-20-იდან)
+
+frontend **React-ზეა (Vite)**. push-ამდე build აუცილებელია — თორემ ლაივზე ძველი
+ვერსია წავა.
+
+```bash
+cd frontend
+npm install      # პირველად, ან package.json-ის ცვლილებისას
+npm run build    # → frontend/dist/
+```
+
+⚠️ **Render-ს Node.js არ აქვს** (Python-სერვისია) — `npm run build` სერვერზე
+**ვერ გაეშვება**. ამიტომ `dist/` **git-ში ინახება** და ლოკალურად იგება.
+
+push-ამდე შემოწმება:
+- [ ] `frontend/dist/`-ში **8 `.html`** + `config.js`, `favicon.svg`, 2 sample-ფაილი
+- [ ] საიდუმლოების სკანი (ცარიელი უნდა იყოს):
+      `grep -rin "service_role\|FB_APP_SECRET\|GEMINI\|FERNET" frontend/dist/`
+      (`config.js`-ის კომენტარი ცრუ დამთხვევაა — მასში მხოლოდ anon key-ია)
+- [ ] `dist/` დაკომიტებულია
+
+**უსაფრთხოების ბადე:** თუ `dist/` არ არსებობს, `main.py` ავტომატურად ძველ
+`frontend/`-ს ასერვირებს. თუ `dist/` არსებობს მაგრამ გატეხილია — fallback **არ**
+ჩაირთვება; მაშინ `git revert` ან `dist/`-ის წაშლა + push.
+
+> სრული მიგრაციის სპეციფიკაცია: **`REACT_MIGRATION.md`**
+
 ## 🔴 კრიტიკული (ამის გარეშე არ ვტვირთავთ)
 
 ### 1. საიდუმლო გასაღებები — `.env` არასდროს სერვერზე ფაილად
@@ -21,7 +48,7 @@
 - [ ] `FB_REDIRECT_URI` → ახ ალი დომენი
 - [ ] Facebook App → OAuth Redirect + Webhook Callback URL → ახ ალი დომენი
 - [ ] Supabase → Redirect URLs → ახ ალი დომენი (`/panel/reset.html`)
-- [ ] `frontend/config.js` → `API_BASE` (თუ backend სხ ვა დომენზეა)
+- [ ] `frontend/public/config.js` → `API_BASE` (თუ backend სხ ვა დომენზეა)
 
 ### 3. CORS — შემოვფარგლოთ
 - [x] **კოდი მზადაა** — CORS ახლა `.env`-ის `CORS_ORIGINS`-იდან იკითხება
@@ -34,7 +61,7 @@
       საათში ~3-4 წერილს უშვებს, რეალურ მომხ მარებლებს არ ეყოფა
       (ეს პაროლის აღდგენასაც ეხ ება)
 
-### 5. `config.js` — მხ ოლოდ საჯარო გასაღებები
+### 5. `public/config.js` — მხ ოლოდ საჯარო გასაღებები
 - [ ] გადავამოწმოთ: მხ ოლოდ `anon key` + `URL`
       (`service_role` / `FB_APP_SECRET` / `GEMINI_KEY` — არასდროს frontend-ში)
 
@@ -139,7 +166,7 @@
 
 - `.env` → hosting env vars
 - `backend/app/main.py` → CORS `allow_origins`
-- `frontend/config.js` → `API_BASE`
+- `frontend/public/config.js` → `API_BASE`
 - Facebook App დაფა (გარე) → Redirect + Webhook URL
 - Supabase დაფა (გარე) → Redirect URLs + email confirm + SMTP
 

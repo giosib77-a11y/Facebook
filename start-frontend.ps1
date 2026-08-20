@@ -1,5 +1,9 @@
-# Frontend (static პანელი) — http://localhost:5500
+# Frontend (Vite dev-სერვერი) — http://localhost:5173/panel/
 # გაშვება: .\start-frontend.ps1
 Set-Location $PSScriptRoot\frontend
-Write-Host "Frontend ეშვება http://localhost:5500 (no-cache) ..." -ForegroundColor Cyan
-python serve.py
+if (-not (Test-Path node_modules)) {
+    Write-Host "node_modules ვერ მოიძებნა — ვაყენებ..." -ForegroundColor Yellow
+    npm install
+}
+Write-Host "Frontend (Vite) ეშვება http://localhost:5173/panel/ ..." -ForegroundColor Cyan
+npm run dev

@@ -19,7 +19,9 @@ backend/.env.*
 
 # Node / frontend
 node_modules/
-dist/
+# dist/ განზრახ არ იგნორირდება — Render-ს Node.js არ აქვს, ამიტომ
+# frontend/dist build-დება ლოკალურად და git-ით მიდის სერვერზე.
+# იხ. REACT_MIGRATION.md (ნაწილი 5) და DEPLOYMENT.md.
 build/
 .next/
 .vite/

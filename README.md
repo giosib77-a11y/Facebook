@@ -84,7 +84,7 @@ DB-ოპერაციები სრულდება მომხმარ
 | დეტალები / description | არა | თეთრი პური |
 | sku | არა | BR-001 |
 
-ნიმუშები: [sample-products.xlsx](frontend/sample-products.xlsx), [sample-products.csv](frontend/sample-products.csv).
+ნიმუშები: [sample-products.xlsx](frontend/public/sample-products.xlsx), [sample-products.csv](frontend/public/sample-products.csv).
 ვალიდაცია „all-or-nothing": თუ ფაილში თუნდაც ერთი შეცდომაა, არცერთი არ ემატება და
 ბრუნდება ყველა შეცდომა მწკრივის ნომრით. მაქს. 5MB, 5000 მწკრივი.
 

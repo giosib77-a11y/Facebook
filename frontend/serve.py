@@ -1,5 +1,6 @@
-"""Frontend static server — no-cache (ბრაუზერი ყოველთვის ახ ალ ფაილს იღებს).
+"""[LEGACY — Vite-მდე] Frontend static server — no-cache (ბრაუზერი ყოველთვის ახ ალ ფაილს იღებს).
 გაშვება: python serve.py   (პორტი 5500)
+დღეს ჯობია: npm run dev (Vite, 5173) — იხ. start-frontend.ps1
 """
 import http.server
 import socketserver
