@@ -51,8 +51,17 @@ export function fbResultMessage(d) {
   if (d.fb === "no_pages") {
     return { msg: "ვერ მოიძებნა Facebook გვერდი ამ ანგარიშზე", isErr: true, reload: false };
   }
+  // backend-ის ცნობილი მიზეზები → გასაგები ქართული ტექსტი
+  const REASONS = {
+    page_taken: "ეს Facebook გვერდი უკვე დაკავშირებულია სხვა მაღაზიაზე. ჯერ იქ გათიშე.",
+    shop_not_found: "მაღაზია ვერ მოიძებნა — განაახლე გვერდი და სცადე ხელახლა.",
+    save_failed: "გვერდის შენახვა ვერ მოხერხდა — სცადე ცოტა ხანში.",
+    invalid_state: "ბმულს ვადა გაუვიდა — დააჭირე „დაკავშირებას“ ხელახლა.",
+    missing_code: "Facebook-მა დაკავშირება არ დაასრულა — სცადე ხელახლა.",
+  };
+  const known = REASONS[d.reason];
   return {
-    msg: "დაკავშირება ვერ მოხერხდა: " + (d.reason || d.fb),
+    msg: known || "დაკავშირება ვერ მოხერხდა: " + (d.reason || d.fb),
     isErr: true,
     reload: false,
   };

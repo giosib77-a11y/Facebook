@@ -37,7 +37,11 @@ export function ShopDataProvider({ children }) {
     if (!id) return setOrders([]);
     setLoadingOrders(true);
     try {
-      setOrders(await api("/orders" + (filter ? "?status=" + encodeURIComponent(filter) : "")));
+      // ⚠️ რევიუ P2-14: shop_id აუცილებლად უნდა გადავცეთ, თორემ backend
+      // მფლობელის ყველა მაღაზიის შეკვეთას აბრუნებს (ძველ app.js-შიც ასე იყო).
+      const qs = new URLSearchParams({ shop_id: id });
+      if (filter) qs.set("status", filter);
+      setOrders(await api("/orders?" + qs.toString()));
     } catch (e) {
       toast("შეკვეთები ვერ ჩაიტვირთა: " + e.message, true);
     } finally {

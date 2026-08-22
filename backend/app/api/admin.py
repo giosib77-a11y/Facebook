@@ -3,6 +3,7 @@
 წვდომა მხოლოდ ADMIN_EMAIL-ის მქონე ანგარიშს აქვს. მონაცემები service_role-ით
 იკითხება (RLS-ს გვერდს უვლის), ამიტომ admin-შემოწმება კრიტიკულია.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,9 +12,17 @@ from pydantic import BaseModel
 from app.config import get_settings
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
-from app.core.tiers import TIER_LABELS, TIER_PRICES, best_tier, limits_for, normalize_tier
+from app.core.tiers import (
+    TIER_LABELS,
+    TIER_LIMITS,
+    TIER_PRICES,
+    best_tier,
+    limits_for,
+    normalize_tier,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger("app")
 
 
 class AdminShopUpdate(BaseModel):
@@ -81,6 +90,39 @@ def _email_map(sc) -> dict:
         if uid:
             out[str(uid)] = getattr(u, "email", None)
     return out
+
+
+def _restore_bots(sc, owner_id: str, tier: str) -> int:
+    """პაკეტის აწევისას — ბოტს ვუბრუნებთ იმ მაღაზიებს, სადაც downgrade-მა გათიშა.
+
+    ⚠️ რევიუ P1-6-ის მეორე ნახევარი. `downgrade-free` ლიმიტს ზემოთ მყოფ მაღაზიებზე
+    `bot_enabled=False`-ს სვამს. თუ აქ არ დავაბრუნებდით, გადახდის შემდეგაც ბოტი
+    გამორთული დარჩებოდა და გამყიდველს თვითონ ვერ ჩაერთო (seller-ის PATCH მხოლოდ
+    bot_language-ს იღებს) — ე.ი. ხვრელის ნაცვლად ხაფანგს მივიღებდით.
+
+    ვრთავთ მხოლოდ დაკავშირებულ გვერდებს (facebook_page_id არსებობს) და მხოლოდ
+    ახალი პაკეტის ჭერამდე. შენიშვნა: თუ ადმინმა გვერდი განზრახ „მოკლა"
+    (kill-switch), აქ ის გაცოცხლდება — იშვიათია და ხელახლა გამორთვა ერთი დაწკაპია.
+    """
+    limit = TIER_LIMITS[normalize_tier(tier)]["shops"]
+    rows = (
+        sc.table("shops").select("id,created_at,bot_enabled,facebook_page_id")
+        .eq("owner_id", owner_id).execute().data or []
+    )
+    candidates = [r for r in rows if r.get("facebook_page_id") and not r.get("bot_enabled")]
+    if not candidates:
+        return 0
+    if limit is not None:
+        # უკვე ჩართულები იკავებენ ადგილს — დანარჩენს ჭერამდე ვავსებთ
+        active = len([r for r in rows if r.get("bot_enabled")])
+        free_slots = max(0, limit - active)
+        candidates = sorted(candidates, key=lambda r: str(r.get("created_at") or ""))[:free_slots]
+    if not candidates:
+        return 0
+    sc.table("shops").update({"bot_enabled": True}).in_(
+        "id", [r["id"] for r in candidates]
+    ).execute()
+    return len(candidates)
 
 
 @router.get("/check")
@@ -292,6 +334,11 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
     if payload.subscription_tier is not None:
         q = sc.table("shops").update({"subscription_tier": payload.subscription_tier})
         (q.eq("owner_id", owner_id) if owner_id else q.eq("id", shop_id)).execute()
+        if owner_id:
+            try:
+                _restore_bots(sc, owner_id, payload.subscription_tier)
+            except Exception:
+                logger.warning("ბოტების დაბრუნება ვერ მოხერხდა (owner=%s)", owner_id, exc_info=True)
 
     res = sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
     row = dict(res[0]) if res else {}
@@ -354,7 +401,13 @@ def resolve_upgrade_request(
         # per-account: მფლობელის ყველა მაღაზია გადადის ამ პაკეტზე (ერთი გამოწერა — ყველა მაღაზია)
         owner = sc.table("shops").select("owner_id").eq("id", r["shop_id"]).limit(1).execute().data
         if owner:
-            sc.table("shops").update({"subscription_tier": tier}).eq("owner_id", owner[0]["owner_id"]).execute()
+            oid = owner[0]["owner_id"]
+            sc.table("shops").update({"subscription_tier": tier}).eq("owner_id", oid).execute()
+            # გადახდა დადასტურდა → downgrade-ით გათიშული ბოტები ბრუნდება (P1-6)
+            try:
+                _restore_bots(sc, oid, tier)
+            except Exception:
+                logger.warning("ბოტების დაბრუნება ვერ მოხერხდა (owner=%s)", oid, exc_info=True)
         else:
             sc.table("shops").update({"subscription_tier": tier}).eq("id", r["shop_id"]).execute()
         sc.table("upgrade_requests").update({"status": "approved", "resolved_at": now_iso}).eq("id", req_id).execute()

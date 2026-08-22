@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/panel/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Georgian:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" crossorigin href="/panel/assets/landing-Df2xHmfS.css">
 </head>
 <body>
@@ -31,6 +31,7 @@
         <p>Facebook-ის მოთხოვნით, თქვენს Messenger/Instagram საუბრებთან დაკავშირებული
            მონაცემები ჩვენს სისტემაში წაიშალა.</p>
         <p class="conf-code">დადასტურების კოდი: <code id="confCode"></code></p>
+        <p class="conf-code" id="confVerified" style="display:none"></p>
       </div>
 
       <p>
@@ -112,12 +113,30 @@
 
   <script>
     // Data Deletion callback-ის status URL-ს ?code=... მოსდევს — ვაჩვენებთ დადასტურებას.
+    // ⚠️ რევიუ P2-16: ადრე კოდი უბრალოდ იბეჭდებოდა, ე.ი. ნებისმიერი ტექსტი
+    // „დადასტურებულად" ჩანდა. ახლა backend ამოწმებს ხელმოწერას.
     (function () {
       var code = new URLSearchParams(location.search).get("code");
-      if (code) {
-        document.getElementById("confCode").textContent = code;
-        document.getElementById("confirmBox").style.display = "block";
-      }
+      if (!code) return;
+      document.getElementById("confCode").textContent = code;
+      document.getElementById("confirmBox").style.display = "block";
+
+      var box = document.getElementById("confVerified");
+      // გვერდი backend-ის იმავე დომენიდან იხსნება (/panel/…), ამიტომ ფარდობითი გზა მუშაობს
+      fetch("/facebook/data-deletion/status?code=" + encodeURIComponent(code))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.valid) {
+            var when = d.requested_at ? new Date(d.requested_at).toLocaleString("ka-GE") : "";
+            box.textContent = "✅ კოდი დადასტურდა" + (when ? " · მოთხოვნის თარიღი: " + when : "");
+            box.style.color = "#059669";
+          } else {
+            box.textContent = "⚠️ ეს კოდი ჩვენს სისტემაში ვერ მოიძებნა.";
+            box.style.color = "#b45309";
+          }
+          box.style.display = "block";
+        })
+        .catch(function () { /* ქსელი მიუწვდომელია — კოდი მაინც ჩანს */ });
     })();
   </script>
 

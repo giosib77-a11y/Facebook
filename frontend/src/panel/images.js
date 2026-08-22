@@ -10,6 +10,18 @@ const cfg = window.APP_CONFIG;
 /** max 1280px, JPEG — რომ დიდი ფაილიც აიტვირთოს და storage/AI იაფი დარჩეს */
 export function resizeImage(file, maxDim, quality) {
   return new Promise((resolve) => {
+    // ⚠️ რევიუ P3-18: Promise მხოლოდ onload/onerror/toBlob-ზე იხსნებოდა. თუ
+    // ბრაუზერმა არცერთი არ გამოიძახა (დაზიანებული ფაილი, მეხსიერების ლიმიტი),
+    // ატვირთვა სამუდამოდ ეკიდებოდა და ღილაკი „იტვირთება..."-ზე რჩებოდა.
+    // 15 წამში ორიგინალით ვაგრძელებთ — ატვირთვა მაინც შედგება.
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish(file), 15000);
     try {
       const img = new Image();
       const url = URL.createObjectURL(file);
@@ -32,22 +44,22 @@ export function resizeImage(file, maxDim, quality) {
           canvas.height = h;
           const ctx = canvas.getContext("2d");
           if (!ctx) {
-            resolve(file);
+            finish(file);
             return;
           }
           ctx.drawImage(img, 0, 0, w, h);
-          canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", quality);
+          canvas.toBlob((blob) => finish(blob || file), "image/jpeg", quality);
         } catch {
-          resolve(file); // ვერ დამუშავდა → ორიგინალი
+          finish(file); // ვერ დამუშავდა → ორიგინალი
         }
       };
       img.onerror = () => {
         URL.revokeObjectURL(url);
-        resolve(file);
+        finish(file);
       };
       img.src = url;
     } catch {
-      resolve(file);
+      finish(file);
     }
   });
 }

@@ -1,6 +1,9 @@
 """Facebook Messenger webhook — ვერიფიკაცია + შემოსული შეტყობინებები."""
 import hmac
 import json
+import logging
+import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
@@ -13,6 +16,36 @@ from app.services.bot import get_bot_reply, parse_reply
 from app.services.facebook import download_image, send_text_message, verify_signature
 
 router = APIRouter(tags=["messenger webhook"])
+logger = logging.getLogger("app")
+
+# ⚠️ რევიუ P1-3: Meta იმეორებს მოვლენას, თუ 20 წამში 200 არ მიიღო. გამეორება
+# ორმაგ პასუხს და ორმაგად დათვლილ შეტყობინებას იწვევდა. აქ ბოლო message id-ებს
+# ვიმახსოვრებთ და გამეორებულს ვტოვებთ.
+# შეზღუდვა: მეხსიერებაშია, ე.ი. ერთი instance-ის ფარგლებში მუშაობს. Render-ზე
+# ერთი instance გვაქვს, ამიტომ პრაქტიკულ შემთხვევებს ფარავს. მრავალ-instance-ზე
+# გადასვლისას → Redis ან ბაზის ცხრილი.
+_SEEN_MIDS: "OrderedDict[str, float]" = OrderedDict()
+_SEEN_TTL = 600      # წამი — ამაზე ძველს ვივიწყებთ
+_SEEN_MAX = 5000     # ჩანაწერების ჭერი (მეხსიერება არ გაიბეროს)
+
+
+def _already_handled(mid: str | None) -> bool:
+    """True — თუ ეს შეტყობინება უკვე დამუშავდა (Meta-ს გამეორება)."""
+    if not mid:
+        return False  # id-ის გარეშე ვერ გავარჩევთ — ვამუშავებთ
+    now = time.time()
+    while _SEEN_MIDS:
+        k, ts = next(iter(_SEEN_MIDS.items()))
+        if now - ts > _SEEN_TTL:
+            _SEEN_MIDS.pop(k, None)
+        else:
+            break
+    if mid in _SEEN_MIDS:
+        return True
+    _SEEN_MIDS[mid] = now
+    while len(_SEEN_MIDS) > _SEEN_MAX:
+        _SEEN_MIDS.popitem(last=False)
+    return False
 
 
 def _load_history(sc, shop_id: str, psid: str) -> list:
@@ -140,6 +173,14 @@ def _process_events(data: dict) -> None:
         try:
             page_token = decrypt(shop["facebook_page_token"])
         except Exception:
+            # ⚠️ ბოტი ამ მაღაზიაზე მკვდარია. ყველაზე ხშირი მიზეზი —
+            # FB_TOKEN_ENCRYPTION_KEY შეიცვალა და ძველი ჩანაწერი აღარ იშიფრება.
+            # ადრე ეს ჩუმად ხდებოდა და ხუთივე მაღაზია გაითიშა შეუმჩნევლად.
+            logger.error(
+                "BOT DOWN: page token-ის გაშიფვრა ვერ მოხერხდა (shop=%s, page=%s) — "
+                "შეამოწმე FB_TOKEN_ENCRYPTION_KEY ან ხელახლა დააკავშირე გვერდი",
+                shop.get("id"), eid,
+            )
             continue
 
         products = (
@@ -163,6 +204,10 @@ def _process_events(data: dict) -> None:
             ]
             if message.get("is_echo") or not sender_id or (not text and not image_urls):
                 continue
+            # Meta-ს გამეორებული მოვლენა — ერთხელ უკვე ვუპასუხეთ (P1-3)
+            if _already_handled(message.get("mid")):
+                logger.info("გამეორებული შეტყობინება იგნორდა (mid=%s)", message.get("mid"))
+                continue
 
             # --- მონეტიზაცია: კლიენტის თვლა + ლიმიტების შემოწმება ---
             over_limit = False
@@ -179,7 +224,12 @@ def _process_events(data: dict) -> None:
                 if monthly > int(limits["customers"]):
                     over_limit = True
             except Exception:
-                pass  # თვლა ვერ მოხერხდა — ბოტი მაინც პასუხობს (არ ვბლოკავთ)
+                # ბოტი განზრახ აგრძელებს (კლიენტს არ ვბლოკავთ), მაგრამ ეს იმას ნიშნავს,
+                # რომ ლიმიტები ამ შეტყობინებაზე არ გავრცელდა — ლოგი საჭიროა.
+                logger.warning(
+                    "კლიენტის თვლა ვერ მოხერხდა (shop=%s) — ლიმიტი ამ შეტყობინებაზე არ შემოწმდა",
+                    shop.get("id"), exc_info=True,
+                )
 
             if over_limit:
                 try:
@@ -208,11 +258,21 @@ def _process_events(data: dict) -> None:
                     get_bot_reply(shop, products, text, history, images=images)
                 )
             except Exception:
+                logger.exception("ბოტის პასუხი ვერ შეიქმნა (shop=%s)", shop.get("id"))
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."
             # მეხსიერებაში ტექსტი ვინახოთ; უტექსტო ფოტოზე — ნიშანი
             saved_text = text or ("[სურათი]" if images else "")
             try:
                 send_text_message(page_token, sender_id, reply)
+            except Exception:
+                # კლიენტმა პასუხი ვერ მიიღო. ვადაგასული page token ასე გამოიყურება.
+                logger.exception(
+                    "პასუხის გაგზავნა ჩავარდა (shop=%s, psid=%s) — შესაძლოა page token ვადაგასულია",
+                    shop.get("id"), sender_id,
+                )
+                continue
+            try:
                 _save_turn(sc, shop["id"], str(sender_id), history, saved_text, reply, handoff)
             except Exception:
-                pass  # ლოგირება მოგვიანებით
+                # პასუხი უკვე გაიგზავნა — მეხსიერების ჩაწერის ჩავარდნა კლიენტს არ ეხება
+                logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)

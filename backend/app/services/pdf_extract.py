@@ -4,6 +4,10 @@ import io
 from pypdf import PdfReader
 
 MAX_CHARS = 20000  # ბოტის prompt-ის დასაცავად ვზღუდავთ
+# ⚠️ რევიუ P2-12: გვერდების ჭერი. ზომა (10MB) საკმარისი დაცვა არ არის —
+# სპეციალურად აწყობილი PDF ათასობით გვერდად იშლება და extract_text()-ი
+# CPU/მეხსიერებას ამოწურავს. ტექსტი ისედაც MAX_CHARS-ზე იჭრება.
+MAX_PAGES = 300
 
 
 def extract_pdf_text(content: bytes) -> str:

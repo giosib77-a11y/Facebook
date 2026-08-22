@@ -1,5 +1,6 @@
 """Shops endpoints — გამყიდველის მაღაზიები."""
 import json
+import logging
 import re
 import uuid
 from collections import Counter
@@ -14,6 +15,7 @@ from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.core.tiers import (
     TIER_LABELS,
+    TIER_LIMITS,
     TIER_PRICES,
     best_tier,
     bulk_import_allowed,
@@ -25,6 +27,7 @@ from app.models.shop import ShopCreate, ShopOut
 from app.services.pdf_extract import extract_pdf_text
 
 router = APIRouter(prefix="/shops", tags=["shops"])
+logger = logging.getLogger("app")
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10MB
 
@@ -44,6 +47,30 @@ class UpgradeRequestIn(BaseModel):
 
 class ShopSettingsUpdate(BaseModel):
     bot_language: str
+
+
+def _cancel_pending_requests(shop_ids: list[str]) -> None:
+    """ამ მაღაზიების pending upgrade-მოთხოვნების გაუქმება.
+
+    ⚠️ რევიუ P2-7: ადრე ეს მომხმარებლის `auth.client`-ით კეთდებოდა, მაგრამ
+    `upgrade_requests`-ს **UPDATE პოლისი არ აქვს** (0005-ში მხოლოდ insert/select-ია),
+    ამიტომ RLS-ის ქვეშ 0 მწკრივი იცვლებოდა და `try/except: pass` ამას მალავდა.
+    შედეგი: ერთ მაღაზიაზე რამდენიმე pending რჩებოდა და ადმინს არასწორი
+    (ძველი, იაფი) მოთხოვნის დადასტურება შეეძლო. მფლობელობა ზემოთ უკვე
+    დადასტურებულია RLS-ით, ამიტომ აქ service_role უსაფრთხოა.
+    """
+    if not shop_ids:
+        return
+    try:
+        (
+            get_service_client().table("upgrade_requests")
+            .update({"status": "cancelled"})
+            .in_("shop_id", [str(i) for i in shop_ids])
+            .eq("status", "pending")
+            .execute()
+        )
+    except Exception:
+        logger.warning("pending მოთხოვნების გაუქმება ვერ მოხერხდა (shops=%s)", shop_ids, exc_info=True)
 
 
 @router.post("", response_model=ShopOut, status_code=status.HTTP_201_CREATED)
@@ -162,13 +189,12 @@ def request_upgrade(
     """გამყიდველი ითხოვს პაკეტს — ადმინი ხელით დაადასტურებს (გადახდის შემდეგ)."""
     if payload.tier not in TIER_LABELS or payload.tier == "free":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
+    # მფლობელობის დადასტურება RLS-ით (გაუქმება service_role-ით ხდება)
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     # ძველი pending მოთხოვნები ამ მაღაზიისთვის — ვხურავთ (მხოლოდ ბოლო რჩება)
-    try:
-        auth.client.table("upgrade_requests").update({"status": "cancelled"}).eq(
-            "shop_id", str(shop_id)
-        ).eq("status", "pending").execute()
-    except Exception:
-        pass
+    _cancel_pending_requests([str(shop_id)])
     run(
         auth.client.table("upgrade_requests").insert(
             {"shop_id": str(shop_id), "requested_tier": payload.tier, "status": "pending"}
@@ -184,20 +210,56 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     გამოწერა per-account-ია (ერთი გადახდა ფარავს ყველა მაღაზიას), ამიტომ გაუქმებაც
     ყველა მაღაზიას ეხება. უფასოზე გადასვლა პრივილეგიის აწევა არ არის → RLS-ის ქვეშ,
     გამყიდვლის საკუთარი client-ითვე. pending upgrade მოთხოვნებიც უქმდება.
+
+    ⚠️ რევიუ P1-6 — ლიმიტების გავრცელება არსებულ მაღაზიებზე:
+    ადრე downgrade მხოლოდ ტარიფს ცვლიდა და ხუთივე მაღაზიის ბოტი აგრძელებდა
+    მუშაობას — ე.ი. ერთი თვის გადახდით მუდმივი უპირატესობა რჩებოდა.
+    ახლა ლიმიტს ზემოთ მყოფ მაღაზიებზე **ბოტი ითიშება**.
+
+    ᲛᲝᲜᲐᲪᲔᲛᲘ ᲐᲠ ᲘᲨᲚᲔᲑᲐ: მაღაზიები, პროდუქტები და შეკვეთები ხელუხლებელი რჩება.
+    ითიშება მხოლოდ `bot_enabled` (ერთი დროშა), რომელიც პაკეტის დაბრუნებისას
+    ავტომატურად ბრუნდება (იხ. admin.py — approve/tier-ცვლილება).
+    ბოტი ყველაზე ძველ მაღაზიებზე რჩება ჩართული (რაც უფრო სავარაუდოა მთავარი).
     """
     res = run(
         auth.client.table("shops").update({"subscription_tier": "free"}).eq("owner_id", auth.user_id)
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    try:
-        shop_ids = [s["id"] for s in res.data]
-        auth.client.table("upgrade_requests").update({"status": "cancelled"}).in_(
-            "shop_id", shop_ids
-        ).eq("status", "pending").execute()
-    except Exception:
-        pass
-    return {"ok": True, "tier": "free"}
+
+    shop_ids = [s["id"] for s in res.data]
+    _cancel_pending_requests(shop_ids)
+
+    # უფასო პაკეტის მაღაზიების ჭერი (free → 1). None = ულიმიტო (ამ გზაზე არ ხდება).
+    limit = TIER_LIMITS["free"]["shops"]
+    disabled: list[str] = []
+    if limit is not None and len(res.data) > limit:
+        # ყველაზე ძველი `limit` მაღაზია რჩება; დანარჩენებზე ბოტი ითიშება
+        ordered = sorted(res.data, key=lambda r: str(r.get("created_at") or ""))
+        excess = [r for r in ordered[limit:] if r.get("bot_enabled")]
+        if excess:
+            try:
+                (
+                    get_service_client().table("shops")
+                    .update({"bot_enabled": False})
+                    .in_("id", [r["id"] for r in excess])
+                    .execute()
+                )
+                disabled = [r.get("name") or r["id"] for r in excess]
+                logger.info(
+                    "downgrade: ბოტი გაითიშა %d მაღაზიაზე (owner=%s)", len(excess), auth.user_id
+                )
+            except Exception:
+                logger.exception("downgrade: ბოტის გათიშვა ვერ მოხერხდა (owner=%s)", auth.user_id)
+
+    msg = "უფასო პაკეტზე დაბრუნდი."
+    if disabled:
+        msg += (
+            f" უფასო პაკეტი {limit} მაღაზიას მოიცავს, ამიტომ ბოტი გაითიშა: "
+            + ", ".join(disabled)
+            + ". მონაცემები დარჩა — პაკეტის დაბრუნებისას ბოტიც ავტომატურად ჩაირთვება."
+        )
+    return {"ok": True, "tier": "free", "bot_disabled": disabled, "message": msg}
 
 
 @router.get("/{shop_id}/attention")

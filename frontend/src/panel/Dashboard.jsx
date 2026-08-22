@@ -126,7 +126,7 @@ function ShopBar() {
 /* ---------- გამოწერა / ლიმიტები ---------- */
 function UsageBox() {
   const toast = useToast();
-  const { shopId, currentShop, usage, loadUsage } = useShopData();
+  const { shopId, currentShop, usage, loadUsage, loadShops } = useShopData();
   if (!shopId || !usage) return null;
 
   const climit = usage.customer_limit;
@@ -150,11 +150,17 @@ function UsageBox() {
     if (!confirm(
       "უფასო პაკეტზე დაბრუნდები — გამოწერა ერთიანია, ამიტომ ეს ეხება ყველა შენს მაღაზიას. " +
       "ფასიანი პაკეტის უპირატესობები გაუქმდება (მეტი კლიენტი და პროდუქტი, " +
-      "Excel/PDF ატვირთვა, პრიორიტეტული მხარდაჭერა).\n\nგავაგრძელო?"
+      "Excel/PDF ატვირთვა, პრიორიტეტული მხარდაჭერა).\n\n" +
+      "⚠️ თუ ერთზე მეტი მაღაზია გაქვს, უფასო პაკეტს მხოლოდ ერთი მოიცავს — " +
+      "დანარჩენებზე ბოტი გაითიშება.\n" +
+      "მონაცემები (პროდუქტები, შეკვეთები) არ წაიშლება და პაკეტის დაბრუნებისას " +
+      "ბოტიც ავტომატურად ჩაირთვება.\n\nგავაგრძელო?"
     )) return;
     try {
-      await api("/shops/" + shopId + "/downgrade-free", "POST");
-      toast("უფასო პაკეტზე დაბრუნდი");
+      // backend აბრუნებს message-ს, რომელ მაღაზიებზე გაითიშა ბოტი (P1-6)
+      const r = await api("/shops/" + shopId + "/downgrade-free", "POST");
+      toast((r && r.message) || "უფასო პაკეტზე დაბრუნდი");
+      loadShops(shopId); // bot_enabled შეიცვალა — მაღაზიების სია უნდა განახლდეს
       loadUsage();
     } catch (err) {
       toast(err.message, true);

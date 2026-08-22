@@ -19,6 +19,9 @@ export function orderLink(shopId) {
 
 export default function OrdersTab() {
   const toast = useToast();
+  // ⚠️ რევიუ P3-17: ძველ app.js-ში ღილაკი იბლოკებოდა მოთხოვნის დროს
+  // (`delBtn.disabled = true`) — მიგრაციისას ეს დაკარგა. ვაბრუნებთ.
+  const [busyId, setBusyId] = useState(null);
   const { shopId, orders, orderFilter, changeOrderFilter, loadOrders, loadingOrders } = useShopData();
   const link = orderLink(shopId);
 
@@ -33,23 +36,32 @@ export default function OrdersTab() {
   }
 
   async function setStatus(o, status) {
+    if (busyId) return;
+    setBusyId(o.id);
     try {
       await api("/orders/" + o.id, "PATCH", { status });
       toast("სტატუსი განახლდა");
+      loadOrders(); // მარაგი შეიძლება შეიცვალა (გაუქმება/ხელახლა გახსნა)
     } catch (err) {
       toast(err.message, true);
       loadOrders();
+    } finally {
+      setBusyId(null);
     }
   }
 
   async function remove(o) {
+    if (busyId) return; // უკვე მიმდინარეობს — ორმაგი დაჭერა იგნორდება
     if (!confirm("წავშალო ეს შეკვეთა? მოქმედება შეუქცევადია. (მარაგი არ იცვლება)")) return;
+    setBusyId(o.id);
     try {
       await api("/orders/" + o.id, "DELETE");
       toast("შეკვეთა წაიშალა");
       loadOrders();
     } catch (err) {
       toast(err.message, true);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -106,13 +118,16 @@ export default function OrdersTab() {
                 </div>
                 <div className="product-actions"
                   style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-                  <select style={{ flex: 1 }} defaultValue={o.status}
+                  <select style={{ flex: 1 }} value={o.status} disabled={busyId === o.id}
                     onChange={(e) => setStatus(o, e.target.value)}>
                     {Object.entries(ORDER_STATUS).map(([k, v]) => (
                       <option value={k} key={k}>{v}</option>
                     ))}
                   </select>
-                  <button className="btn btn-danger btn-sm" onClick={() => remove(o)}>🗑 წაშლა</button>
+                  <button className="btn btn-danger btn-sm" disabled={busyId === o.id}
+                    onClick={() => remove(o)}>
+                    {busyId === o.id ? "..." : "🗑 წაშლა"}
+                  </button>
                 </div>
               </div>
             ))

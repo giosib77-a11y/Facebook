@@ -48,7 +48,11 @@ def _decrement_stock_atomic(sc, shop_id: str, req_items: list) -> bool | None:
 
 def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
     """მარაგის კორექცია: sign=-1 (შეკვეთა, გამოკლება) ან +1 (გაუქმება, დაბრუნება).
-    იკითხება მიმდინარე quantity და ინახება ახალი (floor 0-ზე)."""
+
+    ⚠️ რევიუ P1-5: ჯერ ატომურ RPC-ს ვცდით (migration 0013). თუ ის ჯერ არ გაშვებულა,
+    ძველ „წაიკითხე → ჩაწერე" გზაზე ვბრუნდებით — ე.ი. deploy მიგრაციამდეც უსაფრთხოა
+    (იგივე შაბლონი, რაც `_decrement_stock_atomic`-ს აქვს 0009-ისთვის).
+    """
     agg: dict[str, int] = {}
     for it in items:
         pid = it.get("product_id")
@@ -56,6 +60,30 @@ def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
             agg[pid] = agg.get(pid, 0) + int(it.get("quantity", 0))
     if not agg:
         return
+
+    # --- ატომური გზა (სასურველი) ---
+    try:
+        sc.rpc(
+            "apply_stock_delta",
+            {
+                "p_shop_id": str(shop_id),
+                "p_items": [{"product_id": k, "quantity": v} for k, v in agg.items()],
+                "p_sign": int(sign),
+            },
+        ).execute()
+        return
+    except APIError as e:
+        msg = getattr(e, "message", None) or str(e)
+        code = getattr(e, "code", None)
+        if not (code in ("42883", "PGRST202") or "does not exist" in msg or "Could not find" in msg):
+            logger.warning("apply_stock_delta RPC ჩავარდა (shop=%s): %s", shop_id, msg)
+            raise
+        # ფუნქცია ჯერ არ არსებობს → legacy გზა ქვემოთ
+    except Exception:
+        logger.warning("apply_stock_delta RPC მიუწვდომელია (shop=%s)", shop_id, exc_info=True)
+        raise
+
+    # --- legacy გზა (არა-ატომური; მხოლოდ 0013-ის გაშვებამდე) ---
     rows = (
         sc.table("products")
         .select("id,quantity")
@@ -170,7 +198,16 @@ def create_order(payload: OrderCreate):
         # შეკვეთა ვერ ჩაიწერა — დაკლებული მარაგი უკან დავაბრუნოთ.
         # ორივე გზაზე (atomic RPC ან legacy) მარაგი უკვე დაკლებულია აქ მოსვლისას,
         # ამიტომ კომპენსაცია ყოველთვის ხდება (თორემ legacy-ზე მარაგი დაიკარგებოდა).
-        _apply_stock_delta(sc, str(payload.shop_id), items, +1)
+        try:
+            _apply_stock_delta(sc, str(payload.shop_id), items, +1)
+        except Exception:
+            # კომპენსაციაც ჩავარდა → მარაგი დაკლებული დარჩა. კლიენტს გასაგები
+            # შეცდომა უნდა დაუბრუნდეს (და არა 500), მაღაზიას კი ლოგში ვნიშნავთ.
+            logger.exception(
+                "მარაგის კომპენსაცია ჩავარდა შეკვეთის ჩავარდნის შემდეგ "
+                "(shop=%s) — მარაგი ხელით უნდა გასწორდეს: %s",
+                payload.shop_id, items,
+            )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთის შექმნა ვერ მოხერხდა")
 
     return {"ok": True, "order_id": order_id, "total": total}
@@ -181,9 +218,18 @@ def create_order(payload: OrderCreate):
 def list_orders(
     auth: CurrentAuth = Depends(get_current_auth),
     status_filter: str | None = Query(default=None, alias="status"),
+    shop_id: uuid.UUID | None = Query(default=None, description="ფილტრი კონკრეტული მაღაზიით"),
 ):
-    """მიმდინარე გამყიდველის შეკვეთები (RLS-ით მხოლოდ მისი მაღაზიების)."""
+    """მიმდინარე გამყიდველის შეკვეთები (RLS-ით მხოლოდ მისი მაღაზიების).
+
+    ⚠️ რევიუ P2-14: `shop_id` დაემატა. მის გარეშე მრავალ-მაღაზიიანი გამყიდველი
+    ყველა მაღაზიის შეკვეთას ერთად ხედავდა, თუმცა პანელში ერთი მაღაზია იყო
+    შერჩეული. პარამეტრი **არასავალდებულოა** — გამოტოვებისას ძველი ქცევა რჩება
+    (უკან თავსებადი).
+    """
     query = auth.client.table("orders").select("*").order("created_at", desc=True)
+    if shop_id is not None:
+        query = query.eq("shop_id", str(shop_id))
     if status_filter:
         query = query.eq("status", status_filter)
     return run(query).data
@@ -211,11 +257,21 @@ def update_order_status(
     shop_id = cur.data[0]["shop_id"]
     new_status = payload.status
 
+    # ⚠️ ოპტიმისტური ჩაკეტვა (რევიუ P1-4): განახლება მხოლოდ მაშინ გაივლის, თუ
+    # სტატუსი ისევ ის არის, რაც ზემოთ წავიკითხეთ. ამის გარეშე ორი ერთდროული
+    # მოთხოვნა (ორი ტაბი/მოწყობილობა) ორივე გაივლიდა და მარაგი ორჯერ დაბრუნდებოდა.
     res = run(
-        auth.client.table("orders").update({"status": new_status}).eq("id", str(order_id))
+        auth.client.table("orders")
+        .update({"status": new_status})
+        .eq("id", str(order_id))
+        .eq("status", old_status)
     )
     if not res.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი")
+        # ჩანაწერი არსებობს (ზემოთ წავიკითხეთ), ე.ი. სტატუსი სხვამ შეცვალა.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "შეკვეთის სტატუსი ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
+        )
 
     # მარაგის კორექცია სტატ უსის ცვლილებაზე
     if new_status == "cancelled" and old_status != "cancelled":

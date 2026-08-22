@@ -6,12 +6,18 @@ offline-ად ტესტირებადია.
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
+import logging
+import socket
 import time
+from urllib.parse import urlparse
 
 import httpx
 
 from app.config import get_settings
+
+logger = logging.getLogger("app")
 
 # ---- OAuth scope: Messenger + Instagram-ისთვის საჭირო ნებართვები ----
 # Instagram (Facebook-login path): აპში დამატებულია instagram_basic +
@@ -215,21 +221,92 @@ def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
 # ---------------------------------------------------------------------------
 # შემოსული სურათის ჩამოტვირთვა (Gemini multimodal-ისთვის)
 # ---------------------------------------------------------------------------
+# დაშვებული სქემები — file://, gopher://, ftp:// და სხვა SSRF-ვექტორები იკეტება
+_ALLOWED_SCHEMES = ("http", "https")
+# რამდენ redirect-ს ვყვებით ხელით (თითოეული მისამართი ცალკე მოწმდება)
+_MAX_REDIRECTS = 3
+
+
+def _is_public_http_url(url: str) -> bool:
+    """True — თუ URL საჯარო ინტერნეტ-მისამართზე მიუთითებს.
+
+    ⚠️ SSRF-ის დაცვა. `products.image_url`-ს გამყიდველი თავად წერს, ე.ი. ეს
+    მისამართი არასანდოა. შიდა/ლოკალური მისამართები (127.x, 10.x, 192.168.x,
+    169.254.169.254 = cloud metadata) იბლოკება, თორემ სერვერი მათ ჩამოტვირთავდა
+    და შიგთავსს Gemini-ს გადასცემდა.
+    """
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except (socket.gaierror, UnicodeError, ValueError):
+        return False
+    if not infos:
+        return False
+    # ყველა გარჩეული მისამართი უნდა იყოს საჯარო (თუნდაც ერთი შიდა — ვბლოკავთ)
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (
+            ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
 def download_image(
     url: str, max_bytes: int = 8 * 1024 * 1024, timeout: float = 20
 ) -> tuple[bytes, str] | None:
     """სურათის ჩამოტვირთვა URL-იდან (კლიენტის FB/IG CDN ან პროდუქტის Storage).
 
     აბრუნებს (bytes, mime_type) ან None (თუ ვერ ჩამოიტვირთა / არ არის სურათი /
-    ძალიან დიდია). ბოტი უსურათოდ მაინც აგრძელებს. timeout — მაქს. წამი (პროდუქტის
-    ფოტოებზე უფრო მოკლეს ვაძლევთ, რომ ბოტის პასუხი არ შეყოვნდეს).
+    ძალიან დიდია / მისამართი არასაჯაროა). ბოტი უსურათოდ მაინც აგრძელებს.
+
+    ⚠️ ორი დაცვა (რევიუ P1-1):
+      1. SSRF — ყოველი მისამართი (redirect-ებიც) მოწმდება `_is_public_http_url`-ით.
+      2. მეხსიერება — ნაკადურად (stream) ვკითხულობთ და ჭერზე ვწყვეტთ, რომ
+         უზარმაზარმა პასუხმა instance არ ჩააგდოს (ადრე `r.content` ჯერ
+         მთლიანად ჩამოტვირთავდა და მერე ამოწმებდა ზომას).
     """
-    r = httpx.get(url, timeout=timeout, follow_redirects=True)
-    r.raise_for_status()
-    data = r.content
-    if not data or len(data) > max_bytes:
-        return None
-    mime = (r.headers.get("content-type") or "image/jpeg").split(";")[0].strip().lower()
-    if not mime.startswith("image/"):
-        mime = "image/jpeg"
-    return data, mime
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not _is_public_http_url(current):
+            logger.warning("სურათის ჩამოტვირთვა დაიბლოკა (არასაჯარო მისამართი): %.120s", current)
+            return None
+        with httpx.stream(
+            "GET", current, timeout=timeout, follow_redirects=False
+        ) as r:
+            if r.is_redirect:
+                nxt = r.headers.get("location")
+                if not nxt:
+                    return None
+                current = str(httpx.URL(current).join(nxt))
+                continue
+            r.raise_for_status()
+            # Content-Length-ს ვენდობით მხოლოდ ადრეული უარისთვის — ნამდვილი
+            # ჭერი ქვემოთ, ნაკადის კითხვისასაა (ყალბი header არ გვატყუებს).
+            declared = r.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > max_bytes:
+                return None
+            buf = bytearray()
+            for chunk in r.iter_bytes():
+                buf.extend(chunk)
+                if len(buf) > max_bytes:
+                    logger.warning("სურათი ჭერს გადააჭარბა (%d ბაიტი) — შეწყდა", len(buf))
+                    return None
+            data = bytes(buf)
+            if not data:
+                return None
+            mime = (r.headers.get("content-type") or "image/jpeg").split(";")[0].strip().lower()
+            if not mime.startswith("image/"):
+                mime = "image/jpeg"
+            return data, mime
+    logger.warning("სურათის ჩამოტვირთვა: ძალიან ბევრი redirect")
+    return None

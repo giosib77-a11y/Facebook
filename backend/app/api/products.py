@@ -1,8 +1,10 @@
 """Products endpoints — მაღაზიის მარაგის CRUD."""
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from postgrest.exceptions import APIError
 
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
@@ -12,6 +14,10 @@ from app.models.product import ProductCreate, ProductOut, ProductUpdate
 from app.services.import_products import parse_products_file, preview_file
 
 router = APIRouter(prefix="/products", tags=["products"])
+logger = logging.getLogger("app")
+
+# PostgREST/Postgres კოდები, რაც ნიშნავს „სვეტი/ცხრილი ჯერ არ არსებობს"
+_MIGRATION_MISSING = ("42703", "42P01", "PGRST202", "PGRST204")
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5MB
 MAX_IMAGE_BYTES = 8 * 1024 * 1024   # 8MB — პროდუქტის ფოტო
@@ -39,18 +45,43 @@ def _sniff_image_mime(content: bytes) -> str | None:
 
 def _product_limit_left(auth, shop_id) -> int | None:
     """დარჩენილი პროდუქტების რაოდენობა პაკეტის მიხედვით. None = ულიმიტო.
-    თუ migration ჯერ არ გაშვებულა (subscription_tier არ არსებობს) — None (ლიმიტი გამორთ.)."""
+
+    ⚠️ რევიუ P2-8: ადრე ნებისმიერი შეცდომა (ქსელის შეფერხებაც) `None`-ს აბრუნებდა,
+    ანუ ლიმიტს **სრულად თიშავდა** (fail-open). ახლა მხოლოდ „მიგრაცია ჯერ არ
+    გაშვებულა" აბრუნებს None-ს; ნამდვილ შეცდომაზე 503 — ლიმიტი ვერ შემოწმდა,
+    ამიტომ ჩაწერასაც არ ვუშვებთ (fail-closed).
+    """
     try:
-        shop = auth.client.table("shops").select("subscription_tier").eq("id", str(shop_id)).limit(1).execute()
+        shop = (
+            auth.client.table("shops").select("subscription_tier")
+            .eq("id", str(shop_id)).limit(1).execute()
+        )
         if not shop.data:
-            return None
+            return None  # მაღაზია არ არის მისი — ჩაწერას RLS ისედაც დაბლოკავს
         limit = limits_for(shop.data[0].get("subscription_tier"))["products"]
         if limit is None:
-            return None
-        cnt = auth.client.table("products").select("id", count="exact").eq("shop_id", str(shop_id)).limit(1).execute()
+            return None  # ულიმიტო პაკეტი
+        cnt = (
+            auth.client.table("products").select("id", count="exact")
+            .eq("shop_id", str(shop_id)).limit(1).execute()
+        )
         return max(0, limit - (cnt.count or 0))
+    except APIError as e:
+        code = getattr(e, "code", None)
+        msg = getattr(e, "message", None) or str(e)
+        if code in _MIGRATION_MISSING or "does not exist" in msg or "Could not find" in msg:
+            return None  # subscription_tier ჯერ არ არსებობს — ლიმიტი გამორთულია
+        logger.warning("ლიმიტის შემოწმება ჩავარდა (shop=%s, code=%s): %s", shop_id, code, msg)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "პაკეტის ლიმიტი ვერ შემოწმდა — სცადე ცოტა ხანში.",
+        )
     except Exception:
-        return None
+        logger.exception("ლიმიტის შემოწმება ჩავარდა (shop=%s)", shop_id)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "პაკეტის ლიმიტი ვერ შემოწმდა — სცადე ცოტა ხანში.",
+        )
 
 
 @router.post("", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
@@ -180,6 +211,10 @@ async def import_products(
             override = {k: int(v) for k, v in raw.items() if v is not None and str(v) != ""}
             if extra_raw:
                 extra_cols = [int(x) for x in extra_raw]
+            # ⚠️ რევიუ P3-19: უარყოფითი ინდექსი Python-ში ბოლოდან ითვლის
+            # (row[-1] = ბოლო სვეტი), ანუ მდუმარედ არასწორ მონაცემს წაიკითხავდა.
+            if any(v < 0 for v in override.values()) or any(v < 0 for v in (extra_cols or [])):
+                raise ValueError("negative column index")
         except (ValueError, TypeError, AttributeError):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "სვეტების მითითება არასწორია")
 

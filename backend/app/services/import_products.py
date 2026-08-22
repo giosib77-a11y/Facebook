@@ -40,7 +40,12 @@ def _read_csv(content: bytes):
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise ValueError("CSV-ის წაკითხვა ვერ მოხერხდა — შეინახე UTF-8 კოდირებით.")
-    return [row for row in csv.reader(io.StringIO(text))]
+    rows = []
+    for row in csv.reader(io.StringIO(text)):
+        rows.append(row)
+        if len(rows) > MAX_ROWS + 1:  # იხ. P2-11 კომენტარი _read_xlsx-ში
+            raise ValueError(f"ძალიან ბევრი მწკრივი (მაქს. {MAX_ROWS}).")
+    return rows
 
 
 def _read_xlsx(content: bytes):
@@ -51,7 +56,15 @@ def _read_xlsx(content: bytes):
     ws = wb.active
     if ws is None:
         raise ValueError("Excel ფაილში აქტიური ფურცელი ვერ მოიძებნა.")
-    return [list(row) for row in ws.iter_rows(values_only=True)]
+    # ⚠️ რევიუ P2-11: ჭერი კითხვისასვე მოქმედებს. ადრე მთელი ფაილი ჯერ მეხსიერებაში
+    # ჩაიტვირთებოდა და MAX_ROWS მხოლოდ ამის შემდეგ მოწმდებოდა — .xlsx zip-ია,
+    # ანუ 5MB მილიონ მწკრივამდე იშლებოდა და instance-ს მეხსიერებას ამოწურავდა.
+    rows = []
+    for row in ws.iter_rows(values_only=True):
+        rows.append(list(row))
+        if len(rows) > MAX_ROWS + 1:  # +1 = სათაურის მწკრივი
+            raise ValueError(f"ძალიან ბევრი მწკრივი (მაქს. {MAX_ROWS}).")
+    return rows
 
 
 def read_rows(content: bytes, filename: str):

@@ -1,7 +1,12 @@
 """გამყიდველის Facebook გვერდის დაკავშირების flow (OAuth)."""
+import base64
+import hashlib
+import hmac
 import json
+import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
@@ -15,6 +20,7 @@ from app.core.supabase_client import get_service_client
 from app.services import facebook as fb
 
 router = APIRouter(prefix="/facebook", tags=["facebook connect"])
+logger = logging.getLogger("app")
 
 
 def _public_base() -> str:
@@ -53,6 +59,52 @@ def _finish(result: str, **params) -> HTMLResponse:
         "window.location.replace(" + json.dumps(fallback) + ");})();</script></body></html>"
     )
     return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
+# Data Deletion — დადასტურების კოდი (რევიუ P2-16)
+#
+# ადრე კოდი `uuid4()`-ით იქმნებოდა და არსად ინახებოდა, ე.ი. status-გვერდი
+# ნებისმიერ ტექსტს „დადასტურებულად" აჩვენებდა. Meta-ს განმხილველი სწორედ ამ
+# ნაკადს ამოწმებს.
+#
+# გამოსავალი — ხელმოწერილი (stateless) კოდი: ცხრილი არ გვჭირდება, ბაზა არ
+# იზრდება, გასუფთავება არ სჭირდება, და კოდი მაინც შემოწმებადია.
+# ფორმატი: <base64url(uid_hash:ts)>.<hmac16>
+# ---------------------------------------------------------------------------
+_DELETION_CODE_TTL = 400 * 24 * 3600  # ~13 თვე — Meta-ს შემოწმებას დროის მარაგი ჰქონდეს
+
+
+def _deletion_secret() -> bytes:
+    return (get_settings().fb_app_secret or "chatassist").encode()
+
+
+def make_deletion_code(user_id: str) -> str:
+    """ხელმოწერილი, შემოწმებადი დადასტურების კოდი. user_id ღიად არ გადის (hash-დება)."""
+    uid_hash = hashlib.sha256(str(user_id).encode() + _deletion_secret()).hexdigest()[:12]
+    raw = base64.urlsafe_b64encode(f"{uid_hash}:{int(time.time())}".encode()).decode().rstrip("=")
+    sig = hmac.new(_deletion_secret(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{raw}.{sig}"
+
+
+def verify_deletion_code(code: str) -> dict | None:
+    """აბრუნებს {"requested_at": ISO} თუ კოდი ნამდვილია, სხვა შემთხვევაში None."""
+    try:
+        raw, sig = (code or "").rsplit(".", 1)
+    except ValueError:
+        return None
+    expected = hmac.new(_deletion_secret(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(expected, sig):
+        return None
+    try:
+        padded = raw + "=" * (-len(raw) % 4)
+        _uid_hash, ts = base64.urlsafe_b64decode(padded.encode()).decode().split(":")
+        ts = int(ts)
+    except Exception:
+        return None
+    if time.time() - ts > _DELETION_CODE_TTL:
+        return None
+    return {"requested_at": datetime.fromtimestamp(ts, timezone.utc).isoformat()}
 
 
 @router.get("/connect/start")
@@ -119,13 +171,40 @@ def connect_callback(
         "facebook_user_id": fb_user_id,
         "bot_enabled": True,
     }
+
+    def _save(payload: dict):
+        return (
+            sc.table("shops").update(payload)
+            .eq("id", data["shop_id"]).eq("owner_id", data["user_id"]).execute()
+        )
+
     try:
-        sc.table("shops").update(upd).eq("id", data["shop_id"]).eq("owner_id", data["user_id"]).execute()
-    except Exception:
-        # migration 0006/0011 ჯერ არ გაშვებულა — ამ ველების გარეშე მაინც დავაკავშიროთ
+        res = _save(upd)
+    except Exception as e:
+        msg = str(e)
+        # ⚠️ რევიუ P2-13: facebook_page_id გლობალურად unique-ია. თუ ეს გვერდი უკვე
+        # სხვა მაღაზიაზეა მიბმული, აქ unique-violation მოდის — ადრე ეს fallback-ს
+        # გადაეცემოდა, იქაც ვარდებოდა და მომხმარებელი popup-ში 500-ს ხედავდა.
+        if "duplicate key" in msg or "23505" in msg or "already exists" in msg:
+            logger.warning("გვერდი %s უკვე დაკავშირებულია სხვა მაღაზიაზე", page_id)
+            return _finish("error", reason="page_taken")
+        # migration 0006/0011 ჯერ არ გაშვებულა — ამ ველების გარეშე მაინც ვცდით
         upd.pop("instagram_account_id", None)
         upd.pop("facebook_user_id", None)
-        sc.table("shops").update(upd).eq("id", data["shop_id"]).eq("owner_id", data["user_id"]).execute()
+        try:
+            res = _save(upd)
+        except Exception:
+            logger.exception("გვერდის შენახვა ჩავარდა (shop=%s)", data.get("shop_id"))
+            return _finish("error", reason="save_failed")
+
+    # ⚠️ რევიუ P2-13: შედეგი უნდა შემოწმდეს. 0 მწკრივი ნიშნავს, რომ მაღაზია
+    # აღარ არსებობს ან სხვას ეკუთვნის — ადრე ასეთ დროსაც „connected" ბრუნდებოდა.
+    if not (res.data or []):
+        logger.warning(
+            "გვერდის შენახვამ 0 მწკრივი შეცვალა (shop=%s, user=%s)",
+            data.get("shop_id"), data.get("user_id"),
+        )
+        return _finish("error", reason="shop_not_found")
 
     return _finish("connected", page=page_name)
 
@@ -173,11 +252,25 @@ def data_deletion_callback(signed_request: str = Form(...)):
     except Exception:
         pass  # Meta-ს მაინც ვპასუხობთ წარმატებით
 
-    code = uuid.uuid4().hex[:16]
+    # ხელმოწერილი კოდი — status-გვერდს შეუძლია მისი ნამდვილობის შემოწმება (P2-16)
+    code = make_deletion_code(user_id)
     return {
         "url": f"{_public_base()}/panel/delete-data.html?code={code}",
         "confirmation_code": code,
     }
+
+
+@router.get("/data-deletion/status")
+def data_deletion_status(code: str):
+    """დადასტურების კოდის შემოწმება — delete-data.html ამას იძახებს.
+
+    Meta-ს მოთხოვნაა, რომ status-URL-მა წაშლის მდგომარეობა აჩვენოს. ხელმოწერის
+    გარეშე გვერდი ნებისმიერ ტექსტს „დადასტურებულად" აჩვენებდა.
+    """
+    info = verify_deletion_code(code)
+    if not info:
+        return {"valid": False, "status": "unknown"}
+    return {"valid": True, "status": "completed", "requested_at": info["requested_at"]}
 
 
 @router.post("/disconnect")

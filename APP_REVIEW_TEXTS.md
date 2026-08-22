@@ -91,3 +91,22 @@ account, the same automated support as on Messenger.
 - გასაგზავნი ვიდეო: **Video 2** (2026-08-11 16-08-14.mp4) — მკვეთრი, watermark-ის გარეშე,
   სრული ნაკადი (login → permission-ეკრანი → ბოტის პასუხი).
 - App Review-ს წინაპირობა: **ი/მ → Business Verification** (ეს კარიბჭე ჯერ ღიაა).
+
+---
+
+## 🧹 submit-ამდე დასალაგებელი
+
+- [ ] 💵 **Render → Starter tier ($7/თვე) — submit-ამდე, არა გაშვებისას.**
+      უფასო tier 15 წუთი უმოქმედობის შემდეგ იძინებს და გაღვიძებას 30-60 წამი
+      სჭირდება. Meta-ს განმხილველი საიტს **თავად გახსნის** (login, permission-ეკრანი,
+      privacy-გვერდი) — თუ იმ მომენტში ჩაძინებულია, განხილვა შეიძლება უარყოფილ იქნას
+      და ხელახლა შეტანა კვირებს ნიშნავს.
+      რიგითობა: ი/მ → Business Verification → **$7 tier** → submit → Live.
+- [ ] **Meta → Facebook Login → Valid OAuth Redirect URIs**: მოხსენი
+      `https://vividly-ideally-violet.ngrok-free.dev/facebook/connect/callback`
+      (ლოკალური dev-ისთვის დაემატა 2026-08-20).
+      ⚠️ უფასო ngrok-დომენი გათავისუფლების შემთხვევაში სხვამ შეიძლება დაიკავოს
+      და OAuth-კოდები მიიღოს — ამიტომ submit-ამდე ან ngrok-ის მიტოვებისას მოიხსნას.
+      `chatassist.ge`-ის ჩანაწერს **არ შეეხო** — პროდაქშენი მას იყენებს.
+- [ ] ვიდეო ხელახლა გადაიღე, თუ ვიზუალი შეიცვალა (რედიზაინის შემდეგ)
+- [ ] სატესტო login (email + პაროლი) მზად არის და მუშაობს
