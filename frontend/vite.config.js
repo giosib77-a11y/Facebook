@@ -26,6 +26,7 @@ export default defineConfig({
         privacy: page("./privacy.html"),
         terms: page("./terms.html"),
         "delete-data": page("./delete-data.html"),
+        contact: page("./contact.html"),
       },
     },
   },

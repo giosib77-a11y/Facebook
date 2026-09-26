@@ -28,6 +28,13 @@ export default function PanelApp() {
       <footer className="panel-footer">
         დახმარება გჭირდება? მოგვწერე{" "}
         <a href="mailto:chatassistbusiness@gmail.com">chatassistbusiness@gmail.com</a>
+        <div className="panel-legal">
+          <p>Owned and operated by Individual Entrepreneur Jemali Sibashvili</p>
+          <p>Address: Georgia, Rustavi city, Pavle Todria II alley, N2, apartment N19</p>
+          <p>Phone: <a href="tel:+995557182018">+995 557 18 20 18</a></p>
+          <p>Email: <a href="mailto:chatassistbusiness@gmail.com">chatassistbusiness@gmail.com</a></p>
+          <p><a href="contact.html">Contact</a></p>
+        </div>
       </footer>
     </ToastProvider>
   );

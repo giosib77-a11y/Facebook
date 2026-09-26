@@ -259,3 +259,9 @@ img { max-width: 100%; display: block; }
   .price-grid { grid-template-columns: 1fr; }
   .cta-band { padding: 44px 22px; }
 }
+
+/* იურიდიული ინფორმაცია (Meta Business Verification) */
+.footer-legal { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); font-size: .82rem; line-height: 1.55; }
+.footer-legal p { margin: 0; }
+.footer-legal a { color: inherit; text-decoration: underline; }
+.footer-legal a:hover { color: var(--ink); }
