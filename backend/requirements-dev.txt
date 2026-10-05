@@ -1,0 +1,2 @@
+# Test-only dependencies (CI + local). Install alongside requirements.txt.
+pytest>=8.3
