@@ -16,6 +16,12 @@ _TRANSIENT = ("503", "UNAVAILABLE", "500", "429", "RESOURCE_EXHAUSTED", "high de
 # კლიენტამდე გაგზავნამდე და საუბარს „ყურადღება სჭირდება"-დ ნიშნავს.
 HANDOFF_TOKEN = "[[HANDOFF]]"
 
+# ფოტოიანი შეტყობინების მეხსიერების ჭერი (512 MB instance-ზე რამდენიმე
+# პარალელური ფოტო-შეტყობინება სერვისს არ უნდა აგდებდეს).
+INLINE_IMAGE_BUDGET = 15 * 1024 * 1024  # კლიენტის + საცნობარო ფოტოები ერთ Gemini მოთხოვნაში
+PRODUCT_REF_MAX_BYTES = 3 * 1024 * 1024  # თითო საცნობარო ფოტოზე
+PRODUCT_REF_WORKERS = 4
+
 
 def parse_reply(raw: str) -> tuple[str, bool]:
     """ბოტის raw პასუხიდან [[HANDOFF]] ნიშანს აცლის.
@@ -194,17 +200,25 @@ def build_system_prompt(shop, products, total: int | None = None) -> str:
     )
 
 
-def _fetch_product_images(products, max_images: int = 12):
+def _fetch_product_images(products, customer_images=None, max_images: int = 12):
     """რელევანტური პროდუქტების ფოტოებს ჩამოტვირთავს ვიზუალური შედარებისთვის.
 
     აბრუნებს [(label, (bytes, mime)), ...] — მხოლოდ იმ პროდუქტების, რომლებსაც
     ფოტო აქვთ (image_url). max_images — ჭერი (ხარჯი/სისწრაფე; ბევრი სურათი
     Gemini-ს ძვირი/ნელი უჯდება). ჩამოტვირთვა პარალელურია და მოკლე timeout-ით,
     რომ ბოტის პასუხი არ შეყოვნდეს (webhook სინქრონულია).
+
+    მეხსიერება: კლიენტის ფოტოები (customer_images) ყოველთვის იგზავნება და
+    INLINE_IMAGE_BUDGET-იდან ჯერ ისინი აკლდება; საცნობარო ფოტოები მხოლოდ
+    დარჩენილს ავსებს (თითო ≤ PRODUCT_REF_MAX_BYTES).
     """
     from concurrent.futures import ThreadPoolExecutor
 
     from app.services.facebook import download_image
+
+    remaining = INLINE_IMAGE_BUDGET - sum(len(data) for data, _ in customer_images or [])
+    if remaining <= 0:
+        return []
 
     # კანდიდატები — მხოლოდ ფოტოიანი, max_images-მდე
     candidates = []
@@ -218,15 +232,19 @@ def _fetch_product_images(products, max_images: int = 12):
 
     def _one(p):
         try:
-            return p, download_image(p["image_url"], timeout=8)
+            return p, download_image(p["image_url"], max_bytes=PRODUCT_REF_MAX_BYTES, timeout=8)
         except Exception:
             return p, None
 
     refs = []
-    with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
+    with ThreadPoolExecutor(max_workers=min(PRODUCT_REF_WORKERS, len(candidates))) as ex:
         for p, got in ex.map(_one, candidates):
             if not got:
                 continue
+            # ბიუჯეტს გადააჭარბებს — ვტოვებთ, შემდეგი (უფრო პატარა) შეიძლება ჩაეტიოს
+            if len(got[0]) > remaining:
+                continue
+            remaining -= len(got[0])
             label = f"• {p.get('name', '?')} — {p.get('price', 0)}"
             if p.get("sku"):
                 label += f" (SKU: {p['sku']})"
@@ -310,7 +328,7 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
 
     # ვიზუალური ამოცნობა — თუ კლიენტმა ფოტო გამოგზავნა, რელევანტური პროდუქტების
     # ფოტოებსაც ვურთავთ, რომ Gemini-მ ვიზუალურად შეადაროს და კონკრეტული ამოიცნოს.
-    product_refs = _fetch_product_images(relevant) if images else None
+    product_refs = _fetch_product_images(relevant, images) if images else None
 
     client = genai.Client(api_key=settings.gemini_api_key)
     config = types.GenerateContentConfig(
