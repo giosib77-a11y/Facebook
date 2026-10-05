@@ -2,6 +2,7 @@
 import logging
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from postgrest.exceptions import APIError
@@ -14,6 +15,19 @@ from app.models.order import OrderCreate, OrderOut, OrderStatusUpdate
 
 router = APIRouter(tags=["orders"])
 logger = logging.getLogger("app")
+
+# საჯარო შეკვეთის ბოროტად გამოყენების ლიმიტები (F-03B).
+MAX_ITEM_QTY = 10  # ერთი პროდუქტის მაქს. ცალი ერთ შეკვეთაში (ჯამი product_id-ით)
+SHOP_ORDERS_PER_HOUR = 30  # მაღაზიის საჯარო შეკვეთები მცოცავ საათში
+_PHONE_CHARS = re.compile(r"[0-9 +\-()]+")
+
+
+def _valid_phone(phone: str | None) -> bool:
+    """მხოლოდ ციფრები, space, +, -, (, ) და 9–15 ციფრი."""
+    p = (phone or "").strip()
+    if not p or not _PHONE_CHARS.fullmatch(p):
+        return False
+    return 9 <= sum(c.isdigit() for c in p) <= 15
 
 
 def _decrement_stock_atomic(sc, shop_id: str, req_items: list) -> bool | None:
@@ -131,6 +145,9 @@ def create_order(payload: OrderCreate):
     if not shop.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
 
+    if not _valid_phone(payload.customer_phone):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მიუთითეთ სწორი ტელეფონის ნომერი")
+
     # ფასი/სახელი ბაზიდან — არა კლიენტისგან (მანიპულაციის თავიდან ასაცილებლად).
     product_ids = [str(i.product_id) for i in payload.items if i.product_id]
     if not product_ids:
@@ -144,6 +161,40 @@ def create_order(payload: OrderCreate):
         .data
     )
     price_map = {p["id"]: p for p in db_products}
+
+    # ერთი პროდუქტის ჯამური რაოდენობა (დუბლირებული ხაზებიც, მაგ. 6+6).
+    # უცნობ პროდუქტს ქვემოთ არსებული „ვერ მოიძებნა" გზა იჭერს.
+    qty_by_product: dict[str, int] = {}
+    for i in payload.items:
+        if i.product_id:
+            pid = str(i.product_id)
+            qty_by_product[pid] = qty_by_product.get(pid, 0) + i.quantity
+    for pid, qty in qty_by_product.items():
+        prod = price_map.get(pid)
+        if prod and qty > MAX_ITEM_QTY:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"„{prod['name']}“ — ერთ შეკვეთაში მაქსიმუმ {MAX_ITEM_QTY} ცალი. "
+                "მეტი რაოდენობისთვის მიწერეთ მაღაზიას Messenger-ში.",
+            )
+
+    # მაღაზიის საათობრივი ლიმიტი ბაზიდან (გადატვირთვას უძლებს; კონკურენტულად
+    # მცირე გადაჭარბება მისაღებია).
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent = (
+        sc.table("orders")
+        .select("id", count="exact")
+        .eq("shop_id", str(payload.shop_id))
+        .gte("created_at", since)
+        .limit(1)
+        .execute()
+    )
+    if (recent.count or 0) >= SHOP_ORDERS_PER_HOUR:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "მაღაზიამ ამ საათში ძალიან ბევრი შეკვეთა მიიღო. "
+            "სცადეთ მოგვიანებით ან მიწერეთ მაღაზიას Messenger-ში.",
+        )
 
     # ფასი/სახელი ბაზიდან; მარაგის შემოწმებას ატომური RPC აკეთებს (ქვემოთ).
     items, req_items, total = [], [], 0.0

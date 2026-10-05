@@ -8,6 +8,17 @@ const H = { "ngrok-skip-browser-warning": "1" };
 /** ?shop=ID — ⚠️ URL-კონტრაქტი: ბოტი ამ ლინკს რეალურ მყიდველებს უგზავნის. არ შეცვალო. */
 const shopId = new URLSearchParams(location.search).get("shop");
 
+// იგივე ლიმიტები, რაც backend-ში (orders.py)
+const MAX_ITEM_QTY = 10;
+const PHONE_HINT = "მიუთითეთ სწორი ტელეფონის ნომერი (9–15 ციფრი)";
+
+function isValidPhone(raw) {
+  const p = raw.trim();
+  if (!p || !/^[0-9 +\-()]+$/.test(p)) return false;
+  const digits = p.replace(/[^0-9]/g, "").length;
+  return digits >= 9 && digits <= 15;
+}
+
 function BagIcon() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -90,6 +101,14 @@ export default function OrderPage() {
     if (v > stock) {
       v = stock;
       showToast(p.name + " — მარაგშია მხოლოდ " + stock + " ცალი", true);
+    }
+    if (v > MAX_ITEM_QTY) {
+      v = MAX_ITEM_QTY;
+      showToast(
+        p.name + " — ერთ შეკვეთაში მაქსიმუმ " + MAX_ITEM_QTY +
+          " ცალი. მეტი რაოდენობისთვის მიწერეთ მაღაზიას Messenger-ში.",
+        true
+      );
     } else if (v < 0) {
       v = 0;
     }
@@ -109,6 +128,10 @@ export default function OrderPage() {
       }));
     if (!items.length) {
       showToast("აირჩიე მინიმუმ ერთი პროდუქტი (რაოდენობა > 0)", true);
+      return;
+    }
+    if (!isValidPhone(form.phone)) {
+      showToast(PHONE_HINT, true);
       return;
     }
     setBusy(true);
@@ -188,7 +211,7 @@ export default function OrderPage() {
                         <input
                           type="number"
                           min="0"
-                          max={stock}
+                          max={Math.min(stock, MAX_ITEM_QTY)}
                           placeholder="0"
                           inputMode="numeric"
                           style={{ width: 80 }}
@@ -231,6 +254,7 @@ export default function OrderPage() {
                   required
                   placeholder="5XX XX XX XX"
                   autoComplete="tel"
+                  title={PHONE_HINT}
                   value={form.phone}
                   onChange={upd("phone")}
                 />

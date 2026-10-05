@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.facebook
+import app.api.orders
 import app.api.products
 import app.api.shops
 from app.core.security import CurrentAuth, get_current_auth
@@ -63,6 +64,10 @@ class FakeQuery:
         self.filters.append(("in", column, list(values)))
         return self
 
+    def gte(self, column, value):
+        self.filters.append(("gte", column, value))
+        return self
+
     def limit(self, n):
         return self
 
@@ -71,7 +76,19 @@ class FakeQuery:
 
     def execute(self):
         self._db.calls.append(self)
-        return FakeResult(self._db.responses.get((self.table, self.op), []))
+        return FakeResult(
+            self._db.responses.get((self.table, self.op), []),
+            count=self._db.counts.get((self.table, self.op)),
+        )
+
+
+class FakeRpc:
+    def __init__(self, db, fn, params):
+        self._db, self.fn, self.params = db, fn, params
+
+    def execute(self):
+        self._db.rpc_calls.append(self)
+        return FakeResult(None)
 
 
 class FakeSupabase:
@@ -80,9 +97,14 @@ class FakeSupabase:
     def __init__(self):
         self.calls: list[FakeQuery] = []
         self.responses: dict[tuple[str, str], list] = {}
+        self.counts: dict[tuple[str, str], int] = {}
+        self.rpc_calls: list[FakeRpc] = []
 
     def table(self, name):
         return FakeQuery(self, name)
+
+    def rpc(self, fn, params):
+        return FakeRpc(self, fn, params)
 
     def calls_for(self, table, op):
         return [c for c in self.calls if c.table == table and c.op == op]
@@ -96,7 +118,7 @@ def user_db():
 @pytest.fixture
 def service_db(monkeypatch):
     db = FakeSupabase()
-    for module in (app.api.products, app.api.shops, app.api.facebook):
+    for module in (app.api.products, app.api.shops, app.api.facebook, app.api.orders):
         monkeypatch.setattr(module, "get_service_client", lambda: db)
     return db
 
