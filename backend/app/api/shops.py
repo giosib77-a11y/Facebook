@@ -77,8 +77,9 @@ def _cancel_pending_requests(shop_ids: list[str]) -> None:
 def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_auth)):
     """ქმნის მაღაზიას მიმდინარე მომხმარებლის სახელზე.
 
-    owner_id ავტომატურად ისმება auth.uid()-ით; RLS insert პოლისი ამოწმებს, რომ
-    owner_id == ავტორიზებული მომხმარებელი.
+    owner_id ყოველთვის auth.user_id-ია (payload-იდან არასდროს). INSERT
+    გამყიდველს ჩამორთმეული აქვს (0015), ამიტომ ჩაწერა service_role-ით ხდება —
+    ლიმიტის შემოწმების შემდეგ.
     """
     # მაღაზიების ჭერი — მფლობელის უმაღლესი პაკეტის მიხედვით (free/basic=1, standard=2, business=∞)
     existing = run(
@@ -98,7 +99,7 @@ def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_aut
     # per-account: ახალი მაღაზია მემკვიდრეობით იღებს მფლობელის მიმდინარე პაკეტს —
     # ერთი გამოწერა ფარავს ყველა მაღაზიას (მაგ. სტანდარტის მე-2 მაღაზია ცალკე გადახდას არ ითხოვს)
     data["subscription_tier"] = best_tier(tiers)
-    res = run(auth.client.table("shops").insert(data))
+    res = run(get_service_client().table("shops").insert(data))
     if not res.data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მაღაზიის შექმნა ვერ მოხერხდა")
     return res.data[0]
@@ -208,8 +209,9 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     """გამყიდველი აუქმებს გამოწერას → მთელი ანგარიში (ყველა მისი მაღაზია) უფასოზე ბრუნდება.
 
     გამოწერა per-account-ია (ერთი გადახდა ფარავს ყველა მაღაზიას), ამიტომ გაუქმებაც
-    ყველა მაღაზიას ეხება. უფასოზე გადასვლა პრივილეგიის აწევა არ არის → RLS-ის ქვეშ,
-    გამყიდვლის საკუთარი client-ითვე. pending upgrade მოთხოვნებიც უქმდება.
+    ყველა მაღაზიას ეხება. subscription_tier / bot_enabled გამყიდველს ჩაწერად
+    არ აქვს (0015) → service_role-ით, ყოველთვის `owner_id = auth.user_id` ფილტრით.
+    pending upgrade მოთხოვნებიც უქმდება.
 
     ⚠️ რევიუ P1-6 — ლიმიტების გავრცელება არსებულ მაღაზიებზე:
     ადრე downgrade მხოლოდ ტარიფს ცვლიდა და ხუთივე მაღაზიის ბოტი აგრძელებდა
@@ -222,7 +224,9 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     ბოტი ყველაზე ძველ მაღაზიებზე რჩება ჩართული (რაც უფრო სავარაუდოა მთავარი).
     """
     res = run(
-        auth.client.table("shops").update({"subscription_tier": "free"}).eq("owner_id", auth.user_id)
+        get_service_client().table("shops")
+        .update({"subscription_tier": "free"})
+        .eq("owner_id", auth.user_id)
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
@@ -242,6 +246,7 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
                 (
                     get_service_client().table("shops")
                     .update({"bot_enabled": False})
+                    .eq("owner_id", auth.user_id)
                     .in_("id", [r["id"] for r in excess])
                     .execute()
                 )

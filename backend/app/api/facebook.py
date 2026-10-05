@@ -275,11 +275,19 @@ def data_deletion_status(code: str):
 
 @router.post("/disconnect")
 def disconnect(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
-    """გვერდის გათიშვა — ასუფთავებს page მონაცემებს და თიშავს ბოტს."""
+    """გვერდის გათიშვა — ასუფთავებს page მონაცემებს და თიშავს ბოტს.
+
+    ეს სვეტები გამყიდველს ჩაწერადი არ აქვს (0015) → მფლობელობა RLS-ით, ჩაწერა
+    service_role-ით (owner_id ფილტრით).
+    """
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     res = run(
-        auth.client.table("shops")
+        get_service_client().table("shops")
         .update({"facebook_page_id": None, "facebook_page_token": None, "instagram_account_id": None, "bot_enabled": False})
         .eq("id", str(shop_id))
+        .eq("owner_id", auth.user_id)
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")

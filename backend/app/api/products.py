@@ -57,7 +57,7 @@ def _product_limit_left(auth, shop_id) -> int | None:
             .eq("id", str(shop_id)).limit(1).execute()
         )
         if not shop.data:
-            return None  # მაღაზია არ არის მისი — ჩაწერას RLS ისედაც დაბლოკავს
+            return None  # მაღაზია არ ჩანს — გამომძახებლები მფლობელობას აქამდე ცალკე ამოწმებენ
         limit = limits_for(shop.data[0].get("subscription_tier"))["products"]
         if limit is None:
             return None  # ულიმიტო პაკეტი
@@ -86,15 +86,19 @@ def _product_limit_left(auth, shop_id) -> int | None:
 
 @router.post("", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
 def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_current_auth)):
-    """ამატებს პროდუქტს. RLS insert პოლისი ამოწმებს, რომ shop_id მომხმარებლის
-    მაღაზიას ეკუთვნის — სხვისი მაღაზიისთვის ჩაწერა 403-ით ჩავარდება."""
+    """ამატებს პროდუქტს. INSERT გამყიდველს ჩამორთმეული აქვს (0015) და ჩაწერა
+    service_role-ით ხდება (RLS-ის გარეშე), ამიტომ მფლობელობა აქ ცალკე მოწმდება —
+    ლიმიტის ლოგიკამდე. სხვისი მაღაზია → 404."""
+    owns = run(auth.client.table("shops").select("id").eq("id", str(payload.shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     left = _product_limit_left(auth, payload.shop_id)
     if left is not None and left <= 0:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "პაკეტის ლიმიტს მიაღწიე — მეტი პროდუქტისთვის განაახლე პაკეტი.",
         )
-    res = run(auth.client.table("products").insert(payload.model_dump(mode="json")))
+    res = run(get_service_client().table("products").insert(payload.model_dump(mode="json")))
     if not res.data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "პროდუქტის შექმნა ვერ მოხერხდა")
     return res.data[0]
@@ -190,7 +194,7 @@ async def import_products(
     if len(content) > MAX_IMPORT_BYTES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ძალიან დიდია (მაქს. 5MB)")
 
-    # მაღაზია მომხმარებლის უნდა იყოს (RLS-იც ამოწმებს, მაგრამ ნათელი შეცდომისთვის)
+    # მაღაზია მომხმარებლის უნდა იყოს — insert service_role-ით ხდება, ამიტომ ეს სავალდებულოა
     owns = run(
         auth.client.table("shops").select("id,subscription_tier").eq("id", str(shop_id)).limit(1)
     )
@@ -286,7 +290,7 @@ async def import_products(
     if to_insert:
         for p in to_insert:
             p["shop_id"] = str(shop_id)
-        res = run(auth.client.table("products").insert(to_insert))
+        res = run(get_service_client().table("products").insert(to_insert))
         added = len(res.data or [])
 
     return {
