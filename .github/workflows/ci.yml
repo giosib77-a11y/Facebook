@@ -18,7 +18,9 @@ jobs:
         with:
           python-version: "3.14.3"
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt
+        run: pip install -r requirements.lock.txt -r requirements-dev.txt
+      - name: Dependency check
+        run: pip check
       - name: Compile check
         run: python -m compileall -q app
       - name: Tests
