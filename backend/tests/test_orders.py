@@ -77,3 +77,89 @@ def test_o5_valid_order_at_limit_accepted(client, service_db):
     assert len(service_db.rpc_calls) == 1
     assert service_db.rpc_calls[0].fn == "decrement_stock"
     assert len(service_db.calls_for("orders", "insert")) == 1
+
+
+# ---------- F-06: re-opening a cancelled order takes stock atomically ----------
+from postgrest.exceptions import APIError  # noqa: E402
+
+ORDER_ID = "55555555-5555-5555-5555-555555555555"
+ORDER_ITEMS = [{"product_id": PRODUCT_ID, "name": "Test Product", "price": 5, "quantity": 2}]
+
+
+def _order_row(status):
+    return {
+        "id": ORDER_ID,
+        "shop_id": SHOP_ID,
+        "customer_name": "Buyer",
+        "items": ORDER_ITEMS,
+        "total": 10,
+        "status": status,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+
+
+def _setup_status_change(user_db, service_db, old_status, new_status, update_matches=True):
+    user_db.responses[("orders", "select")] = [
+        {"status": old_status, "items": ORDER_ITEMS, "shop_id": SHOP_ID}
+    ]
+    if update_matches:
+        user_db.responses[("orders", "update")] = [_order_row(new_status)]
+    service_db.responses[("products", "select")] = [{"id": PRODUCT_ID}]
+
+
+def _rpcs(db, fn):
+    return [c for c in db.rpc_calls if c.fn == fn]
+
+
+def test_s1_reopen_with_enough_stock_decrements_atomically(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "cancelled", "new")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+    assert res.status_code == 200, res.text
+    dec = _rpcs(service_db, "decrement_stock")
+    assert len(dec) == 1
+    assert dec[0].params == {
+        "p_shop_id": SHOP_ID,
+        "p_items": [{"product_id": PRODUCT_ID, "quantity": 2}],
+    }
+    assert len(user_db.calls_for("orders", "update")) == 1
+    assert _rpcs(service_db, "apply_stock_delta") == []
+
+
+def test_s2_reopen_with_insufficient_stock_rejected(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "cancelled", "new")
+    service_db.rpc_errors["decrement_stock"] = APIError(
+        {"message": "INSUFFICIENT_STOCK|Test Product|1", "code": "P0001"}
+    )
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == (
+        "შეკვეთის აღდგენა შეუძლებელია — მარაგი არასაკმარისია: Test Product"
+    )
+    assert user_db.calls_for("orders", "update") == []
+    assert _rpcs(service_db, "apply_stock_delta") == []
+
+
+def test_s3_reopen_status_conflict_returns_taken_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "cancelled", "new", update_matches=False)
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+    assert res.status_code == 409, res.text
+    assert "სტატუსი ამასობაში შეიცვალა" in res.json()["detail"]
+    assert len(_rpcs(service_db, "decrement_stock")) == 1
+    comp = _rpcs(service_db, "apply_stock_delta")
+    assert len(comp) == 1
+    assert comp[0].params == {
+        "p_shop_id": SHOP_ID,
+        "p_items": [{"product_id": PRODUCT_ID, "quantity": 2}],
+        "p_sign": 1,
+    }
+
+
+def test_s4_cancel_still_returns_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "cancelled")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
+    assert res.status_code == 200, res.text
+    assert _rpcs(service_db, "decrement_stock") == []
+    delta = _rpcs(service_db, "apply_stock_delta")
+    assert len(delta) == 1
+    assert delta[0].params["p_sign"] == 1

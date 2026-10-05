@@ -113,6 +113,66 @@ def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
         sc.table("products").update({"quantity": new_q}).eq("id", r["id"]).execute()
 
 
+def _take_stock_for_reopen(sc, shop_id: str, items: list) -> list:
+    """გაუქმებულის ხელახლა გახსნა (F-06): მარაგის ატომური აღება decrement_stock-ით
+    (ყველაფერი ან არაფერი) — apply_stock_delta(-1)-ის greatest(0, …) აღარ მალავს დეფიციტს.
+
+    წაშლილ პროდუქტს ვტოვებთ (როგორც ძველ გზაზე). აბრუნებს რეალურად დაკლებულ
+    ჩანაწერებს — კომპენსაციისთვის. არასაკმარის მარაგზე → 409, მარაგი უცვლელი.
+    """
+    agg: dict[str, int] = {}
+    for it in items:
+        pid = it.get("product_id")
+        qty = int(it.get("quantity", 0))
+        if pid and qty > 0:
+            agg[pid] = agg.get(pid, 0) + qty
+    if not agg:
+        return []
+    existing = {
+        r["id"]
+        for r in sc.table("products")
+        .select("id")
+        .eq("shop_id", str(shop_id))
+        .in_("id", list(agg.keys()))
+        .execute()
+        .data
+    }
+    req_items = [{"product_id": k, "quantity": v} for k, v in agg.items() if k in existing]
+    if not req_items:
+        return []
+    try:
+        sc.rpc("decrement_stock", {"p_shop_id": str(shop_id), "p_items": req_items}).execute()
+    except APIError as e:
+        msg = getattr(e, "message", None) or str(e)
+        m = re.search(r"INSUFFICIENT_STOCK\|(.*?)\|(\d+)", msg)
+        if m:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"შეკვეთის აღდგენა შეუძლებელია — მარაგი არასაკმარისია: {m.group(1)}",
+            )
+        if "PRODUCT_NOT_FOUND" in msg:
+            # პროდუქტი წაიშალა შემოწმებასა და დაკლებას შორის
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "შეკვეთის პროდუქტები ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
+            )
+        logger.warning("decrement_stock (reopen) ჩავარდა (shop=%s): %s", shop_id, msg)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მარაგის განახლება ვერ მოხერხდა")
+    return req_items
+
+
+def _return_reopen_stock(shop_id: str, taken: list) -> None:
+    """ხელახლა გახსნისთვის აღებული მარაგის დაბრუნება, თუ სტატუსი ვერ განახლდა."""
+    try:
+        _apply_stock_delta(get_service_client(), shop_id, taken, +1)
+    except Exception:
+        logger.exception(
+            "მარაგის კომპენსაცია ჩავარდა შეკვეთის აღდგენის ჩავარდნის შემდეგ "
+            "(shop=%s) — მარაგი ხელით უნდა გასწორდეს: %s",
+            shop_id, taken,
+        )
+
+
 # ---------- საჯარო (კლიენტი, ავტორიზაციის გარეშე) ----------
 @router.get("/public-menu", dependencies=[Depends(rate_limit("public_menu", limit=60, window=60))])
 def public_menu(shop_id: uuid.UUID):
@@ -293,7 +353,8 @@ def update_order_status(
     auth: CurrentAuth = Depends(get_current_auth),
 ):
     """შეკვეთის სტატ უსის შეცვლა (RLS-ით მხოლოდ საკუთარი).
-    გაუქმებაზე მარაგი უკან ბრუნდება; გაუქმებულის ხელახლა გახსნაზე — ისევ აკლდება."""
+    გაუქმებაზე მარაგი უკან ბრუნდება; გაუქმებულის ხელახლა გახსნაზე — ისევ აკლდება
+    (ატომურად; არასაკმარის მარაგზე 409)."""
     # მიმდინარე მდგომარეობა (RLS ადასტურებს მფლობელობას)
     cur = run(
         auth.client.table("orders")
@@ -308,27 +369,38 @@ def update_order_status(
     shop_id = cur.data[0]["shop_id"]
     new_status = payload.status
 
+    # გაუქმებულის ხელახლა გახსნა (F-06): მარაგი ჯერ ატომურად ავიღოთ — თუ არ
+    # ჰყოფნის, 409 და სტატუსი „cancelled" რჩება.
+    taken: list = []
+    if old_status == "cancelled" and new_status != "cancelled":
+        taken = _take_stock_for_reopen(get_service_client(), shop_id, items)
+
     # ⚠️ ოპტიმისტური ჩაკეტვა (რევიუ P1-4): განახლება მხოლოდ მაშინ გაივლის, თუ
     # სტატუსი ისევ ის არის, რაც ზემოთ წავიკითხეთ. ამის გარეშე ორი ერთდროული
     # მოთხოვნა (ორი ტაბი/მოწყობილობა) ორივე გაივლიდა და მარაგი ორჯერ დაბრუნდებოდა.
-    res = run(
-        auth.client.table("orders")
-        .update({"status": new_status})
-        .eq("id", str(order_id))
-        .eq("status", old_status)
-    )
+    try:
+        res = run(
+            auth.client.table("orders")
+            .update({"status": new_status})
+            .eq("id", str(order_id))
+            .eq("status", old_status)
+        )
+    except Exception:
+        if taken:
+            _return_reopen_stock(shop_id, taken)
+        raise
     if not res.data:
+        if taken:
+            _return_reopen_stock(shop_id, taken)
         # ჩანაწერი არსებობს (ზემოთ წავიკითხეთ), ე.ი. სტატუსი სხვამ შეცვალა.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "შეკვეთის სტატუსი ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
         )
 
-    # მარაგის კორექცია სტატ უსის ცვლილებაზე
+    # გაუქმებაზე მარაგის დაბრუნება (ხელახლა გახსნისას მარაგი უკვე ზემოთ აიღო)
     if new_status == "cancelled" and old_status != "cancelled":
-        _apply_stock_delta(get_service_client(), shop_id, items, +1)  # დაბრუნება
-    elif old_status == "cancelled" and new_status != "cancelled":
-        _apply_stock_delta(get_service_client(), shop_id, items, -1)  # ისევ გამოკლება
+        _apply_stock_delta(get_service_client(), shop_id, items, +1)
 
     return res.data[0]
 

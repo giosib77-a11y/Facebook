@@ -88,6 +88,8 @@ class FakeRpc:
 
     def execute(self):
         self._db.rpc_calls.append(self)
+        if self.fn in self._db.rpc_errors:
+            raise self._db.rpc_errors[self.fn]
         return FakeResult(None)
 
 
@@ -99,6 +101,7 @@ class FakeSupabase:
         self.responses: dict[tuple[str, str], list] = {}
         self.counts: dict[tuple[str, str], int] = {}
         self.rpc_calls: list[FakeRpc] = []
+        self.rpc_errors: dict[str, Exception] = {}  # fn name → exception raised on execute()
 
     def table(self, name):
         return FakeQuery(self, name)
