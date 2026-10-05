@@ -38,13 +38,20 @@ export const fbRedirectResult = (() => {
   const params = new URLSearchParams(window.location.search);
   const fb = params.get("fb");
   if (!fb) return null;
-  const out = { fb, page: params.get("page"), reason: params.get("reason") };
+  const out = { fb, page: params.get("page"), reason: params.get("reason"), bot: params.get("bot") };
   window.history.replaceState({}, "", window.location.pathname);
   return out;
 })();
 
 /** შედეგის ერთიანი გამზადება toast-ისთვის (popup და fallback ერთნაირად) */
 export function fbResultMessage(d) {
+  if (d.fb === "connected" && d.bot === "limit") {
+    return {
+      msg: "გვერდი დაკავშირდა, მაგრამ ბოტი გამორთულია — თქვენი პაკეტი ამდენ მაღაზიას არ მოიცავს. ბოტის ჩასართავად განაახლეთ პაკეტი.",
+      isErr: true,
+      reload: true,
+    };
+  }
   if (d.fb === "connected") {
     return { msg: "Facebook გვერდი დაკავშირდა: " + (d.page || ""), isErr: false, reload: true };
   }

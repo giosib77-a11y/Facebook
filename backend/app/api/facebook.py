@@ -17,6 +17,7 @@ from app.core.crypto import encrypt
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
+from app.core.tiers import owner_shop_limit
 from app.services import facebook as fb
 
 router = APIRouter(prefix="/facebook", tags=["facebook connect"])
@@ -164,12 +165,28 @@ def connect_callback(
         pass
 
     sc = get_service_client()
+
+    # F-05: ხელახალი დაკავშირება პაკეტის ლიმიტს არ უნდა გვერდს უვლიდეს — downgrade-ის
+    # შემდეგ disconnect→connect ბოტს უფასოდ ვეღარ დააბრუნებს. ბოტი ირთვება მხოლოდ
+    # მაშინ, თუ მფლობელის სხვა აქტიური ბოტები მისი პაკეტის ჭერს ჯერ არ აღწევს.
+    try:
+        owned = (
+            sc.table("shops").select("id, subscription_tier, bot_enabled")
+            .eq("owner_id", data["user_id"]).execute().data or []
+        )
+    except Exception:
+        logger.exception("მფლობელის მაღაზიების წაკითხვა ჩავარდა (shop=%s)", data.get("shop_id"))
+        return _finish("error", reason="save_failed")
+    limit = owner_shop_limit([s.get("subscription_tier") for s in owned])
+    active = sum(1 for s in owned if s.get("bot_enabled") and str(s.get("id")) != str(data["shop_id"]))
+    bot_allowed = limit is None or active < limit
+
     upd = {
         "facebook_page_id": page_id,
         "facebook_page_token": encrypt(page_token),
         "instagram_account_id": ig_account_id,
         "facebook_user_id": fb_user_id,
-        "bot_enabled": True,
+        "bot_enabled": bot_allowed,
     }
 
     def _save(payload: dict):
@@ -206,6 +223,8 @@ def connect_callback(
         )
         return _finish("error", reason="shop_not_found")
 
+    if not bot_allowed:
+        return _finish("connected", page=page_name, bot="limit")
     return _finish("connected", page=page_name)
 
 
