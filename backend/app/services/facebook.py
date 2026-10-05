@@ -33,6 +33,49 @@ def _graph_base() -> str:
     return f"https://graph.facebook.com/{get_settings().fb_graph_version}"
 
 
+class GraphError(Exception):
+    """Graph API-ის ჩავარდნილი გამოძახება — მხოლოდ HTTP სტატუსი და მოკლე ტექსტი.
+
+    ⚠️ F-10: httpx-ის შეცდომის ტექსტში მთელი request URL ზის query string-ით,
+    ე.ი. client_secret ან access_token. ეს კლასი URL-ს არ ინახავს, ამიტომ
+    str()/repr() უსაფრთხოა როგორც ლოგისთვის, ისე პასუხისთვის.
+    """
+
+    def __init__(self, status_code: int | None, message: str):
+        super().__init__(status_code, message)
+        self.status_code = status_code
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def _graph_error_message(r: httpx.Response) -> str:
+    """Graph-ის JSON error.message (მაქს. 200 სიმბოლო), თუ არა — "HTTP <status>"."""
+    try:
+        message = r.json().get("error", {}).get("message")
+    except (ValueError, AttributeError):  # არა-JSON ან სხვა ფორმის პასუხი
+        message = None
+    if isinstance(message, str) and message:
+        return message[:200]
+    return f"HTTP {r.status_code}"
+
+
+def _graph(method: str, path: str, **kwargs) -> httpx.Response:
+    """ყველა Graph-გამოძახება აქ გადის `r.raise_for_status()`-ის ნაცვლად (F-10).
+
+    httpx-ის შეცდომას (URL-ით, secret-ით/token-ით) GraphError ცვლის. `from None`
+    აუცილებელია — თორემ ორიგინალი შეცდომა traceback-სა და ლოგში ჩაჯაჭვდებოდა.
+    """
+    try:
+        r = httpx.request(method, f"{_graph_base()}{path}", **kwargs)
+    except httpx.RequestError:
+        raise GraphError(None, "network error") from None
+    if not r.is_success:
+        raise GraphError(r.status_code, _graph_error_message(r)) from None
+    return r
+
+
 # ---------------------------------------------------------------------------
 # X-Hub-Signature-256 ვერიფიკაცია
 # ---------------------------------------------------------------------------
@@ -126,8 +169,8 @@ def build_login_url(state: str) -> str:
 def exchange_code_for_token(code: str) -> str:
     """authorization code -> short-lived user access token."""
     s = get_settings()
-    r = httpx.get(
-        f"{_graph_base()}/oauth/access_token",
+    r = _graph(
+        "GET", "/oauth/access_token",
         params={
             "client_id": s.fb_app_id,
             "client_secret": s.fb_app_secret,
@@ -136,15 +179,14 @@ def exchange_code_for_token(code: str) -> str:
         },
         timeout=15,
     )
-    r.raise_for_status()
     return r.json()["access_token"]
 
 
 def exchange_for_long_lived(user_token: str) -> str:
     """short-lived -> long-lived user token (page token-ებიც გრძელვადიანი ხდება)."""
     s = get_settings()
-    r = httpx.get(
-        f"{_graph_base()}/oauth/access_token",
+    r = _graph(
+        "GET", "/oauth/access_token",
         params={
             "grant_type": "fb_exchange_token",
             "client_id": s.fb_app_id,
@@ -153,50 +195,45 @@ def exchange_for_long_lived(user_token: str) -> str:
         },
         timeout=15,
     )
-    r.raise_for_status()
     return r.json()["access_token"]
 
 
 def get_user_pages(user_token: str) -> list[dict]:
     """მომხმარებლის გვერდები + page access token-ები."""
-    r = httpx.get(
-        f"{_graph_base()}/me/accounts",
+    r = _graph(
+        "GET", "/me/accounts",
         params={"access_token": user_token, "fields": "id,name,access_token"},
         timeout=15,
     )
-    r.raise_for_status()
     return r.json().get("data", [])
 
 
 def get_user_id(user_token: str) -> str | None:
     """დამაკავშირებელი Facebook მომხმარებლის app-scoped ID (Data Deletion callback-ისთვის)."""
-    r = httpx.get(
-        f"{_graph_base()}/me",
+    r = _graph(
+        "GET", "/me",
         params={"access_token": user_token, "fields": "id"},
         timeout=15,
     )
-    r.raise_for_status()
     return r.json().get("id")
 
 
 def subscribe_page(page_id: str, page_token: str) -> None:
     """გვერდს აწერს ჩვენს app-ს webhook-ზე (messages ველი)."""
-    r = httpx.post(
-        f"{_graph_base()}/{page_id}/subscribed_apps",
+    _graph(
+        "POST", f"/{page_id}/subscribed_apps",
         params={"access_token": page_token, "subscribed_fields": "messages,messaging_postbacks"},
         timeout=15,
     )
-    r.raise_for_status()
 
 
 def get_page_instagram_account(page_id: str, page_token: str) -> str | None:
     """გვერდზე მიბმული Instagram Business ანგარიშის ID (თუ არსებობს)."""
-    r = httpx.get(
-        f"{_graph_base()}/{page_id}",
+    r = _graph(
+        "GET", f"/{page_id}",
         params={"access_token": page_token, "fields": "instagram_business_account"},
         timeout=15,
     )
-    r.raise_for_status()
     iba = r.json().get("instagram_business_account")
     return iba.get("id") if iba else None
 
@@ -205,8 +242,8 @@ def get_page_instagram_account(page_id: str, page_token: str) -> str | None:
 # Send API
 # ---------------------------------------------------------------------------
 def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
-    r = httpx.post(
-        f"{_graph_base()}/me/messages",
+    _graph(
+        "POST", "/me/messages",
         params={"access_token": page_token},
         json={
             "recipient": {"id": recipient_id},
@@ -215,7 +252,6 @@ def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
         },
         timeout=20,
     )
-    r.raise_for_status()
 
 
 # ---------------------------------------------------------------------------

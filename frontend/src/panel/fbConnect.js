@@ -65,10 +65,16 @@ export function fbResultMessage(d) {
     save_failed: "გვერდის შენახვა ვერ მოხერხდა — სცადე ცოტა ხანში.",
     invalid_state: "ბმულს ვადა გაუვიდა — დააჭირე „დაკავშირებას“ ხელახლა.",
     missing_code: "Facebook-მა დაკავშირება არ დაასრულა — სცადე ხელახლა.",
+    fb_denied: "დაკავშირება გაუქმდა ან Facebook-მა უარი თქვა. სცადეთ თავიდან.",
+    graph_failed: "Facebook-თან დაკავშირება ვერ მოხერხდა. სცადეთ თავიდან.",
+    subscribe_failed: "გვერდის გამოწერა ვერ მოხერხდა. სცადეთ თავიდან.",
   };
-  const known = REASONS[d.reason];
+  // ⚠️ F-10: reason-ის ნედლი ტექსტი ეკრანზე არასდროს გამოჩნდება — ის URL-იდან ან
+  // postMessage-იდან მოდის და ადრე backend-ის შეცდომას (secret-იანად) ატარებდა.
+  // hasOwn — რომ "toString"-ის მსგავსმა reason-მა prototype-იდან რამე არ ამოიღოს.
+  const known = Object.hasOwn(REASONS, d.reason) ? REASONS[d.reason] : null;
   return {
-    msg: known || "დაკავშირება ვერ მოხერხდა: " + (d.reason || d.fb),
+    msg: known || "დაკავშირება ვერ მოხერხდა. სცადეთ თავიდან.",
     isErr: true,
     reload: false,
   };

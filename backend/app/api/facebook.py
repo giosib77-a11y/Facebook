@@ -34,6 +34,17 @@ def _public_base() -> str:
     return s.frontend_url.rstrip("/")
 
 
+def _script_json(value) -> str:
+    """JSON inline <script>-ისთვის. ⚠️ `<`, `>`, `&` escape-დება, რომ მონაცემმა
+    (`</script>`-ით) ტეგი ვერ დახუროს — reflected XSS. JS-ში მნიშვნელობა იგივე რჩება."""
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
 def _finish(result: str, **params) -> HTMLResponse:
     """ამთავრებს OAuth-ს: თუ popup-ია, შეტყობინებას უგზავნის მთავარ ფანჯარას დაიხურება;
     თუ არა (popup დაბლოკილი), მთავარ პანელზე გადაამისამართებს (fallback)."""
@@ -52,12 +63,12 @@ def _finish(result: str, **params) -> HTMLResponse:
     html = (
         "<!doctype html><html><head><meta charset='utf-8'></head>"
         "<body style='font-family:sans-serif;text-align:center;padding:40px'>"
-        "<p>მუშავდება, დაიცადეთ...</p><script>(function(){var msg=" + json.dumps(data) + ";"
-        "var origins=" + json.dumps(allowed) + ";"
+        "<p>მუშავდება, დაიცადეთ...</p><script>(function(){var msg=" + _script_json(data) + ";"
+        "var origins=" + _script_json(allowed) + ";"
         "try{if(window.opener&&!window.opener.closed){"
         "for(var i=0;i<origins.length;i++){try{window.opener.postMessage(msg,origins[i]);}catch(e){}}"
         "window.close();return;}}catch(e){}"
-        "window.location.replace(" + json.dumps(fallback) + ");})();</script></body></html>"
+        "window.location.replace(" + _script_json(fallback) + ");})();</script></body></html>"
     )
     return HTMLResponse(html)
 
@@ -125,8 +136,13 @@ def connect_callback(
     error: str | None = Query(default=None),
 ):
     """Facebook-ის redirect: code -> page token -> შენახვა shop-ში + webhook subscribe."""
-    if error or not code or not state:
-        return _finish("error", reason=error or "missing_code")
+    if error:
+        # ⚠️ `error` პასუხში არასდროს აირეკლება (reflected XSS) — მხოლოდ ლოგში, მოჭრილი.
+        # %r — ახალი ხაზით ყალბ ლოგ-ჩანაწერს ვერ ჩაწერს.
+        logger.warning("Facebook-მა OAuth შეცდომა დააბრუნა: %r", error[:100])
+        return _finish("error", reason="fb_denied")
+    if not code or not state:
+        return _finish("error", reason="missing_code")
 
     data = fb.verify_state(state)
     if not data:
@@ -136,8 +152,11 @@ def connect_callback(
         user_token = fb.exchange_code_for_token(code)
         user_token = fb.exchange_for_long_lived(user_token)
         pages = fb.get_user_pages(user_token)
-    except Exception as e:
-        return _finish("error", reason=f"graph:{e}")
+    except Exception as err:
+        # ⚠️ F-10: შეცდომის ტექსტი ბრაუზერს არ ეგზავნება (მასში client_secret ან
+        # token შეიძლება იყოს) — მხოლოდ ფიქსირებული კოდი; დეტალი სერვერის ლოგში.
+        logger.warning("Facebook token-ის/გვერდების მიღება ვერ მოხერხდა: %s", err)
+        return _finish("error", reason="graph_failed")
 
     if not pages:
         return _finish("no_pages")
@@ -147,8 +166,9 @@ def connect_callback(
 
     try:
         fb.subscribe_page(page_id, page_token)
-    except Exception as e:
-        return _finish("error", reason=f"subscribe:{e}")
+    except Exception as err:
+        logger.warning("გვერდის webhook-ზე გამოწერა ვერ მოხერხდა (page=%s): %s", page_id, err)
+        return _finish("error", reason="subscribe_failed")
 
     # გვერდზე მიბმული Instagram Business ანგარიში (თუ არსებობს) — IG-ბოტისთვის
     ig_account_id = None
