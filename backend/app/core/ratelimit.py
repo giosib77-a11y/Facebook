@@ -7,22 +7,41 @@ In-memory, per-IP sliding window. ერთი პროცესისთვი
     from app.core.ratelimit import rate_limit
     @router.post("/orders", dependencies=[Depends(rate_limit("orders", limit=20, window=60))])
 """
+import logging
 import time
 from collections import defaultdict, deque
 
 from fastapi import HTTPException, Request, status
 
+from app.config import get_settings
+
+logger = logging.getLogger("app")
+
 # bucket -> (ip -> deque[timestamps])
 _HITS: dict[str, dict[str, deque]] = defaultdict(lambda: defaultdict(deque))
 # პერიოდული გაწმენდის მრიცხველი (მეხსიერება არ გაიბეროს)
 _last_sweep = [time.monotonic()]
+# გაფრთხილება „header აკლია" — პროცესზე მაქსიმუმ ერთხელ
+_warned_missing_header = [False]
 
 
 def _client_ip(request: Request) -> str:
-    """რეალური IP — reverse proxy-ს (Render/Railway/Cloudflare) გავითვალისწინებთ."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """რეალური IP — proxy-ს სანდო header-იდან (CLIENT_IP_HEADER), თორემ socket peer.
+
+    X-Forwarded-For-ის პირველი ელემენტი კლიენტის კონტროლშია, ამიტომ არ იკითხება.
+    """
+    settings = get_settings()
+    header = (settings.client_ip_header or "").strip()
+    if header:
+        value = (request.headers.get(header) or "").split(",")[0].strip()
+        if value:
+            return value
+        if settings.is_production and not _warned_missing_header[0]:
+            _warned_missing_header[0] = True
+            logger.warning(
+                "rate limit: header %r missing — falling back to peer address; "
+                "all clients may share one limit bucket", header,
+            )
     return request.client.host if request.client else "unknown"
 
 

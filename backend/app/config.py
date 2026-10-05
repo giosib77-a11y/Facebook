@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # production-ში .env-ში: CORS_ORIGINS="https://shendomen.ge"
     cors_origins: str = "*"
 
+    # Rate limiter-ის კლიენტის IP — proxy-ს მიერ დაყენებული header (Cloudflare → CF-Connecting-IP).
+    # X-Forwarded-For აღარ იკითხება (კლიენტს შეუძლია გააყალბოს). ცარიელი = მხოლოდ socket peer.
+    client_ip_header: str = "cf-connecting-ip"
+
     # Gemini (ბოტი — ნაბიჯი 4)
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"

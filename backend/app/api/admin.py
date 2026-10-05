@@ -6,10 +6,11 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.core.ratelimit import _client_ip
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.core.tiers import (
@@ -129,6 +130,21 @@ def _restore_bots(sc, owner_id: str, tier: str) -> int:
 def check(admin: CurrentAuth = Depends(get_current_admin)):
     """მსუბუქი შემოწმება — ადმინია თუ არა (frontend ამით აჩენს „ადმინი" ღილაკს)."""
     return {"is_admin": True}
+
+
+@router.get("/client-ip")
+def client_ip(request: Request, admin: CurrentAuth = Depends(get_current_admin)):
+    """დიაგნოსტიკა — proxy-ის IP header-ები და რას ხედავს rate limiter. მხოლოდ ეს ველები."""
+    h = request.headers
+    return {
+        "x_forwarded_for": h.get("x-forwarded-for"),
+        "cf_connecting_ip": h.get("cf-connecting-ip"),
+        "true_client_ip": h.get("true-client-ip"),
+        "x_real_ip": h.get("x-real-ip"),
+        "peer": request.client.host if request.client else None,
+        "resolved": _client_ip(request),
+        "client_ip_header": get_settings().client_ip_header,
+    }
 
 
 @router.get("/overview")
