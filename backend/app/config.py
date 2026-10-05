@@ -51,8 +51,9 @@ class Settings(BaseSettings):
     # საჯარო base URL (პანელი/ფორმა აქედან იხსნება). ცარიელია → fb_redirect_uri-დან გამოითვლება.
     public_base_url: str = ""
 
-    # ადმინ პანელის მფლობელი — მხოლოდ ეს email ხედავს /admin-ს (override .env-ში ADMIN_EMAIL-ით)
-    admin_email: str = "giosib77@gmail.com"
+    # ადმინ პანელის მფლობელები — Supabase user UUID-ები, მძიმით (.env-ში ADMIN_USER_IDS).
+    # ცარიელი = ადმინი არავინაა (fail closed). email სტაბილური იდენტობა არ არის.
+    admin_user_ids: str = ""
 
     # გადახდის რეკვიზიტები (გამოწერისთვის) — შეავსე .env-ში PAYMENT_IBAN / PAYMENT_CONTACT-ით
     payment_iban: str = "[შენი ანგარიშის ნომერი — შეავსე PAYMENT_IBAN]"
@@ -75,6 +76,11 @@ class Settings(BaseSettings):
         if not raw or raw == "*":
             return ["*"]
         return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @property
+    def admin_user_id_set(self) -> set[str]:
+        """ADMIN_USER_IDS → stripped, lower-cased, non-empty UUID-ების set."""
+        return {u.strip().lower() for u in (self.admin_user_ids or "").split(",") if u.strip()}
 
 
 @lru_cache

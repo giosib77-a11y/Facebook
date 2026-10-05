@@ -1,6 +1,6 @@
 """Admin endpoints — SaaS მფლობელისთვის (ყველა მაღაზიის ხედვა).
 
-წვდომა მხოლოდ ADMIN_EMAIL-ის მქონე ანგარიშს აქვს. მონაცემები service_role-ით
+წვდომა მხოლოდ ADMIN_USER_IDS-ში ჩაწერილ ანგარიშებს აქვს. მონაცემები service_role-ით
 იკითხება (RLS-ს გვერდს უვლის), ამიტომ admin-შემოწმება კრიტიკულია.
 """
 import logging
@@ -39,10 +39,18 @@ class ResolveRequest(BaseModel):
     approve: bool
 
 
+_warned_no_admins = False
+
+
 def get_current_admin(auth: CurrentAuth = Depends(get_current_auth)) -> CurrentAuth:
-    """ამოწმებს, რომ ავტორიზებული მომხმარებელი ADMIN_EMAIL-ია."""
-    admin_email = (get_settings().admin_email or "").strip().lower()
-    if not admin_email or (auth.email or "").strip().lower() != admin_email:
+    """ამოწმებს, რომ ავტორიზებული მომხმარებლის user_id ADMIN_USER_IDS-შია."""
+    global _warned_no_admins
+    settings = get_settings()
+    admin_ids = settings.admin_user_id_set
+    if not admin_ids and settings.is_production and not _warned_no_admins:
+        _warned_no_admins = True
+        logger.warning("ADMIN_USER_IDS is empty in production — admin panel is disabled")
+    if (auth.user_id or "").strip().lower() not in admin_ids:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "წვდომა მხოლოდ ადმინისთვის")
     return auth
 
