@@ -163,3 +163,71 @@ def test_s4_cancel_still_returns_stock(client, user_db, service_db):
     delta = _rpcs(service_db, "apply_stock_delta")
     assert len(delta) == 1
     assert delta[0].params["p_sign"] == 1
+
+
+# ---------- F-07: only terminal orders can be deleted (stock stays reserved) ----------
+ACTIVE_DELETE_MSG = (
+    "აქტიური შეკვეთის წაშლა შეუძლებელია — ჯერ გააუქმეთ შეკვეთა (მარაგი დაბრუნდება)."
+)
+
+
+def _setup_delete(user_db, status):
+    """`status=None` → order doesn't exist. The fake ignores filters, so the DELETE
+    result is set to what Postgres would return for `status IN (done, cancelled)`."""
+    if status is None:
+        return
+    user_db.responses[("orders", "select")] = [{"id": ORDER_ID}]
+    if status in ("done", "cancelled"):
+        user_db.responses[("orders", "delete")] = [_order_row(status)]
+
+
+def _assert_delete_filtered(user_db):
+    dq = user_db.calls_for("orders", "delete")
+    assert len(dq) == 1
+    assert ("eq", "id", ORDER_ID) in dq[0].filters
+    assert ("in", "status", ["done", "cancelled"]) in dq[0].filters
+
+
+def test_d1_delete_new_order_rejected(client, user_db, service_db):
+    _setup_delete(user_db, "new")
+    res = client.delete(f"/orders/{ORDER_ID}")
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == ACTIVE_DELETE_MSG
+    _assert_delete_filtered(user_db)
+    assert service_db.rpc_calls == []
+    assert user_db.rpc_calls == []
+
+
+def test_d2_delete_processing_order_rejected(client, user_db, service_db):
+    _setup_delete(user_db, "processing")
+    res = client.delete(f"/orders/{ORDER_ID}")
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == ACTIVE_DELETE_MSG
+    _assert_delete_filtered(user_db)
+    assert service_db.rpc_calls == []
+
+
+def test_d3_delete_cancelled_order_ok(client, user_db, service_db):
+    _setup_delete(user_db, "cancelled")
+    res = client.delete(f"/orders/{ORDER_ID}")
+    assert res.status_code == 204, res.text
+    assert res.content == b""
+    _assert_delete_filtered(user_db)
+    assert service_db.rpc_calls == []
+
+
+def test_d4_delete_done_order_ok(client, user_db, service_db):
+    _setup_delete(user_db, "done")
+    res = client.delete(f"/orders/{ORDER_ID}")
+    assert res.status_code == 204, res.text
+    assert res.content == b""
+    _assert_delete_filtered(user_db)
+    assert service_db.rpc_calls == []
+
+
+def test_d5_delete_missing_order_404(client, user_db, service_db):
+    _setup_delete(user_db, None)
+    res = client.delete(f"/orders/{ORDER_ID}")
+    assert res.status_code == 404, res.text
+    assert res.json()["detail"] == "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი"
+    assert service_db.rpc_calls == []

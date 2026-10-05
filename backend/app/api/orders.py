@@ -21,6 +21,9 @@ MAX_ITEM_QTY = 10  # ერთი პროდუქტის მაქს. ც�
 SHOP_ORDERS_PER_HOUR = 30  # მაღაზიის საჯარო შეკვეთები მცოცავ საათში
 _PHONE_CHARS = re.compile(r"[0-9 +\-()]+")
 
+# წაშლა მხოლოდ დასრულებულ სტატუსებზე (F-07): აქტიური შეკვეთის მარაგი დაჯავშნილია.
+DELETABLE_STATUSES = ("done", "cancelled")
+
 
 def _valid_phone(phone: str | None) -> bool:
     """მხოლოდ ციფრები, space, +, -, (, ) და 9–15 ციფრი."""
@@ -412,8 +415,23 @@ def delete_order(
 ):
     """შეკვეთის წაშლა სიიდან (RLS-ით მხოლოდ საკუთარი).
     მარაგს არ ცვლის — მიწოდებული ნივთი გაყიდულია. მარაგის დასაბრუნებლად
-    გამოიყენე „გაუქმებული“ სტატ უსი."""
-    res = run(auth.client.table("orders").delete().eq("id", str(order_id)))
+    გამოიყენე „გაუქმებული“ სტატ უსი.
+    აქტიური (new/processing) შეკვეთის წაშლა იკრძალება (F-07) — სტატუსის ფილტრი
+    თავად DELETE-შია, ამიტომ ერთდროულ სტატუსის ცვლილებასთან ატომურია."""
+    res = run(
+        auth.client.table("orders")
+        .delete()
+        .eq("id", str(order_id))
+        .in_("status", list(DELETABLE_STATUSES))
+    )
     if not res.data:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი")
+        cur = run(
+            auth.client.table("orders").select("id").eq("id", str(order_id)).limit(1)
+        )
+        if not cur.data:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "აქტიური შეკვეთის წაშლა შეუძლებელია — ჯერ გააუქმეთ შეკვეთა (მარაგი დაბრუნდება).",
+        )
     return None
