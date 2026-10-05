@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from postgrest.exceptions import APIError
+from starlette.concurrency import run_in_threadpool
 
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
@@ -169,7 +170,7 @@ async def import_preview(
             "Excel/CSV ატვირთვა ფასიან პაკეტშია ხელმისაწვდომი — განაახლე პაკეტი.",
         )
     try:
-        return preview_file(content, file.filename)
+        return await run_in_threadpool(preview_file, content, file.filename)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
@@ -223,7 +224,9 @@ async def import_products(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "სვეტების მითითება არასწორია")
 
     try:
-        products, errors = parse_products_file(content, file.filename, override, extra_cols)
+        products, errors = await run_in_threadpool(
+            parse_products_file, content, file.filename, override, extra_cols
+        )
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

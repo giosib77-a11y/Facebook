@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.core.db import run
@@ -432,7 +433,7 @@ async def upload_knowledge(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ძალიან დიდია (მაქს. 10MB)")
 
     try:
-        text = extract_pdf_text(content)
+        text = await run_in_threadpool(extract_pdf_text, content)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

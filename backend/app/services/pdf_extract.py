@@ -1,5 +1,6 @@
 """PDF-დან ტექსტის ამოღება (pypdf). მხოლოდ ტექსტური PDF — დასკანერებული/ფოტო არა."""
 import io
+from itertools import islice
 
 from pypdf import PdfReader
 
@@ -18,13 +19,17 @@ def extract_pdf_text(content: bytes) -> str:
         raise ValueError("PDF ფაილის წაკითხვა ვერ მოხერხდა — დარწმუნდი, რომ სწორი PDF-ია.")
 
     parts = []
-    for page in reader.pages:
+    total = 0  # len("\n\n".join(parts)) — to stop once MAX_CHARS is exceeded
+    for page in islice(reader.pages, MAX_PAGES):
         try:
             txt = page.extract_text() or ""
         except Exception:
             txt = ""
         if txt.strip():
             parts.append(txt.strip())
+            total += len(parts[-1]) + (2 if len(parts) > 1 else 0)
+            if total > MAX_CHARS:
+                break  # the rest would be cut off anyway
 
     text = "\n\n".join(parts).strip()
     if not text:
