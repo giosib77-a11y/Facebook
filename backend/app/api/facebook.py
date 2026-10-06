@@ -4,12 +4,13 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import time
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse
 
 from app.config import get_settings
@@ -119,23 +120,61 @@ def verify_deletion_code(code: str) -> dict | None:
     return {"requested_at": datetime.fromtimestamp(ts, timezone.utc).isoformat()}
 
 
+# FA-05: OAuth-ის callback მიბმულია იმ ბრაუზერზე, რომელმაც connect დაიწყო.
+# start state-ში დებს nonce-ს და იმავეს — HttpOnly cookie-ში; callback ორივეს
+# ადარებს. ასე მოპარული/ჩადებული callback URL სხვის ბრაუზერში ვერ დასრულდება.
+_NONCE_COOKIE = "fb_oauth_nonce"
+_NONCE_PATH = "/facebook/connect"
+_NONCE_TTL = 600  # = verify_state-ის max_age
+
+
 @router.get("/connect/start")
-def connect_start(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
+def connect_start(
+    shop_id: uuid.UUID, response: Response, auth: CurrentAuth = Depends(get_current_auth)
+):
     """ამოწმებს რომ მაღაზია მომხმარებლისაა და აბრუნებს Facebook login URL-ს."""
     res = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
-    state = fb.sign_state({"shop_id": str(shop_id), "user_id": auth.user_id, "ts": time.time()})
+    nonce = secrets.token_urlsafe(16)
+    state = fb.sign_state(
+        {"shop_id": str(shop_id), "user_id": auth.user_id, "ts": time.time(), "n": nonce}
+    )
+    response.set_cookie(
+        _NONCE_COOKIE,
+        nonce,
+        max_age=_NONCE_TTL,
+        path=_NONCE_PATH,
+        httponly=True,
+        samesite="lax",
+        secure=get_settings().is_production,
+    )
     return {"login_url": fb.build_login_url(state)}
 
 
 @router.get("/connect/callback")
 def connect_callback(
+    request: Request,
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
 ):
     """Facebook-ის redirect: code -> page token -> შენახვა shop-ში + webhook subscribe."""
+    resp = _connect_callback(request, code, state, error)
+    # nonce ერთჯერადია — ნებისმიერი შედეგის (წარმატება/შეცდომა) შემდეგ ვშლით
+    resp.delete_cookie(
+        _NONCE_COOKIE,
+        path=_NONCE_PATH,
+        httponly=True,
+        samesite="lax",
+        secure=get_settings().is_production,
+    )
+    return resp
+
+
+def _connect_callback(
+    request: Request, code: str | None, state: str | None, error: str | None
+) -> HTMLResponse:
     if error:
         # ⚠️ `error` პასუხში არასდროს აირეკლება (reflected XSS) — მხოლოდ ლოგში, მოჭრილი.
         # %r — ახალი ხაზით ყალბ ლოგ-ჩანაწერს ვერ ჩაწერს.
@@ -147,6 +186,14 @@ def connect_callback(
     data = fb.verify_state(state)
     if not data:
         return _finish("error", reason="invalid_state")
+    # dev-ში პანელი სხვა origin-ზეა და cookie-ს ვერ იღებს — შემოწმება მხოლოდ production-ში
+    if get_settings().is_production:
+        cookie = request.cookies.get(_NONCE_COOKIE) or ""
+        nonce = data.get("n")
+        if not cookie or not isinstance(nonce, str) or not hmac.compare_digest(
+            cookie.encode(), nonce.encode()
+        ):
+            return _finish("error", reason="invalid_state")
 
     try:
         user_token = fb.exchange_code_for_token(code)
