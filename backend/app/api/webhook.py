@@ -28,6 +28,35 @@ _SEEN_MIDS: "OrderedDict[str, float]" = OrderedDict()
 _SEEN_TTL = 600      # წამი — ამაზე ძველს ვივიწყებთ
 _SEEN_MAX = 5000     # ჩანაწერების ჭერი (მეხსიერება არ გაიბეროს)
 
+# FA-12: ცარიელი პასუხი (Gemini-მ დაბლოკა / MAX_TOKENS) კლიენტს ჩუმად არ უნდა დაეკარგოს
+EMPTY_REPLY_FALLBACK = "ბოდიში, ახლა ვერ გიპასუხებთ — ოპერატორი მალე დაგიკავშირდებათ."
+# პლატფორმის ლიმიტზე (Messenger 2000, Instagram 1000) ცოტა ნაკლები — მარაგით
+_REPLY_LIMITS = {"page": 1900, "instagram": 900}
+_MAX_REPLY_PARTS = 3
+
+
+def _split_reply(text: str, limit: int) -> list[str]:
+    """გრძელი პასუხის დაჭრა ≤limit ნაწილებად (მაქს 3).
+
+    ვჭრით ბოლო "\\n"-ზე ან ". "-ზე ლიმიტამდე, თუ არ არის — ზუსტად ლიმიტზე.
+    3-ზე მეტი ნაწილი რომ დასჭირდეს, მესამე ლიმიტზე იჭრება და "…"-ით მთავრდება.
+    """
+    parts: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        if len(parts) == _MAX_REPLY_PARTS - 1:
+            parts.append(rest[: limit - 1].rstrip() + "…")
+            return parts
+        window = rest[:limit]
+        cut = max(window.rfind("\n"), window.rfind(". ") + 1)  # +1 — წერტილი ნაწილში რჩება
+        if cut <= 0:
+            cut = limit
+        parts.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        parts.append(rest)
+    return parts
+
 
 def _already_handled(mid: str | None) -> bool:
     """True — თუ ეს შეტყობინება უკვე დამუშავდა (Meta-ს გამეორება)."""
@@ -168,6 +197,7 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
 def _process_events(data: dict) -> None:
     """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
     sc = get_service_client()
+    reply_limit = _REPLY_LIMITS.get(data.get("object"), _REPLY_LIMITS["page"])
     for entry in data.get("entry", []):
         # entry.id შეიძლება იყოს Facebook გვერდის ან Instagram ანგარიშის ID.
         # ID ყოველთვის ციფრულია — ვამოწმებთ, რადგან ქვემოთ PostgREST .or_() ფილტრში
@@ -297,10 +327,17 @@ def _process_events(data: dict) -> None:
             except Exception:
                 logger.exception("ბოტის პასუხი ვერ შეიქმნა (shop=%s)", shop.get("id"))
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."
+            if not reply.strip():
+                # FA-12: ცარიელს არ ვაგზავნით — კლიენტს ვპასუხობთ და გამყიდველს ვუნიშნავთ
+                logger.warning("ბოტმა ცარიელი პასუხი დააბრუნა (shop=%s)", shop.get("id"))
+                reply = EMPTY_REPLY_FALLBACK
+                handoff = True
             # მეხსიერებაში ტექსტი ვინახოთ; უტექსტო ფოტოზე — ნიშანი
             saved_text = text or ("[სურათი]" if images else "")
             try:
-                send_text_message(page_token, sender_id, reply)
+                # გრძელ პასუხს ნაწილებად ვგზავნით; ჩავარდნისას დანარჩენს აღარ ვაგზავნით
+                for part in _split_reply(reply, reply_limit):
+                    send_text_message(page_token, sender_id, part)
             except Exception:
                 # კლიენტმა პასუხი ვერ მიიღო. ვადაგასული page token ასე გამოიყურება.
                 logger.exception(
