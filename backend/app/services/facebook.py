@@ -66,7 +66,20 @@ def _graph(method: str, path: str, **kwargs) -> httpx.Response:
 
     httpx-ის შეცდომას (URL-ით, secret-ით/token-ით) GraphError ცვლის. `from None`
     აუცილებელია — თორემ ორიგინალი შეცდომა traceback-სა და ლოგში ჩაჯაჭვდებოდა.
+
+    FA-02: access_token-იან ყოველ გამოძახებას ემატება appsecret_proof
+    (HMAC-SHA256 token-ის, app secret-ით) — მოპარული token secret-ის გარეშე
+    გამოუსადეგარია. caller-ის params dict არ იცვლება (ასლს ვაგზავნით).
     """
+    params = kwargs.get("params")
+    if params and "access_token" in params:
+        secret = get_settings().fb_app_secret
+        if not secret:
+            raise GraphError(None, "app secret not configured")
+        proof = hmac.new(
+            secret.encode(), params["access_token"].encode(), hashlib.sha256
+        ).hexdigest()
+        kwargs["params"] = {**params, "appsecret_proof": proof}
     try:
         r = httpx.request(method, f"{_graph_base()}{path}", **kwargs)
     except httpx.RequestError:
