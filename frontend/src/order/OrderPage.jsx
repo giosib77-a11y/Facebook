@@ -46,6 +46,9 @@ export default function OrderPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [toast, setToast] = useState(null);
+  // Anti-bot (FA-04): page mount time for form_ms + hidden honeypot value.
+  const [mountedAt] = useState(() => Date.now());
+  const [website, setWebsite] = useState("");
 
   function showToast(msg, isErr) {
     setToast({ msg, isErr });
@@ -146,6 +149,8 @@ export default function OrderPage() {
           customer_address: form.address.trim(),
           note: form.note.trim() || null,
           items,
+          website,
+          form_ms: Date.now() - mountedAt,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -279,6 +284,17 @@ export default function OrderPage() {
                   onChange={upd("note")}
                 />
               </label>
+              {/* Honeypot — hidden from people, bots fill it in. */}
+              <input
+                type="text"
+                name="website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                style={{ position: "absolute", left: "-10000px", width: 1, height: 1, opacity: 0 }}
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+              />
             </div>
 
             <div className="summary">

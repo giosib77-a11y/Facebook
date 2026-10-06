@@ -19,7 +19,11 @@ logger = logging.getLogger("app")
 # საჯარო შეკვეთის ბოროტად გამოყენების ლიმიტები (F-03B).
 MAX_ITEM_QTY = 10  # ერთი პროდუქტის მაქს. ცალი ერთ შეკვეთაში (ჯამი product_id-ით)
 SHOP_ORDERS_PER_HOUR = 30  # მაღაზიის საჯარო შეკვეთები მცოცავ საათში
+# ბოტების დაცვა (FA-04).
+MIN_FORM_MS = 3000  # ფორმის შევსების მინ. დრო (ms) გვერდის ჩატვირთვიდან
+OPEN_ORDERS_PER_PHONE = 3  # ერთი ნომრის დაუდასტურებელი ("new") შეკვეთები 24 სთ-ში
 _PHONE_CHARS = re.compile(r"[0-9 +\-()]+")
+_NON_DIGITS = re.compile(r"[^0-9]")
 
 # წაშლა მხოლოდ დასრულებულ სტატუსებზე (F-07): აქტიური შეკვეთის მარაგი დაჯავშნილია.
 DELETABLE_STATUSES = ("done", "cancelled")
@@ -208,8 +212,41 @@ def create_order(payload: OrderCreate):
     if not shop.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
 
+    # ბოტების ფილტრი (FA-04) — ნებისმიერ ჩაწერამდე.
+    if (payload.website or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთის შექმნა ვერ მოხერხდა")
+    if payload.form_ms < MIN_FORM_MS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "გთხოვთ, შეავსეთ ფორმა და სცადეთ თავიდან."
+        )
+
     if not _valid_phone(payload.customer_phone):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მიუთითეთ სწორი ტელეფონის ნომერი")
+
+    # ერთი ნომრიდან დაუდასტურებელი შეკვეთების ლიმიტი (ციფრებით შედარება —
+    # „+995 555 12-34-56“ == „995555123456“).
+    phone_digits = _NON_DIGITS.sub("", payload.customer_phone)
+    since_day = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    open_orders = (
+        sc.table("orders")
+        .select("customer_phone")
+        .eq("shop_id", str(payload.shop_id))
+        .eq("status", "new")
+        .gte("created_at", since_day)
+        .execute()
+        .data
+    )
+    same_phone = sum(
+        1
+        for o in open_orders or []
+        if _NON_DIGITS.sub("", o.get("customer_phone") or "") == phone_digits
+    )
+    if same_phone >= OPEN_ORDERS_PER_PHONE:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "ამ ნომრიდან უკვე გაქვთ 3 დაუდასტურებელი შეკვეთა. "
+            "დაელოდეთ მაღაზიის პასუხს ან მიწერეთ Messenger-ში.",
+        )
 
     # ფასი/სახელი ბაზიდან — არა კლიენტისგან (მანიპულაციის თავიდან ასაცილებლად).
     product_ids = [str(i.product_id) for i in payload.items if i.product_id]

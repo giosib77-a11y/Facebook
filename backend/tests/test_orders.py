@@ -21,6 +21,7 @@ def _order(quantities, phone=VALID_PHONE):
         "customer_name": "Buyer",
         "customer_address": "Tbilisi",
         "items": [{"product_id": PRODUCT_ID, "name": "x", "quantity": q} for q in quantities],
+        "form_ms": 5000,
     }
     if phone is not None:
         body["customer_phone"] = phone
@@ -65,9 +66,25 @@ def test_o4_shop_hourly_cap(client, service_db):
     assert res.status_code == 429
     assert "ძალიან ბევრი შეკვეთა" in res.json()["detail"]
     _assert_nothing_written(service_db)
-    count_query = service_db.calls_for("orders", "select")[0]
+    from datetime import datetime, timedelta, timezone
+
+    def _created_since_age(q):
+        """Age of the query's `created_at >= …` bound, or None if it has none."""
+        for op, col, val in q.filters:
+            if op == "gte" and col == "created_at":
+                return datetime.now(timezone.utc) - datetime.fromisoformat(val)
+        return None
+
+    # Pick the hourly-cap query by its own window (~1h), not by list position.
+    hourly = [
+        q for q in service_db.calls_for("orders", "select")
+        if (age := _created_since_age(q)) is not None
+        and timedelta(minutes=55) <= age <= timedelta(minutes=65)
+    ]
+    assert len(hourly) == 1
+    count_query = hourly[0]
     assert ("eq", "shop_id", SHOP_ID) in count_query.filters
-    assert any(f[0] == "gte" and f[1] == "created_at" for f in count_query.filters)
+    assert not any(f[1] == "status" for f in count_query.filters)
 
 
 def test_o5_valid_order_at_limit_accepted(client, service_db):

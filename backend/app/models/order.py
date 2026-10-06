@@ -22,6 +22,10 @@ class OrderCreate(BaseModel):
     customer_address: str | None = Field(default=None, max_length=500)
     note: str | None = Field(default=None, max_length=1000)
     items: list[OrderItem] = Field(min_length=1, max_length=100)
+    # Anti-bot (FA-04): hidden honeypot field + ms between page load and submit.
+    # Never stored in the order row.
+    website: str | None = Field(default=None, max_length=200)
+    form_ms: int = Field(ge=0)
 
 
 class OrderOut(BaseModel):
