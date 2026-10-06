@@ -106,6 +106,26 @@ def _save_turn(
                 pass
 
 
+def _customer_rank(sc, shop_id: str, psid: str) -> int:
+    """ამ კლიენტის რიგითი ნომერი (1-დან) მაღაზიის ამ თვის კლიენტებში — მოსვლის მიხედვით.
+
+    ლიმიტის გადაჭარბებისას ვემსახურებით პირველ N-ს და ვბლოკავთ მხოლოდ ახლებს (FA-11).
+    """
+    ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    me = (
+        sc.table("bot_customers").select("created_at")
+        .eq("shop_id", shop_id).eq("ym", ym).eq("psid", psid).limit(1).execute()
+    )
+    created_at = me.data[0]["created_at"]
+    earlier = (
+        sc.table("bot_customers").select("psid", count="exact")
+        .eq("shop_id", shop_id).eq("ym", ym).lt("created_at", created_at).limit(1).execute()
+    )
+    if earlier.count is None:
+        raise RuntimeError("bot_customers count unavailable")
+    return earlier.count + 1
+
+
 @router.get("/webhook")
 def verify_webhook(
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
@@ -221,8 +241,17 @@ def _process_events(data: dict) -> None:
                 limits = limits_for(shop.get("subscription_tier"))
                 if day_count > DAILY_ABUSE_CAP:
                     continue  # abuse/loop — ჩუმად ვჩერდებით
-                if monthly > int(limits["customers"]):
-                    over_limit = True
+                limit = int(limits["customers"])
+                if monthly > limit:
+                    # ლიმიტი გადაჭარბდა — ვბლოკავთ მხოლოდ მათ, ვინც ლიმიტის შემდეგ მოვიდა
+                    try:
+                        over_limit = _customer_rank(sc, shop["id"], str(sender_id)) > limit
+                    except Exception:
+                        logger.warning(
+                            "კლიენტის რიგის დადგენა ვერ მოხერხდა (shop=%s) — ძველი წესი (ყველა ლიმიტს ზემოთ)",
+                            shop.get("id"), exc_info=True,
+                        )
+                        over_limit = True
             except Exception:
                 # ბოტი განზრახ აგრძელებს (კლიენტს არ ვბლოკავთ), მაგრამ ეს იმას ნიშნავს,
                 # რომ ლიმიტები ამ შეტყობინებაზე არ გავრცელდა — ლოგი საჭიროა.
@@ -232,13 +261,21 @@ def _process_events(data: dict) -> None:
                 )
 
             if over_limit:
+                auto_reply = "მადლობა შეტყობინებისთვის! 🙏 ჩვენი ოპერატორი მალე დაგიკავშირდებათ."
                 try:
-                    send_text_message(
-                        page_token, sender_id,
-                        "მადლობა შეტყობინებისთვის! 🙏 ჩვენი ოპერატორი მალე დაგიკავშირდებათ.",
-                    )
+                    send_text_message(page_token, sender_id, auto_reply)
                 except Exception:
                     pass
+                # გამყიდველმა უნდა დაინახოს ეს კლიენტი „ყურადღება სჭირდება"-ში
+                try:
+                    _save_turn(
+                        sc, shop["id"], str(sender_id),
+                        _load_history(sc, shop["id"], str(sender_id)),
+                        text or ("[სურათი]" if image_urls else ""), auto_reply,
+                        needs_attention=True,
+                    )
+                except Exception:
+                    logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
                 continue
 
             # შემოსული სურათების ჩამოტვირთვა (მაქს 3) — Gemini-სთვის

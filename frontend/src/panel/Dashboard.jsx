@@ -180,6 +180,14 @@ function UsageBox() {
         პროდუქტი: {usage.products} / {plimit}
         {near && <> · <b style={{ color: "#d97706" }}>ლიმიტს უახლოვდები — განაახლე პაკეტი</b></>}
       </div>
+      {climit != null && usage.monthly_customers > climit && (
+        <div className="usage-foot">
+          <b style={{ color: "#c2410c" }}>
+            კლიენტების თვიური ლიმიტი ამოიწურა — ახალ კლიენტებს ბოტი აღარ პასუხობს
+            (ისინი „ყურადღება სჭირდება“ სიაში ჩანს). განაახლე პაკეტი.
+          </b>
+        </div>
+      )}
 
       {usage.pending_request ? (
         <div className="usage-upgrade pending">

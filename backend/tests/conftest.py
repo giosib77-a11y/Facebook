@@ -56,6 +56,10 @@ class FakeQuery:
         self.op = "delete"
         return self
 
+    def upsert(self, payload):
+        self.op, self.payload = "upsert", payload
+        return self
+
     def eq(self, column, value):
         self.filters.append(("eq", column, value))
         return self
@@ -68,6 +72,14 @@ class FakeQuery:
         self.filters.append(("gte", column, value))
         return self
 
+    def lt(self, column, value):
+        self.filters.append(("lt", column, value))
+        return self
+
+    def or_(self, expr):
+        self.filters.append(("or", expr, None))
+        return self
+
     def limit(self, n):
         return self
 
@@ -76,6 +88,8 @@ class FakeQuery:
 
     def execute(self):
         self._db.calls.append(self)
+        if (self.table, self.op) in self._db.errors:
+            raise self._db.errors[(self.table, self.op)]
         return FakeResult(
             self._db.responses.get((self.table, self.op), []),
             count=self._db.counts.get((self.table, self.op)),
@@ -90,7 +104,7 @@ class FakeRpc:
         self._db.rpc_calls.append(self)
         if self.fn in self._db.rpc_errors:
             raise self._db.rpc_errors[self.fn]
-        return FakeResult(None)
+        return FakeResult(self._db.rpc_responses.get(self.fn))
 
 
 class FakeSupabase:
@@ -102,6 +116,8 @@ class FakeSupabase:
         self.counts: dict[tuple[str, str], int] = {}
         self.rpc_calls: list[FakeRpc] = []
         self.rpc_errors: dict[str, Exception] = {}  # fn name → exception raised on execute()
+        self.rpc_responses: dict[str, object] = {}  # fn name → `.data` returned by execute()
+        self.errors: dict[tuple[str, str], Exception] = {}  # (table, op) → exception on execute()
 
     def table(self, name):
         return FakeQuery(self, name)
