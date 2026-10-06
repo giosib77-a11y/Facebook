@@ -5,7 +5,6 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from postgrest.exceptions import APIError
-from starlette.concurrency import run_in_threadpool
 
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
@@ -106,7 +105,7 @@ def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_curre
 
 
 @router.post("/upload-image")
-async def upload_product_image(
+def upload_product_image(
     shop_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
@@ -120,7 +119,7 @@ async def upload_product_image(
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     # 2) ფაილის შემოწმება — ტიპი და ზომა
-    content = await file.read()
+    content = file.file.read(MAX_IMAGE_BYTES + 1)
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
     if len(content) > MAX_IMAGE_BYTES:
@@ -144,7 +143,7 @@ async def upload_product_image(
 
 
 @router.post("/import/preview")
-async def import_preview(
+def import_preview(
     shop_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
@@ -154,7 +153,7 @@ async def import_preview(
     აბრუნებს: headers (სვეტების სახელები), detected (ავტო-ამოცნობილი mapping),
     preview (პირველი მწკრივები), total_rows.
     """
-    content = await file.read()
+    content = file.file.read(MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
     if len(content) > MAX_IMPORT_BYTES:
@@ -170,13 +169,13 @@ async def import_preview(
             "Excel/CSV ატვირთვა ფასიან პაკეტშია ხელმისაწვდომი — განაახლე პაკეტი.",
         )
     try:
-        return await run_in_threadpool(preview_file, content, file.filename)
+        return preview_file(content, file.filename)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
 @router.post("/import")
-async def import_products(
+def import_products(
     shop_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     mapping: str | None = Form(default=None),
@@ -189,7 +188,7 @@ async def import_products(
     „all-or-nothing": თუ ფაილში თუნდაც ერთი შეცდომაა, არცერთი არ ემატება და
     ბრუნდება ყველა შეცდომა მწკრივების ნომრებით.
     """
-    content = await file.read()
+    content = file.file.read(MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
     if len(content) > MAX_IMPORT_BYTES:
@@ -224,9 +223,7 @@ async def import_products(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "სვეტების მითითება არასწორია")
 
     try:
-        products, errors = await run_in_threadpool(
-            parse_products_file, content, file.filename, override, extra_cols
-        )
+        products, errors = parse_products_file(content, file.filename, override, extra_cols)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

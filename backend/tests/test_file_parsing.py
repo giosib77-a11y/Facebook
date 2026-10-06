@@ -1,4 +1,5 @@
 """N-01 / N-02: heavy file parsing must not block the event loop and must be bounded."""
+import inspect
 import uuid
 
 import pytest
@@ -61,19 +62,40 @@ def test_f3_small_pdf_unchanged(monkeypatch):
         pdf_extract.extract_pdf_text(b"%PDF")
 
 
-# ── N-01: parsers run off the event loop ──
+# ── N-01 / FA-08: upload handlers are sync (FastAPI runs them in the threadpool) ──
 
-def test_f4_parsers_called_via_threadpool(monkeypatch, client, user_db):
+UPLOAD_HANDLERS = (
+    app.api.products.upload_product_image,
+    app.api.products.import_preview,
+    app.api.products.import_products,
+    app.api.shops.upload_knowledge,
+)
+
+
+def test_f4_upload_handlers_sync_and_parsers_called(monkeypatch, client, user_db):
+    for handler in UPLOAD_HANDLERS:
+        assert not inspect.iscoroutinefunction(handler), handler.__name__
+
     calls = []
 
-    async def recording_threadpool(func, *args):
-        calls.append(func)
-        if func is app.services.import_products.preview_file:
-            return {"headers": []}
-        raise ValueError("parsed-in-threadpool")
+    def recording(func):
+        def wrapper(*args):
+            calls.append(func)
+            if func is app.services.import_products.preview_file:
+                return {"headers": []}
+            raise ValueError("parser-called")
+        return wrapper
 
+    monkeypatch.setattr(app.api.shops, "extract_pdf_text", recording(pdf_extract.extract_pdf_text))
+    monkeypatch.setattr(
+        app.api.products, "preview_file", recording(app.services.import_products.preview_file)
+    )
+    monkeypatch.setattr(
+        app.api.products,
+        "parse_products_file",
+        recording(app.services.import_products.parse_products_file),
+    )
     for module in (app.api.shops, app.api.products):
-        monkeypatch.setattr(module, "run_in_threadpool", recording_threadpool)
         monkeypatch.setattr(module, "bulk_import_allowed", lambda tier: True)
     user_db.responses[("shops", "select")] = [{"id": SHOP_ID, "subscription_tier": "pro"}]
 
@@ -81,7 +103,7 @@ def test_f4_parsers_called_via_threadpool(monkeypatch, client, user_db):
         f"/shops/{SHOP_ID}/knowledge",
         files={"file": ("k.pdf", b"%PDF-1.4", "application/pdf")},
     )
-    assert r.status_code == 400 and r.json()["detail"] == "parsed-in-threadpool"
+    assert r.status_code == 400 and r.json()["detail"] == "parser-called"
 
     r = client.post(
         "/products/import/preview",
@@ -95,7 +117,7 @@ def test_f4_parsers_called_via_threadpool(monkeypatch, client, user_db):
         data={"shop_id": SHOP_ID},
         files={"file": ("p.csv", b"name,price\na,1\n", "text/csv")},
     )
-    assert r.status_code == 400 and r.json()["detail"] == "parsed-in-threadpool"
+    assert r.status_code == 400 and r.json()["detail"] == "parser-called"
 
     assert calls == [
         app.services.pdf_extract.extract_pdf_text,

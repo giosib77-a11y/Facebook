@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
-from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.core.db import run
@@ -406,7 +405,7 @@ def shop_analytics(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
 
 
 @router.post("/{shop_id}/knowledge", response_model=ShopOut)
-async def upload_knowledge(
+def upload_knowledge(
     shop_id: uuid.UUID,
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
@@ -426,14 +425,14 @@ async def upload_knowledge(
     name = (file.filename or "").lower()
     if not name.endswith(".pdf"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მხოლოდ .pdf ფაილია მხარდაჭერილი")
-    content = await file.read()
+    content = file.file.read(MAX_PDF_BYTES + 1)
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ცარიელია")
     if len(content) > MAX_PDF_BYTES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი ძალიან დიდია (მაქს. 10MB)")
 
     try:
-        text = await run_in_threadpool(extract_pdf_text, content)
+        text = extract_pdf_text(content)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

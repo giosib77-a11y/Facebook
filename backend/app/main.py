@@ -1,5 +1,7 @@
 """FastAPI entrypoint."""
+import json
 import logging
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -26,6 +28,99 @@ app = FastAPI(
 )
 
 logger = logging.getLogger("app")
+
+# ── მოთხოვნის ზომის ლიმიტი (FA-07/FA-08) ──
+# უზარმაზარი body მეხსიერებაში რომ არ ჩაიტვირთოს — 413 ვაბრუნებთ, სანამ handler-ამდე მივა.
+_MiB = 1024 * 1024
+_DEFAULT_BODY_LIMIT = 256 * 1024
+_KNOWLEDGE_PATH = re.compile(r"^/shops/[^/]+/knowledge$")
+_TOO_LARGE_BODY = json.dumps({"detail": "მოთხოვნა ძალიან დიდია"}, ensure_ascii=False).encode()
+
+
+def _body_limit(path: str) -> int:
+    if path == "/products/upload-image":
+        return 9 * _MiB
+    if path.startswith("/products/import"):
+        return 6 * _MiB
+    if _KNOWLEDGE_PATH.match(path):
+        return 11 * _MiB
+    if path == "/webhook":
+        return 1 * _MiB
+    return _DEFAULT_BODY_LIMIT
+
+
+async def _send_too_large(send) -> None:
+    await send({
+        "type": "http.response.start",
+        "status": 413,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(_TOO_LARGE_BODY)).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": _TOO_LARGE_BODY})
+
+
+class BodySizeLimitMiddleware:
+    """Pure ASGI: POST/PUT/PATCH body-ს ზღუდავს — ჯერ Content-Length-ით, მერე ბაიტების თვლით
+    (chunked მოთხოვნას Content-Length არ აქვს)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] not in ("POST", "PUT", "PATCH"):
+            await self.app(scope, receive, send)
+            return
+        limit = _body_limit(scope["path"])
+
+        for name, value in scope["headers"]:
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    break  # არავალიდური — ქვემოთ ბაიტების თვლა მაინც დაიცავს
+                if declared > limit:
+                    await _send_too_large(send)
+                    return
+                break
+
+        received = 0
+        rejected = False
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received, rejected
+            if rejected:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # ეს chunk app-ს აღარ გადაეცემა; app-ისთვის კლიენტი „გაითიშა"
+                    rejected = True
+                    if not response_started:
+                        await _send_too_large(send)
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded_send(message):
+            nonlocal response_started
+            if rejected:
+                return  # 413 უკვე გაიგზავნა — app-ის პასუხს ვყლაპავთ
+            response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            # 413-ის შემდეგ app-ის შეცდომა (მაგ. ClientDisconnect) მოსალოდნელი შედეგია
+            if not rejected:
+                raise
+
+
+# ყველაზე შიდა user middleware — 413 პასუხსაც CORS და security ჰედერები მოხვდება.
+app.add_middleware(BodySizeLimitMiddleware)
 
 # CORS — origin-ები .env-ის CORS_ORIGINS-იდან ("*" = ყველა, მხოლოდ dev-ისთვის).
 # production-ში დააყენე CORS_ORIGINS="https://shendomen.ge".
