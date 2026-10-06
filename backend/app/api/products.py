@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from postgrest.exceptions import APIError
 
 from app.core.db import run
+from app.core.ratelimit import rate_limit
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.core.tiers import bulk_import_allowed, limits_for
@@ -27,6 +28,9 @@ _IMAGE_EXT = {
     "image/webp": "webp", "image/gif": "gif",
 }
 PRODUCT_IMAGES_BUCKET = "product-images"
+# Per-shop storage quota (audit FA-09) — caps abuse of the public bucket
+MAX_IMAGES_PER_SHOP = 200
+MAX_IMAGE_STORAGE_PER_SHOP = 100 * 1024 * 1024  # 100MB
 
 
 def _sniff_image_mime(content: bytes) -> str | None:
@@ -41,6 +45,29 @@ def _sniff_image_mime(content: bytes) -> str | None:
     if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
         return "image/webp"
     return None
+
+
+def _own_image_path(url: str | None, shop_id) -> str | None:
+    """Object path inside PRODUCT_IMAGES_BUCKET — only for this project's public URL
+    under this shop's folder. External URLs, other shops, other buckets → None."""
+    if not url:
+        return None
+    prefix = get_service_client().storage.from_(PRODUCT_IMAGES_BUCKET).get_public_url("")
+    prefix = (prefix or "").rstrip("?").rstrip("/") + "/"
+    if not url.startswith(prefix):
+        return None
+    path = url[len(prefix):].split("?", 1)[0]
+    if not path.startswith(f"{shop_id}/") or ".." in path:
+        return None
+    return path
+
+
+def _remove_image(path: str, shop_id) -> None:
+    """Best-effort storage cleanup — a failure never fails the request."""
+    try:
+        get_service_client().storage.from_(PRODUCT_IMAGES_BUCKET).remove([path])
+    except Exception:
+        logger.warning("product image removal failed for shop %s", shop_id)
 
 
 def _product_limit_left(auth, shop_id) -> int | None:
@@ -104,7 +131,7 @@ def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_curre
     return res.data[0]
 
 
-@router.post("/upload-image")
+@router.post("/upload-image", dependencies=[Depends(rate_limit("upload_image", 5))])
 def upload_product_image(
     shop_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
@@ -129,9 +156,27 @@ def upload_product_image(
     ext = _IMAGE_EXT.get(mime) if mime else None
     if not ext:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ფაილი არ არის დაშვებული სურათი (JPG / PNG / WEBP / GIF)")
-    # 3) ატვირთვა Storage-ში + public URL
-    path = f"{shop_id}/{uuid.uuid4().hex}.{ext}"
     sc = get_service_client()
+    # 3) მაღაზიის კვოტა — ფოტოების რაოდენობა და ჯამური ზომა (fail-closed)
+    try:
+        objects = sc.storage.from_(PRODUCT_IMAGES_BUCKET).list(
+            str(shop_id), {"limit": MAX_IMAGES_PER_SHOP + 1}
+        ) or []
+    except Exception:
+        logger.warning("image quota check failed for shop %s", shop_id)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ატვირთვა დროებით ვერ ხერხდება, სცადეთ მოგვიანებით.",
+        )
+    used = sum(((o.get("metadata") or {}).get("size") or 0) for o in objects)
+    if len(objects) >= MAX_IMAGES_PER_SHOP or used + len(content) > MAX_IMAGE_STORAGE_PER_SHOP:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "ფოტოების ლიმიტი ამოწურულია (მაქს. 200 ფოტო / 100MB მაღაზიაზე). "
+            "წაშალეთ ძველი პროდუქტები ან ფოტოები.",
+        )
+    # 4) ატვირთვა Storage-ში + public URL
+    path = f"{shop_id}/{uuid.uuid4().hex}.{ext}"
     try:
         sc.storage.from_(PRODUCT_IMAGES_BUCKET).upload(
             path, content, {"content-type": mime, "cache-control": "3600"}
@@ -324,18 +369,38 @@ def update_product(
     data = payload.model_dump(mode="json", exclude_unset=True)
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "განსაახლებელი ველი არ მითითებულა")
+    old = None
+    if "image_url" in data:
+        # ძველი ფოტო — რომ შეცვლის შემდეგ Storage-იდან წავშალოთ (FA-09)
+        cur = run(
+            auth.client.table("products").select("shop_id, image_url")
+            .eq("id", str(product_id)).limit(1)
+        )
+        old = cur.data[0] if cur.data else None
     res = run(
         auth.client.table("products").update(data).eq("id", str(product_id))
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "პროდუქტი ვერ მოიძებნა ან არ არის თქვენი")
+    if old and old.get("image_url") != data["image_url"]:
+        old_path = _own_image_path(old.get("image_url"), old.get("shop_id"))
+        if old_path:
+            _remove_image(old_path, old.get("shop_id"))
     return res.data[0]
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_product(product_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
     """შლის პროდუქტს. RLS-ის გამო მხოლოდ საკუთარს; სხვა შემთხვევაში 404."""
+    cur = run(
+        auth.client.table("products").select("shop_id, image_url")
+        .eq("id", str(product_id)).limit(1)
+    )
+    old = cur.data[0] if cur.data else None
     res = run(auth.client.table("products").delete().eq("id", str(product_id)))
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "პროდუქტი ვერ მოიძებნა ან არ არის თქვენი")
+    old_path = _own_image_path(old.get("image_url"), old.get("shop_id")) if old else None
+    if old_path:
+        _remove_image(old_path, old.get("shop_id"))
     return None
