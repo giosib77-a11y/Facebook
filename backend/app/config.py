@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # X-Forwarded-For აღარ იკითხება (კლიენტს შეუძლია გააყალბოს). ცარიელი = მხოლოდ socket peer.
     client_ip_header: str = "cf-connecting-ip"
 
+    # Origin lock (FA-03): Cloudflare-ის Transform Rule ამ header-ს საიდუმლოთი ამატებს.
+    # production-ში, თუ დაყენებულია, origin-ზე პირდაპირი მოთხოვნა (header-ის გარეშე) → 403.
+    origin_secret: str = ""
+    origin_secret_header: str = "x-origin-secret"
+
     # Gemini (ბოტი — ნაბიჯი 4)
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"

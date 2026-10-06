@@ -1,4 +1,5 @@
 """FastAPI entrypoint."""
+import hmac
 import json
 import logging
 import re
@@ -119,6 +120,54 @@ class BodySizeLimitMiddleware:
                 raise
 
 
+# ── Origin lock (FA-03) ──
+# Render-ის origin პირდაპირაც ხელმისაწვდომია, ანუ CF-Connecting-IP ყალბდება. production-ში,
+# ORIGIN_SECRET-ის არსებობისას, მხოლოდ Cloudflare-ის გავლით (საიდუმლო header-ით) მოსულს ვუშვებთ.
+_ORIGIN_LOCK_EXEMPT = "/health"  # Render-ის health check origin-ს პირდაპირ ურტყამს
+_FORBIDDEN_BODY = json.dumps({"detail": "Forbidden"}).encode()
+
+if settings.is_production and not settings.origin_secret:
+    logger.warning("ORIGIN_SECRET not set — origin lock disabled; CF-Connecting-IP is spoofable")
+
+
+class OriginLockMiddleware:
+    """Pure ASGI: საიდუმლო header-ის გარეშე HTTP მოთხოვნა → 403, app არ გამოიძახება."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        secret = settings.origin_secret
+        if (
+            scope["type"] != "http"
+            or not secret
+            or not settings.is_production
+            or scope["path"] == _ORIGIN_LOCK_EXEMPT
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        wanted = settings.origin_secret_header.strip().lower().encode("latin-1")
+        provided = b""
+        for name, value in scope["headers"]:
+            if name == wanted:
+                provided = value
+                break
+        if provided and hmac.compare_digest(provided, secret.encode()):
+            await self.app(scope, receive, send)
+            return
+
+        await send({
+            "type": "http.response.start",
+            "status": 403,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(_FORBIDDEN_BODY)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": _FORBIDDEN_BODY})
+
+
 # ყველაზე შიდა user middleware — 413 პასუხსაც CORS და security ჰედერები მოხვდება.
 app.add_middleware(BodySizeLimitMiddleware)
 
@@ -153,6 +202,10 @@ async def security_headers(request: Request, call_next):
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
     return response
+
+
+# ყველაზე გარე user middleware (ბოლოს დამატებული) — origin-ის შემოწმება ყველაფერზე ადრე.
+app.add_middleware(OriginLockMiddleware)
 
 
 @app.exception_handler(Exception)

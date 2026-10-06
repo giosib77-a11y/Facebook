@@ -29,6 +29,7 @@ def _client_ip(request: Request) -> str:
     """რეალური IP — proxy-ს სანდო header-იდან (CLIENT_IP_HEADER), თორემ socket peer.
 
     X-Forwarded-For-ის პირველი ელემენტი კლიენტის კონტროლშია, ამიტომ არ იკითხება.
+    The header is trustworthy only when the origin lock (ORIGIN_SECRET) is active.
     """
     settings = get_settings()
     header = (settings.client_ip_header or "").strip()
