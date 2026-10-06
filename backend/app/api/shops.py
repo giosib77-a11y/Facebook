@@ -439,7 +439,7 @@ async def upload_knowledge(
 
     res = run(
         auth.client.table("shops")
-        .update({"knowledge": text, "knowledge_filename": file.filename})
+        .update({"knowledge": text, "knowledge_filename": (file.filename or "")[:255]})
         .eq("id", str(shop_id))
     )
     if not res.data:

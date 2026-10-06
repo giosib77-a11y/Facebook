@@ -131,13 +131,20 @@ def select_relevant_products(products, message, history=None, max_products: int 
     return top if top else products[:max_products]
 
 
+def _clip(text, limit: int):
+    """Caps seller-controlled text in the prompt (DB limits aside); non-str passes through."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
 def _format_inventory(products, currency: str, total: int | None = None) -> str:
     """მარაგის ტექსტად ჩამოყალიბება prompt-ისთვის."""
     if not products:
         return "(მარაგი ცარიელია — ამ მომენტში პროდუქტი არ არის ხელმისაწვდომი.)"
     lines = []
     for p in products:
-        name = p.get("name", "უსახელო")
+        name = _clip(p.get("name", "უსახელო"), 200)
         price = p.get("price", 0)
         qty = p.get("quantity", 0)
         stock = f"მარაგშია: {qty}" if qty and qty > 0 else "ამოწურულია"
@@ -148,9 +155,9 @@ def _format_inventory(products, currency: str, total: int | None = None) -> str:
         price_str = f"{price} {currency}" if has_price else "ფასი დასაზუსტებელია"
         line = f"- {name} — {price_str}, {stock}"
         if p.get("sku"):
-            line += f", SKU: {p['sku']}"
+            line += f", SKU: {_clip(p['sku'], 100)}"
         if p.get("description"):
-            line += f". {p['description']}"
+            line += f". {_clip(p['description'], 600)}"
         lines.append(line)
     body = "\n".join(lines)
     # თუ დიდი მარაგიდან მხოლოდ ნაწილი ჩავრთეთ — ბოტს ვამცნობთ (რომ „ეს არის ყველაფერი" არ თქვას)
@@ -184,15 +191,15 @@ def build_system_prompt(shop, products, total: int | None = None) -> str:
     ბოტი გაიგებს, რომ ნაჩვენები არ არის სრული მარაგი.
     """
     currency = shop.get("currency") or "GEL"
-    knowledge = (shop.get("knowledge") or "").strip()
+    knowledge = _clip((shop.get("knowledge") or "").strip(), 20000)
     knowledge_section = (
         f"\nდამატებითი ინფორმაცია (მაღაზიის დოკუმენტიდან):\n{knowledge}\n" if knowledge else ""
     )
     language_rule = _LANG_RULES.get(shop.get("bot_language") or "auto", _LANG_RULES["auto"])
     return SYSTEM_PROMPT_TEMPLATE.format(
-        shop_name=shop.get("name") or "მაღაზია",
+        shop_name=_clip(shop.get("name"), 200) or "მაღაზია",
         currency=currency,
-        shop_description=shop.get("description") or "—",
+        shop_description=_clip(shop.get("description"), 1000) or "—",
         inventory=_format_inventory(products, currency, total),
         order_link=order_link_for(shop),
         knowledge_section=knowledge_section,

@@ -8,22 +8,22 @@ from pydantic import BaseModel, Field
 class ProductCreate(BaseModel):
     shop_id: uuid.UUID
     name: str = Field(min_length=1, max_length=200)
-    description: str | None = None
-    sku: str | None = None
+    description: str | None = Field(default=None, max_length=5000)
+    sku: str | None = Field(default=None, max_length=100)
     price: float = Field(default=0, ge=0)
     quantity: int = Field(default=0, ge=0)
-    image_url: str | None = None
+    image_url: str | None = Field(default=None, max_length=2048)
     is_active: bool = True
 
 
 class ProductUpdate(BaseModel):
     """ნაწილობრივი განახლება — მხოლოდ გადმოცემული ველები იცვლება."""
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = None
-    sku: str | None = None
+    description: str | None = Field(default=None, max_length=5000)
+    sku: str | None = Field(default=None, max_length=100)
     price: float | None = Field(default=None, ge=0)
     quantity: int | None = Field(default=None, ge=0)
-    image_url: str | None = None
+    image_url: str | None = Field(default=None, max_length=2048)
     is_active: bool | None = None
 
 

@@ -196,18 +196,30 @@ def parse_products_file(
                 errors.append({"row": line, "message": "მარაგი უარყოფითია"})
                 continue
 
+        if len(name_s) > 200:
+            errors.append({"row": line, "message": "სახელი ძალიან გრძელია (მაქს. 200 სიმბოლო)"})
+            continue
+
         sku = _norm(cell("sku")) or None
+        if sku and len(sku) > 100:
+            errors.append({"row": line, "message": "SKU ძალიან გრძელია (მაქს. 100 სიმბოლო)"})
+            continue
         if sku:
             if sku in seen_skus:
                 errors.append({"row": line, "message": f"SKU მეორდება ფაილში: „{sku}"})
                 continue
             seen_skus.add(sku)
 
+        description = build_description(row)
+        if description and len(description) > 5000:
+            errors.append({"row": line, "message": "აღწერა ძალიან გრძელია (მაქს. 5000 სიმბოლო)"})
+            continue
+
         products.append({
             "name": name_s,
             "price": price,
             "quantity": qty,
-            "description": build_description(row),
+            "description": description,
             "sku": sku,
             "is_active": True,
         })

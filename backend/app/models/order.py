@@ -10,7 +10,7 @@ ORDER_STATUSES = ("new", "processing", "done", "cancelled")
 
 class OrderItem(BaseModel):
     product_id: uuid.UUID | None = None
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=500)
     price: float = Field(default=0, ge=0)
     quantity: int = Field(ge=1)
 
@@ -19,9 +19,9 @@ class OrderCreate(BaseModel):
     shop_id: uuid.UUID
     customer_name: str = Field(min_length=1, max_length=120)
     customer_phone: str | None = Field(default=None, max_length=40)
-    customer_address: str | None = None
-    note: str | None = None
-    items: list[OrderItem] = Field(min_length=1)
+    customer_address: str | None = Field(default=None, max_length=500)
+    note: str | None = Field(default=None, max_length=1000)
+    items: list[OrderItem] = Field(min_length=1, max_length=100)
 
 
 class OrderOut(BaseModel):
