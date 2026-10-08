@@ -257,13 +257,24 @@ def _connect_callback(
     }
 
     # A-5: instagram_account_id ერთ მაღაზიას უნდა ეკუთვნოდეს — webhook IG ID-ით ირჩევს
-    # მაღაზიას. მფლობელობა `state`-ით უკვე დადასტურებულია (user_id ქვემოთაც ფილტრშია).
+    # მაღაზიას. თუ ეს IG ანგარიში სხვა მაღაზიაზეა მიბმული — დაკავშირება უარყოფილია და
+    # არაფერი იცვლება (T18). მფლობელის ვინაობა მომხმარებელს არ ვუჩვენებთ.
     if ig_account_id:
         try:
-            sc.table("shops").update({"instagram_account_id": None})                 .eq("instagram_account_id", ig_account_id).neq("id", data["shop_id"]).execute()
+            rows = (
+                sc.table("shops").select("id, instagram_account_id")
+                .eq("instagram_account_id", ig_account_id).neq("id", data["shop_id"])
+                .limit(1).execute().data or []
+            )
         except Exception:
-            logger.exception("სხვა მაღაზიებიდან IG id-ის მოხსნა ჩავარდა (shop=%s)", data.get("shop_id"))
+            logger.exception("IG id-ის შემოწმება ჩავარდა (shop=%s)", data.get("shop_id"))
             return _finish("error", reason="save_failed")
+        if any(
+            r.get("instagram_account_id") == ig_account_id and str(r.get("id")) != str(data["shop_id"])
+            for r in rows
+        ):
+            logger.warning("IG ანგარიში %s უკვე სხვა მაღაზიაზეა მიბმული (shop=%s)", ig_account_id, data.get("shop_id"))
+            return _finish("error", reason="ig_taken")
 
     def _save(payload: dict):
         return (
