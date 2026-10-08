@@ -66,6 +66,10 @@ class FakeQuery:
         self.filters.append(("eq", column, value))
         return self
 
+    def neq(self, column, value):
+        self.filters.append(("neq", column, value))
+        return self
+
     def in_(self, column, values):
         self.filters.append(("in", column, list(values)))
         return self

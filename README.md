@@ -334,7 +334,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (19)
+### მიგრაციები (20)
 
 | # | რა |
 |---|---|
@@ -357,6 +357,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0017` | 🔒 `shops`-ის DELETE მოხსნილია `anon`/`authenticated`-დან (წაშლა მხოლოდ admin endpoint-ით) |
 | `0018` | 🔒 `orders`: UPDATE მხოლოდ `status` სვეტზე, status CHECK, DELETE პოლისი მხოლოდ `done`/`cancelled` |
 | `0019` | 🔒 `upgrade_requests`: INSERT პოლისი მოითხოვს `pending` + tier-ის სიას; status/tier CHECK |
+| `0020` | 🔒 `shops.instagram_account_id` — partial UNIQUE ინდექსი (IG შეტყობინება სხვა tenant-ს ვეღარ მიეწერება) |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
 

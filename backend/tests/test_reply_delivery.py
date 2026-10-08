@@ -121,3 +121,18 @@ def test_split_caps_at_three_parts_with_ellipsis():
     assert len(parts) == 3
     assert all(len(p) <= 100 for p in parts)
     assert parts[-1].endswith("…")
+
+
+def test_ambiguous_ig_match_is_not_routed(env, caplog):
+    db, sent, bot = env
+    db.responses[("shops", "select")] = [
+        {"id": SHOP_ID, "bot_enabled": True, "facebook_page_token": "enc", "subscription_tier": "free"},
+        {"id": "other-shop", "bot_enabled": True, "facebook_page_token": "enc", "subscription_tier": "free"},
+    ]
+
+    with caplog.at_level(logging.ERROR, logger="app"):
+        _run("instagram")
+
+    assert sent == []
+    assert db.calls_for("bot_conversations", "upsert") == []
+    assert any("AMBIGUOUS ROUTE" in r.getMessage() for r in caplog.records)

@@ -30,7 +30,7 @@ def _connect(client, service_db, owned):
     service_db.responses[("shops", "update")] = [{"id": SHOP_ID}]
     res = client.get("/facebook/connect/callback", params={"code": "c", "state": "s"})
     assert res.status_code == 200
-    updates = service_db.calls_for("shops", "update")
+    updates = [u for u in service_db.calls_for("shops", "update") if "facebook_page_id" in u.payload]
     assert len(updates) == 1
     return res.text, updates[0].payload
 
@@ -74,3 +74,22 @@ def test_c4_shops_read_is_filtered_by_state_owner(client, service_db):
     reads = service_db.calls_for("shops", "select")
     assert len(reads) == 1
     assert ("eq", "owner_id", USER_ID) in reads[0].filters
+
+
+def test_c5_connect_nulls_ig_id_on_other_shops_first(client, service_db):
+    _connect(client, service_db, [{"id": SHOP_ID, "subscription_tier": "free", "bot_enabled": False}])
+    updates = service_db.calls_for("shops", "update")
+    assert len(updates) == 2
+    clear, save = updates
+    assert clear.payload == {"instagram_account_id": None}
+    assert ("eq", "instagram_account_id", "ig-1") in clear.filters
+    assert ("neq", "id", SHOP_ID) in clear.filters
+    assert "facebook_page_id" in save.payload
+
+
+def test_c6_ig_clear_failure_aborts_without_saving(client, service_db):
+    service_db.responses[("shops", "select")] = [{"id": SHOP_ID, "subscription_tier": "free", "bot_enabled": False}]
+    service_db.errors[("shops", "update")] = RuntimeError("db down")
+    res = client.get("/facebook/connect/callback", params={"code": "c", "state": "s"})
+    assert '"reason": "save_failed"' in res.text
+    assert not any("facebook_page_id" in u.payload for u in service_db.calls_for("shops", "update"))

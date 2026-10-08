@@ -256,6 +256,15 @@ def _connect_callback(
         "bot_enabled": bot_allowed,
     }
 
+    # A-5: instagram_account_id ერთ მაღაზიას უნდა ეკუთვნოდეს — webhook IG ID-ით ირჩევს
+    # მაღაზიას. მფლობელობა `state`-ით უკვე დადასტურებულია (user_id ქვემოთაც ფილტრშია).
+    if ig_account_id:
+        try:
+            sc.table("shops").update({"instagram_account_id": None})                 .eq("instagram_account_id", ig_account_id).neq("id", data["shop_id"]).execute()
+        except Exception:
+            logger.exception("სხვა მაღაზიებიდან IG id-ის მოხსნა ჩავარდა (shop=%s)", data.get("shop_id"))
+            return _finish("error", reason="save_failed")
+
     def _save(payload: dict):
         return (
             sc.table("shops").update(payload)

@@ -247,12 +247,20 @@ def _process_events(data: dict) -> None:
             shop_res = (
                 sc.table("shops").select("*")
                 .or_(f"facebook_page_id.eq.{eid},instagram_account_id.eq.{eid}")
-                .limit(1).execute()
+                .limit(2).execute()
             )
         except Exception:
             # migration 0006 ჯერ არ გაშვებულა (instagram_account_id არ არსებობს) — fallback
             shop_res = sc.table("shops").select("*").eq("facebook_page_id", eid).limit(1).execute()
         if not shop_res.data:
+            continue
+        if len(shop_res.data) > 1:
+            # A-5: ერთი ID რამდენიმე მაღაზიაზეა (instagram_account_id unique არ იყო) —
+            # არასწორი tenant-ის არჩევა მონაცემის გაჟონვაა; ვტოვებთ და ლოგში ვწერთ.
+            logger.error(
+                "AMBIGUOUS ROUTE: entry.id=%s ემთხვევა %d მაღაზიას — შეტყობინება გამოტოვებულია",
+                eid, len(shop_res.data),
+            )
             continue
         shop = shop_res.data[0]
         if not shop.get("bot_enabled") or not shop.get("facebook_page_token"):
