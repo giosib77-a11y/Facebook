@@ -170,6 +170,11 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 ### 2026-09 — Cloudflare წინ: IP `CF-Connecting-IP`-დან, origin lock საიდუმლო header-ით (F-03A, FA-03)
 - Decision: `X-Forwarded-For` არ იკითხება; production-ში header-ის გარეშე → 403.
 - Reason: XFF ყალბდება; Render-ის origin-ის პირდაპირი მიმართვა rate-limit-ს უვლის გვერდს.
+- Status: IP-ის ნაწილი superseded → იხ. 2026-10 (T17); origin lock კოდში რჩება (T13, Backlog).
+
+### 2026-10 — კლიენტის IP `X-Forwarded-For`-ის მარჯვენა ჰოპებიდან (Render), CF header იგნორირდება (T17)
+- Decision: IP = XFF-ის მარჯვნიდან `CLIENT_IP_TRUSTED_HOPS`-ური ჩანაწერი (default 1); ნაკლები ჩანაწერი → socket peer. `CF-Connecting-IP` სრულად იგნორირდება; `CLIENT_IP_HEADER` წაიშალა. დროებითი `CLIENT_IP_DEBUG` სწორი N-ის დასადგენად.
+- Reason: Cloudflare არ გამოიყენება; Render არ ასუფთავებს კლიენტის XFF-ს, მხოლოდ მარჯვნივ ამატებს → მარცხენა ჩანაწერები გაყალბებადია, მარჯვენა სანდოა. ჰოპების ზუსტი რაოდენობა დოკუმენტირებული არ არის → ემპირიულად.
 
 ### 2026-09 — ადმინი იდენტიფიცირდება user UUID-ით (`ADMIN_USER_IDS`), არა email-ით (F-08)
 - Decision: ცარიელი სია = ადმინი არავინაა (fail closed).

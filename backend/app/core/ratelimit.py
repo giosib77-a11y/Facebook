@@ -23,30 +23,47 @@ _HITS: dict[str, dict[str, deque]] = defaultdict(lambda: defaultdict(deque))
 _last_sweep = [time.monotonic()]
 # გაფრთხილება „header აკლია" — პროცესზე მაქსიმუმ ერთხელ
 _warned_missing_header = [False]
+# CLIENT_IP_DEBUG ლოგის throttle (monotonic დრო; -inf = ჯერ არ დაწერილა)
+_last_debug_log = [float("-inf")]
 # bucket -> window (წმ). sweep-მა ყოველ bucket-ს თავისი window უნდა გამოიყენოს,
 # თორემ მოკლე window-ის მქონე endpoint-ი გრძელი (მაგ. დღიური) ლიმიტის ჩანაწერებს წაშლიდა.
 _WINDOWS: dict[str, int] = {}
 
 
 def _client_ip(request: Request) -> str:
-    """რეალური IP — proxy-ს სანდო header-იდან (CLIENT_IP_HEADER), თორემ socket peer.
+    """რეალური IP — X-Forwarded-For-ის მარჯვნიდან N-ური ჩანაწერი (CLIENT_IP_TRUSTED_HOPS).
 
-    X-Forwarded-For-ის პირველი ელემენტი კლიენტის კონტროლშია, ამიტომ არ იკითხება.
-    The header is trustworthy only when the origin lock (ORIGIN_SECRET) is active.
+    Render ამატებს ჩანაწერებს მარჯვნივ და კლიენტის მიწოდებულს არ ასუფთავებს, ამიტომ მარცხენა
+    ჩანაწერები გაყალბებადია; მხოლოდ მარჯვენა (proxy-ს დამატებული) სანდოა. CF-Connecting-IP
+    და სხვა კლიენტის header-ები არ იკითხება. ჩანაწერები არ ჰყოფნის → socket peer.
     """
     settings = get_settings()
-    header = (settings.client_ip_header or "").strip()
-    if header:
-        value = (request.headers.get(header) or "").split(",")[0].strip()
-        if value:
-            return value
+    peer = request.client.host if request.client else "unknown"
+    raw = request.headers.get("x-forwarded-for") or ""
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    hops = max(settings.client_ip_trusted_hops, 1)
+
+    if len(entries) >= hops:
+        chosen = entries[-hops]
+    else:
+        chosen = peer
         if settings.is_production and not _warned_missing_header[0]:
             _warned_missing_header[0] = True
             logger.warning(
-                "rate limit: header %r missing — falling back to peer address; "
-                "all clients may share one limit bucket", header,
+                "rate limit: X-Forwarded-For has %d entries, CLIENT_IP_TRUSTED_HOPS=%d — "
+                "falling back to peer address; all clients may share one limit bucket",
+                len(entries), hops,
             )
-    return request.client.host if request.client else "unknown"
+
+    if settings.client_ip_debug:
+        now = time.monotonic()
+        if now - _last_debug_log[0] >= 10:
+            _last_debug_log[0] = now
+            logger.info(
+                "client-ip debug: xff=%r entries=%d peer=%s hops=%d chosen=%s",
+                raw[:300], len(entries), peer, hops, chosen,
+            )
+    return chosen
 
 
 def _sweep(now: float) -> None:

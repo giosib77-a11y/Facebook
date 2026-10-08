@@ -23,7 +23,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
     - `new → processing`: ატომური დაკლება; თუ მარაგი არ ჰყოფნის → 409 + გასაგები შეტყობინება გამყიდველს.
     - `processing/done → cancelled` აბრუნებს მარაგს (როგორც ახლა); F-06 reopen-ის ლოგიკა ახალ მდგომარეობებს მოერგოს.
     - `public-menu` / ბოტი აჩვენებს რეალურ მარაგს, `new` შეკვეთები მარაგს აღარ ამცირებს → შეიძლება overselling `new`-ში (მისაღებია, გამყიდველი ადასტურებს).
-    - IP-ლიმიტი in-memory-ია (deploy-ზე ნულდება) და **მხოლოდ მაშინ არის სანდო, როცა `ORIGIN_SECRET` აქტიურია (იხ. T13)**.
+    - IP-ლიმიტი in-memory-ია (deploy-ზე ნულდება) და **სანდოა მხოლოდ სწორი `CLIENT_IP_TRUSTED_HOPS`-ით (იხ. T17)**.
   - Verify: ტესტები — შეკვეთა მარაგს არ ცვლის; processing-ზე იკლებს; არასაკმარისი მარაგი → 409; cancel processing-იდან აბრუნებს;
     IP-ის დღიური ლიმიტი → 429.
 - [x] **T3 — A-4 (hardening, დაბალი): `APP_ENV` default fail-open** · `backend/app/config.py:19`
@@ -63,35 +63,41 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [ ] **T12 — Gemini: გადასვლა `gemini-3.5-flash`-ზე (2.5 Flash ითიშება 2026-10-16)** · `GEMINI_MODEL`
   - ეტაპი 1: ლოკალური შედარების სკრიპტი (მარტივი, ერთჯერადი, scratchpad-ში) — იგივე ქართული შეკითხვები ორივე მოდელზე, პასუხები გვერდიგვერდ.
     ⚠️ საჭიროებს რეალურ Gemini key-ს — **გაშვებამდე მფლობელს ვეკითხები** (key-ს მფლობელი აძლევს; `.env` არ იკითხება).
+  - ✅ ეტაპი 1: სკრიპტი დაწერილია (`backend/scripts/compare_gemini_models.py`), **გაუშვებელი** — მფლობელი უშვებს თავის terminal-ში (key-ს ჩატში არ იძლევა). ბრძანება: Git Bash `backend/.venv/Scripts/python.exe backend/scripts/compare_gemini_models.py` (ჯერ `--dry-run`), PowerShell `backend\.venv\Scripts\python.exe backend\scripts\compare_gemini_models.py`; შედეგი `backend/scripts/compare_gemini_output.md` (gitignored). multimodal (ფოტო) ამ სკრიპტით არ მოწმდება; `thinking_config` საკითხი — შედეგის cut/thinking მრიცხველებით.
   - ეტაპი 2: შედარების შედეგის დამტკიცების შემდეგ — Render-ზე `GEMINI_MODEL=gemini-3.5-flash` (მფლობელი ცვლის თვითონ) + კოდის default-ის განახლება.
   - შესამოწმებელი: ფასი/ტოკენი ([project-costs-pricing] memory), `max_output_tokens`, multimodal (ფოტოს გაგება), `[[HANDOFF]]` ნიშნის დაცვა.
   - Deadline: **2026-10-16**.
-- [ ] **T17 — should-fix: კლიენტის IP Render-ის სანდო header-იდან (CF-Connecting-IP გაყალბებადია)** · `backend/app/core/ratelimit.py`, `config.py`, `main.py`
+- [x] **T17 — should-fix: კლიენტის IP Render-ის სანდო header-იდან (CF-Connecting-IP გაყალბებადია)** · `backend/app/core/ratelimit.py`, `config.py`, `main.py`
   - მფლობელის გადაწყვეტილება (2026-10-08): Cloudflare არ გამოიყენება (chatassist.ge პირდაპირ Render-ზეა). `CF-Connecting-IP` ახლა კლიენტის მიერ ყალბდება → ყველა IP-ლიმიტი (T2, შეკვეთები) შემოსავლელია.
   - Render-ის დოკუმენტაცია ცალსახა არ არის: Render XFF-ს **არ ასუფთავებს, მხოლოდ ამატებს** (კლიენტის მიწოდებული მნიშვნელობა ინახება, Render ბოლოში ამატებს); Render-ის წარმომადგენელი 2021-ში წერს „first IP = real client", მაგრამ ეს მხოლოდ მაშინ სწორია, როცა კლიენტი XFF-ს არ აგზავნის.
     ⇒ სანდოა მხოლოდ XFF-ის **მარჯვენა მხარე** (Render-ის დამატებული ჩანაწერები), არა პირველი. ზუსტი hop-ის რაოდენობა (Render-ის edge + LB) დოკუმენტაციით ვერ დადასტურდა.
   - Fix: `CLIENT_IP_TRUSTED_HOPS` (int) — IP = XFF-ის მარჯვნიდან N-ური ჩანაწერი; კლიენტის `CF-Connecting-IP` სრულად იგნორირდება; დროებითი diagnostic (env-ით ჩასართავი), რომ მფლობელმა Render-ის ლოგში ნახოს რეალური XFF და N დააყენოს.
   - Verify: ტესტი — გაყალბებული `CF-Connecting-IP` და გაყალბებული XFF-ის მარცხენა ჩანაწერები IP-ს ვერ ცვლის; ლიმიტი სწორ bucket-ზე ითვლება.
-- [ ] **T18 — IG: მეორე მაღაზიის connect-ზე უარი (T9-ის გადაწყვეტილება)** · `backend/app/api/facebook.py`
+- [x] **T18 — IG: მეორე მაღაზიის connect-ზე უარი (T9-ის გადაწყვეტილება)** · `backend/app/api/facebook.py`
   - მფლობელის გადაწყვეტილება: თუ IG ანგარიში უკვე სხვა მაღაზიასთანაა — connect უარს იღებს, მკაფიო შეტყობინებით („ანგარიში უკვე სხვა მაღაზიასთანაა, დაგვიკავშირდით"). T9-ის „სხვა მაღაზიიდან null-დება" ამოღდეს; webhook-ის ორაზროვნობის დაცვა და 0020 რჩება.
   - Verify: ტესტი — სხვა მაღაზიის IG id → უარი, არაფერი იცვლება; იგივე მაღაზიის ხელახალი connect გადის.
+- [ ] **T19 — should-fix: ტესტის ჩავარდნისას `Settings` repr secrets-ს ბეჭდავს** · `backend/tests/conftest.py`, `backend/app/config.py`
+  - ტესტები ლოკალურ `.env`-ს კითხულობენ (conftest მხოლოდ `SUPABASE_URL`/`ANON_KEY`-ს ცარიელებს); ჩავარდნისას pytest ბეჭდავს `Settings(...)`-ს რეალური key-ებით (ერთხელ უკვე მოხდა hook-ის გამოტანაში).
+  - Fix: conftest ყველა secret-ს (GEMINI_API_KEY, SUPABASE_SERVICE_ROLE_KEY, FB_APP_SECRET, FB_TOKEN_ENCRYPTION_KEY, FB_VERIFY_TOKEN, ...) ცარიელებს/ფიქტიურ მნიშვნელობას უსვამს app-ის import-მდე, და/ან secret ველები `SecretStr`/`repr=False`. Tests ლოკალურ `.env`-ზე არ უნდა იყვნენ დამოკიდებული.
+  - Verify: ტესტი — `repr(get_settings())` არ შეიცავს secret-ს; `pytest -q` გადის `.env`-ის გარეშეც (ცარიელი env-ით).
+  - ⚠️ მფლობელს: ტრანსკრიპტში უკვე გამოჩნდა Gemini key, FB_APP_SECRET, Supabase service-role და FB_TOKEN_ENCRYPTION_KEY — როტაცია საკუთარ შეფასებაზე.
 
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): მიგრაციებს ახლა არ უშვებს — ყველა task-ის შემდეგ ერთი დაგეგმილი deploy.
 > სექცია ივსება ყოველი მიგრაციის/frontend ცვლილების დამატებისას; საბოლოო რიგი — Stage-ის ბოლოს.
-- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · `0019_upgrade_requests_checks.sql` (T8; PRE-CHECK 0 მწკრივი; verification: chk_valid=2, insert_policy_ok=t; status CHECK-ში 'cancelled' შედის — shops.py:67 იყენებს) · `0020_instagram_unique.sql` (T9; PRE-CHECK დუბლიკატები → 0 მწკრივი; verification: index_ok=1, duplicates=0; მიგრაციამდე backend deploy სასურველია)
+- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · `0019_upgrade_requests_checks.sql` (T8; PRE-CHECK 0 მწკრივი; verification: chk_valid=2, insert_policy_ok=t; status CHECK-ში 'cancelled' შედის — shops.py:67 იყენებს) · `0020_instagram_unique.sql` (T9; PRE-CHECK დუბლიკატები → 0 მწკრივი; verification: index_ok=1, duplicates=0; მიგრაციამდე backend deploy სასურველია; connect ახლა უარს იღებს `ig_taken`-ით)
 - **წამკითხველი (გაუშვი ჯერ):** `supabase/checks/check_0014_0016.sql` (T15) — ყველა ok=true უნდა იყოს
 - **Frontend build:** ამ stage-ში frontend არ შეცვლილა → `npm run build` და `dist/` ცვლილება არ სჭირდება (T14-ზე დადასტურდა).
 - **ლოკალური წინაპირობა:** შენს `.env`-ში `APP_ENV=development` (T3: default ახლა production).
 
 ### რიგი და შემოწმება
 1. **წამკითხველი:** `supabase/checks/check_0014_0016.sql` SQL Editor-ში → ყველა `ok=true`? თუ არა — ჯერ აკლია 0014/0015/0016 (ფაილებში verification-ებით), მერე გაგრძელება.
-2. **Backend deploy** (`agent-system` → `main` merge/push — შენი თანხმობით, Render auto-deploy). რატომ პირველი: მიგრაციები backend-ს არ არღვევს, მაგრამ 0020-მდე connect-ის „სხვა მაღაზიიდან IG id-ის მოხსნა" უკვე უნდა მუშაობდეს.
+2. **Backend deploy** ⚠️ deploy-ის შემდეგ **დაუყოვნებლივ** T17-ის ნაბიჯი (ნაბიჯი 7): სანამ `CLIENT_IP_TRUSTED_HOPS` სწორად არ არის, ყველა კლიენტი შეიძლება ერთ IP-bucket-ში მოხვდეს და საჯარო შეკვეთა (20/დღე) მთელ საიტზე ამოიწუროს. (`agent-system` → `main` merge/push — შენი თანხმობით, Render auto-deploy). რატომ პირველი: მიგრაციები backend-ს არ არღვევს, მაგრამ 0020-მდე connect-ის „სხვა მაღაზიიდან IG id-ის მოხსნა" უკვე უნდა მუშაობდეს.
    შემდეგ შეამოწმე: `GET /status` → `env=production`; Messenger-ში ბოტი პასუხობს; საჯარო შეკვეთა მარაგს **არ** ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს; Actions-ში CI მწვანეა (ახალი ruff ნაბიჯი).
 3. **`0017_revoke_shops_delete.sql`** → verification: `anon_delete=false, auth_delete=false, service_delete=true, auth_select=true` → ხელით: admin-იდან სატესტო მაღაზიის წაშლა, Storage-ში საქაღალდე გაქრა.
 4. **`0018_orders_privileges.sql`** → ჯერ PRE-CHECK (0 მწკრივი), მერე გაშვება → verification `t,f,f,f,f,f,t,t,1,t` → პანელში: სტატუსის შეცვლა მუშაობს; `done/cancelled`-ის წაშლა მუშაობს; `new/processing`-ის წაშლა → 409.
 5. **`0019_upgrade_requests_checks.sql`** → PRE-CHECK (0 მწკრივი) → verification `chk_valid=2, insert_policy_ok=t` → პანელში პაკეტის მოთხოვნა მუშაობს; მეორე მოთხოვნა პირველს `cancelled`-ზე გადაიყვანს; admin approve/reject მუშაობს.
-6. **`0020_instagram_unique.sql`** → PRE-CHECK დუბლიკატებზე (0 მწკრივი; თუ არა — ჯერ გაასუფთავე) → verification `index_ok=1, duplicates=0` → IG-ის ხელახალი connect სხვა მაღაზიიდან: ძველზე NULL, ახალზე დაყენებულია.
+6. **`0020_instagram_unique.sql`** → PRE-CHECK დუბლიკატებზე (0 მწკრივი; თუ არა — ჯერ გაასუფთავე) → verification `index_ok=1, duplicates=0` → IG-ის connect სხვა მაღაზიიდან უკვე დაკავებულ ანგარიშზე → უარი `ig_taken` შეტყობინებით; იგივე მაღაზიის ხელახალი connect გადის.
 7. **T17** (კლიენტის IP Render-იდან): deploy-ის შემდეგ diagnostic დროებით ჩართე → ერთი მოთხოვნა ცნობილი IP-დან (+ გაყალბებული `X-Forwarded-For`) → Render-ის ლოგში ნახე რეალური XFF → დააყენე `CLIENT_IP_TRUSTED_HOPS` → გამორთე diagnostic. (T13/ORIGIN_SECRET — Backlog.)
 8. **T12** (Gemini მოდელი) — დედლაინი 2026-10-16, დამოუკიდებელია ზემოთაგან.
 
@@ -150,4 +156,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: T17, T18 (კოდი) → T12 (სკრიპტი დაწერილია; გაშვება — მფლობელი) → finish-check
+- Next: T19 → finish-check; T12 — მფლობელი უშვებს სკრიპტს

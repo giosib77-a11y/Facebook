@@ -153,7 +153,7 @@ def client_ip(request: Request, admin: CurrentAuth = Depends(get_current_admin))
         "x_real_ip": h.get("x-real-ip"),
         "peer": request.client.host if request.client else None,
         "resolved": _client_ip(request),
-        "client_ip_header": get_settings().client_ip_header,
+        "client_ip_trusted_hops": get_settings().client_ip_trusted_hops,
     }
 
 

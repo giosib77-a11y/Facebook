@@ -25,12 +25,15 @@ class Settings(BaseSettings):
     # production-ში .env-ში: CORS_ORIGINS="https://shendomen.ge"
     cors_origins: str = "*"
 
-    # Rate limiter-ის კლიენტის IP — proxy-ს მიერ დაყენებული header (Cloudflare → CF-Connecting-IP).
-    # X-Forwarded-For აღარ იკითხება (კლიენტს შეუძლია გააყალბოს). ცარიელი = მხოლოდ socket peer.
-    client_ip_header: str = "cf-connecting-ip"
+    # კლიენტის IP = X-Forwarded-For-ის მარჯვნიდან N-ური ჩანაწერი (1 = ბოლო). Render ამატებს
+    # ჩანაწერებს მარჯვნივ; მარცხენა ჩანაწერები კლიენტის კონტროლშია. CF-Connecting-IP იგნორირდება.
+    client_ip_trusted_hops: int = 1
+    # დროებითი diagnostic: true → ლოგში XFF/peer/არჩეული IP (მაქს. 10 წმ-ში ერთხელ).
+    client_ip_debug: bool = False
 
-    # Origin lock (FA-03): Cloudflare-ის Transform Rule ამ header-ს საიდუმლოთი ამატებს.
+    # Origin lock (FA-03): proxy-ს (მაგ. Cloudflare Transform Rule) ამ header-ს საიდუმლოთი ამატებს.
     # production-ში, თუ დაყენებულია, origin-ზე პირდაპირი მოთხოვნა (header-ის გარეშე) → 403.
+    # ახლა არ გამოიყენება (Cloudflare არ არის); T13 — Backlog.
     origin_secret: str = ""
     origin_secret_header: str = "x-origin-secret"
 

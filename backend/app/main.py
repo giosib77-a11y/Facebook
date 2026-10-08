@@ -121,13 +121,14 @@ class BodySizeLimitMiddleware:
 
 
 # ── Origin lock (FA-03) ──
-# Render-ის origin პირდაპირაც ხელმისაწვდომია, ანუ CF-Connecting-IP ყალბდება. production-ში,
-# ORIGIN_SECRET-ის არსებობისას, მხოლოდ Cloudflare-ის გავლით (საიდუმლო header-ით) მოსულს ვუშვებთ.
+# ORIGIN_SECRET-ის არსებობისას production-ში მხოლოდ საიდუმლო header-ით მოსულს ვუშვებთ
+# (proxy-ს უნდა ემატებოდეს). ახლა Cloudflare არ გამოიყენება და კლიენტის IP არ არის ამაზე
+# დამოკიდებული (იხ. CLIENT_IP_TRUSTED_HOPS); T13 — Backlog.
 _ORIGIN_LOCK_EXEMPT = "/health"  # Render-ის health check origin-ს პირდაპირ ურტყამს
 _FORBIDDEN_BODY = json.dumps({"detail": "Forbidden"}).encode()
 
 if settings.is_production and not settings.origin_secret:
-    logger.warning("ORIGIN_SECRET not set — origin lock disabled; CF-Connecting-IP is spoofable")
+    logger.warning("ORIGIN_SECRET not set — origin lock disabled (client IP does not depend on it — see CLIENT_IP_TRUSTED_HOPS)")
 
 
 class OriginLockMiddleware:

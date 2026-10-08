@@ -26,7 +26,7 @@ _PHONE_CHARS = re.compile(r"[0-9 +\-()]+")
 _NON_DIGITS = re.compile(r"[^0-9]")
 
 # საჯარო შეკვეთების დღიური ლიმიტი ერთ IP-ზე (B-1). in-memory; სანდოა მხოლოდ მაშინ,
-# როცა ORIGIN_SECRET აქტიურია (სხვაგვარად CF-Connecting-IP ყალბდება).
+# როცა CLIENT_IP_TRUSTED_HOPS სწორადაა დაყენებული (IP = X-Forwarded-For-ის მარჯვენა ჩანაწერი).
 PUBLIC_ORDERS_PER_IP_PER_DAY = 20
 
 # მარაგი იკლებს მხოლოდ `new → processing` (ან სხვა „დაკავებულ“ სტატუსზე) გადასვლისას (B-1):
