@@ -144,6 +144,29 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Frontend: `npm run build` ახლა `frontend/dist/`-ს არ ცვლის (git status სუფთაა) → dist commit-შია და აქტუალურია.
 - `git status` სუფთაა; secrets repo-ში არ ჩაგდებულა (T19: ტესტები `.env`-ს არ კითხულობენ).
 
+## Stage 11 — Live-მზადყოფნა (შემოთავაზებული, ელოდება მფლობელის დადასტურებას)
+> წყარო: გარე აუდიტი (2026-10-09, 27 პუნქტი), ყოველი პუნქტი გადამოწმდა ახლანდელ კოდში (`agent-system`, 502b74c).
+> დადასტურების შემდეგ: Stage 10-ის task-ები გადავა `## Stage 10 — Done`-ში, Run State განულდება.
+
+### Tasks (მხოლოდ დადასტურებული)
+- [ ] **S11-1 — should-fix: შეკვეთის სტატუსი და მარაგი ერთ ტრანზაქციაში** (აუდიტი #2) · `backend/app/api/orders.py` (`update_order_status`), მიგრაცია `0021`
+  - ახლა: სტატუსი `auth.client`-ით ახლდება, მარაგი ცალკე RPC-ით (`_take_stock` წინ, `_apply_stock_delta(+1)` შემდეგ). `processing/done → cancelled`-ზე, თუ სტატუსი შეიცვალა და მარაგის დაბრუნება ჩავარდა → შეკვეთა გაუქმებულია, მარაგი არ დაბრუნდა, პასუხი 500 (კომპენსაცია მხოლოდ აღების მხარეს არსებობს).
+  - Fix: ერთი Postgres ფუნქცია (`change_order_status(order_id, expected_old, new)`) — სტატუსის ოპტიმისტური ჩაკეტვა + მარაგის აღება/დაბრუნება ერთ ტრანზაქციაში; იძახება service client-ით მხოლოდ `auth.client`-ით ownership-ის შემოწმების შემდეგ; `REVOKE EXECUTE … FROM public, anon, authenticated`. Python-ის კომპენსაციის ლოგიკა ქრება.
+  - Verify: offline ტესტები (RPC-ის შეცდომის კოდები → 409/400), SQL verification query; მიგრაციას მფლობელი უშვებს.
+- [ ] **S11-2 — should-fix: Facebook OAuth ავტომატურად `pages[0]`-ს იღებს** (აუდიტი #8) · `backend/app/api/facebook.py` (connect callback)
+  - რამდენიმე Page-ზე წვდომის მიცემისას შემთხვევითი პირველი მიება მაღაზიას → ბოტი არასწორ გვერდზე პასუხობს.
+  - ❓ გადაწყვეტილება: (ა, რეკომენდებული) >1 გვერდი → უარი მკაფიო შეტყობინებით („Facebook-ის ფანჯარაში მონიშნე მხოლოდ ერთი გვერდი") — backend + ერთი reason frontend-ში; (ბ) გვერდის არჩევის UI popup-ში — მეტი კოდი და state.
+  - Verify: ტესტი 0/1/2+ გვერდზე.
+- [ ] **S11-3 — should-fix: Gemini-ს გამოძახებას timeout არ აქვს** (აუდიტი #21) · `backend/app/services/bot.py` (`get_bot_reply`)
+  - `genai.Client` `http_options` timeout-ის გარეშეა; ჩამოკიდებული გამოძახება webhook-ის threadpool worker-ს უსასრულოდ იკავებს (4 მცდელობაც დამატებით), კლიენტი პასუხს ვერ იღებს.
+  - Fix: `HttpOptions(timeout=…)` (მაგ. 25 წმ) + მთლიანი ბიუჯეტი retry-ებით ≤ ~45 წმ; timeout → არსებული fallback პასუხი.
+  - Verify: ტესტი — timeout-ის exception → fallback; retry-ების ბიუჯეტი.
+
+### აუდიტის გადამოწმების შედეგი (27 პუნქტი)
+- **(ა) უკვე გასწორებულია:** #7 `/test-chat` fail-open → T3 (`APP_ENV` default `production`); #10 XFF-ის ნდობა → T17 + T22 (მარჯვენა hop, `CLIENT_IP_TRUSTED_HOPS=3`, peer აღარ გამოიყენება); #26 `admin_email` → F-08 (კონფიგში აღარ არსებობს; `ADMIN_USER_IDS`, ცარიელი = fail-closed).
+- **(ბ) რეალურია:** #2, #8, #21 → S11-1..3 (should-fix). nit-ები → Backlog: #15, #17, #24, #27, #1-ის ნარჩენი. #23 უკვე Backlog-შია.
+- **(გ) არ შეესაბამება / ზედმეტია:** #1, #3, #4, #5, #6, #9, #11, #12, #13, #14, #16, #18, #19, #20, #22, #25 → PROJECT.md `Accepted Risks` (მიზეზებით).
+
 ## Backlog (needs user decision)
 - **T12 (გადადებულია 2026-10-08) — Gemini მოდელი / AI provider-ის შეფასება.** მომავალი ეტაპი: AI provider-ის შეფასება — gemini-2.5-flash, gemini-3.5-flash (შეზღუდული thinking-ით) და Claude Haiku 4.5; შედარება ხარისხით, სიჩქარით და ფასით (თითო პასუხზე).
   - შედარების სკრიპტი არსებობს: `backend/scripts/compare_gemini_models.py` (პირველი შედეგი — Decision Log 2026-10). multimodal (ფოტოს გაგება) და `[[HANDOFF]]` ჯერ მხოლოდ ტექსტზეა შემოწმებული.
@@ -164,6 +187,12 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
   - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
   - მიზეზი: Cloudflare ახლა არ გამოიყენება; ნაცვლად — T17. დაბრუნდება Cloudflare-ის მომავალ ჩართვასთან ერთად.
+### Stage 11-ის აუდიტიდან (nit, 2026-10-09)
+- **#15** საუბრის ისტორიის race: Messenger-ში ორი სწრაფი შეტყობინება პარალელურად მუშავდება, ორივე ძველ history-ს კითხულობს → ბოტის მეხსიერებიდან ერთი turn იკარგება (`webhook.py` `_save_turn`). კლიენტს ორივე პასუხი მიდის. Fix: append RPC.
+- **#17** admin revenue `new` + `processing` + `done`-ს ერთად ითვლის (`admin.py` overview); B-1-ის შემდეგ `new` დაუდასტურებელია → ცალკე „დასრულებული" (done) და „მოლოდინში" მაჩვენებელი.
+- **#24** stale `dist/`-ის რისკი: CI-ში `npm ci && npm run build && git diff --exit-code frontend/dist` (იაფია და დავიწყებულ build-ს იჭერს).
+- **#27** `PAYMENT_IBAN`/`PAYMENT_CONTACT` default-ად placeholder ტექსტია (`config.py`) → გამყიდველი placeholder-ს ნახავს, თუ Render-ზე არ არის დაყენებული. მფლობელის შესამოწმებელი + production startup warning.
+- **#1-ის ნარჩენი** Send API-ს ჩავარდნისას (მაგ. ვადაგასული token) კლიენტი პასუხს ვერ იღებს და ეს მხოლოდ ლოგში ჩანს (`webhook.py`) → საუბარი `needs_attention`-ად მოინიშნოს, რომ გამყიდველმა დაინახოს.
 ### Finish-check nits (2026-10-08, standard-reviewer)
 - 0018-ის header-ის დასაბუთება ზუსტი არ არის: გამყიდველს PostgREST-ით `status`-ის პირდაპირ შეცვლა მაინც შეუძლია (`new → processing` დაკლების გარეშე, მერე API-ით `→ cancelled` = მარაგი +N). ზიანი მხოლოდ საკუთარ მარაგზე (`products.quantity`-საც ისედაც ცვლის, 0015). სრულად დახურვა: UPDATE-ის სრული revoke და status-ის ჩაწერა service-ით ownership-ის შემდეგ.
 - `orders.py:410-411`: `_apply_stock_delta(+1)` შეცდომა სტატუსის შეცვლის შემდეგ 500-ს აბრუნებს — try/except + `logger.exception`.
