@@ -35,7 +35,7 @@ push-ამდე შემოწმება:
 ## 🔴 კრიტიკული (ამის გარეშე არ ვტვირთავთ)
 
 ### 1. საიდუმლო გასაღებები — `.env` არასდროს სერვერზე ფაილად
-- [ ] `SUPABASE_SERVICE_ROLE`, `GEMINI_API_KEY`, `FB_APP_SECRET`, `FERNET_KEY`
+- [ ] `SUPABASE_SECRET_KEY` (`sb_secret_...`; ძველი `SUPABASE_SERVICE_ROLE_KEY` fallback-ად მუშაობს), `GEMINI_API_KEY`, `FB_APP_SECRET`, `FERNET_KEY`
       გადავიტანოთ hosting-ის **Environment Variables**-ში (არა ფაილად რეპოში)
 - [ ] დავრწმუნდეთ რომ `.env` **არასდროს** აიტვირთა Git-ზე (`git log` შემოწმება)
 - [ ] თუ ერთხ ელ მაინც აიტვირთა — **ყველა გასაღები შევცვალოთ** (rotate)
@@ -62,7 +62,7 @@ push-ამდე შემოწმება:
       (ეს პაროლის აღდგენასაც ეხ ება)
 
 ### 5. `public/config.js` — მხ ოლოდ საჯარო გასაღებები
-- [ ] გადავამოწმოთ: მხ ოლოდ `anon key` + `URL`
+- [ ] გადავამოწმოთ: მხ ოლოდ `publishable key` (`sb_publishable_...`) + `URL`
       (`service_role` / `FB_APP_SECRET` / `GEMINI_KEY` — არასდროს frontend-ში)
 
 ---

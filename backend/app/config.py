@@ -2,7 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # root .env და backend/.env — ორივეს ვცდილობთ წაკითხვას
@@ -13,8 +13,16 @@ _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 class Settings(BaseSettings):
     # Supabase
     supabase_url: str = ""
-    supabase_anon_key: str = Field("", repr=False)
-    supabase_service_role_key: str = Field("", repr=False)
+    # ახალი API key-ები (sb_publishable_... / sb_secret_...). ძველი legacy სახელები
+    # (SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY) fallback-ად მუშაობს; ახალი სახელი უპირატესია.
+    supabase_publishable_key: str = Field(
+        "", repr=False,
+        validation_alias=AliasChoices("SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY"),
+    )
+    supabase_secret_key: str = Field(
+        "", repr=False,
+        validation_alias=AliasChoices("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
+    )
 
     # App
     # fail-closed: APP_ENV-ის გარეშე production. dev-ში .env-ში APP_ENV=development (A-4)

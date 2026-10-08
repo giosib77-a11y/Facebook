@@ -130,7 +130,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │       │   └── admin.py         მფლობელის პანელი (მხოლოდ ADMIN_EMAIL)
 │       ├── core/
 │       │   ├── security.py      Supabase JWT → CurrentAuth (RLS-იანი კლიენტი)
-│       │   ├── supabase_client.py  anon / service_role კლიენტები
+│       │   ├── supabase_client.py  anon (publishable key) / service (secret key) კლიენტები
 │       │   ├── db.py            Postgres შეცდომების → HTTP კოდები
 │       │   ├── crypto.py        Fernet — page token-ის შიფვრა
 │       │   ├── ratelimit.py     in-memory per-IP sliding window
@@ -511,8 +511,8 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | ცვლადი | სავალდებულო | ნაგულისხმევი | აღწერა |
 |---|---|---|---|
 | `SUPABASE_URL` | ✅ | — | პროექტის URL |
-| `SUPABASE_ANON_KEY` | ✅ | — | საჯარო გასაღები |
-| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | — | 🔒 სერვერის გასაღები — **არასდროს frontend-ში** |
+| `SUPABASE_PUBLISHABLE_KEY` | ✅ | — | საჯარო გასაღები (`sb_publishable_...`). ძველი სახელი `SUPABASE_ANON_KEY` fallback-ად მუშაობს |
+| `SUPABASE_SECRET_KEY` | ✅ | — | 🔒 სერვერის გასაღები (`sb_secret_...`) — **არასდროს frontend-ში**. ძველი სახელი `SUPABASE_SERVICE_ROLE_KEY` fallback-ად მუშაობს; ორივე რომ იყოს, ახალი იგებს |
 | `APP_ENV` | | `production` | `production` (default, fail-closed) → HSTS, დამალული შეცდომები, `/test-chat` off. ლოკალურად `.env`-ში `APP_ENV=development` |
 | `APP_HOST` · `APP_PORT` | | `0.0.0.0` · `8000` | |
 | `CORS_ORIGINS` | | `*` | production-ში კონკრეტული დომენი |

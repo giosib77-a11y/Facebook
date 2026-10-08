@@ -2,7 +2,7 @@
 
 Two separate fakes are wired in:
   - `user_db`    — the per-request JWT client (CurrentAuth.client, RLS applies)
-  - `service_db` — what `get_service_client()` returns (service_role, no RLS)
+  - `service_db` — what `get_service_client()` returns (secret key, no RLS)
 so a test can tell which client performed each write.
 """
 # ruff: noqa: E402  (env must be pinned before the app imports below)
@@ -15,7 +15,8 @@ from app.config import Settings
 
 Settings.model_config["env_file"] = None
 for _name in (
-    "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "ORIGIN_SECRET",
+    "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY",
+    "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "ORIGIN_SECRET",
     "GEMINI_API_KEY", "FB_APP_ID", "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_REDIRECT_URI",
     "FB_LOGIN_CONFIG_ID", "FB_TOKEN_ENCRYPTION_KEY", "PUBLIC_BASE_URL", "ADMIN_USER_IDS",
 ):

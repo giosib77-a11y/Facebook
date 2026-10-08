@@ -86,7 +86,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - (ბ) uvicorn-ის proxy-headers (ნაგულისხმევად ჩართულია; access log-ში `1.2.3.4:0` ამას აჩვენებს) `request.client.host`-ს XFF-ით ანაცვლებს → `peer` კლიენტის კონტროლშია. `_client_ip` პირველ რიგში XFF-ის მარჯვენა ჩანაწერს იღებს (ეს გაყალბებას უძლებს), მაგრამ fallback (`entries < hops`) `peer`-ზეა → გაყალბებადი. სხვა გამოყენება: `admin.py:154` (მხოლოდ დიაგნოსტიკა).
   - Fix: (1) `LOG_LEVEL` (default INFO) — `app` logger-ი stdout-ზე; **წინასწარ გადაამოწმე ყველა `logger.info`/`debug` — PII (ტექსტი, PSID, ტელეფონი, token) არ იწერებოდეს**; (2) production-ში `_client_ip` fallback = ფიქსირებული საერთო bucket (`"unknown"`) და არა `peer`; dev-ში peer; ტესტი — გაყალბებული peer (XFF-ის გარეშე/ცოტა ჩანაწერით) ლიმიტს ვერ აცდენს; (3) მფლობელს ვთავაზობ (კოდი არა): Render start command-ში `--no-proxy-headers`, რომ `request.client` რეალური socket peer იყოს (access log-ში IP-ები ვეღარ გამოჩნდება).
   - Verify: ტესტები; ლოგის ფორმატი/ლოგში secrets არ ხვდება.
-- [ ] **T23 — Supabase-ის ახალ API key-ებზე გადასვლა (ძველი legacy service_role გაჟონა)** · `backend/app/config.py`, `core/supabase_client.py`, `core/security.py`, `frontend/src/**`, `frontend/public/config.js`
+- [x] **T23 — Supabase-ის ახალ API key-ებზე გადასვლა (ძველი legacy service_role გაჟონა)** · `backend/app/config.py`, `core/supabase_client.py`, `core/security.py`, `frontend/src/**`, `frontend/public/config.js`
   - მფლობელის გადაწყვეტილება (2026-10-09): backend → `sb_secret_...` (service_role-ის ნაცვლად), frontend → `sb_publishable_...` (anon-ის ნაცვლად); legacy key-ები ბოლოს ითიშება. key-ების მნიშვნელობებს მფლობელი სვამს, აგენტი არ ხედავს.
   - გადაწყვეტილებები: ახალი სახელები `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY`; ძველი `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` მუშაობს fallback-ად (pydantic AliasChoices; ახალი სახელი უპირატესია) — უსაფრთხო rollout და rollback env-ის მეშვეობით. supabase-py 2.32.0 key-ის ფორმატს არ ამოწმებს (მხოლოდ ცარიელს). frontend: `supabase-js ^2.112.3`; `config.js`-ში ველი `SUPABASE_PUBLISHABLE_KEY` (მნიშვნელობა ჯერ უცვლელი, მფლობელი ცვლის).
   - Verify: ტესტები (ახალი და ძველი env სახელი, ახალი უპირატესია, secrets repr-ში არ ჩანს); `npm run build` + `dist/` commit-ში; Deploy plan — ზუსტი ნაბიჯები.
@@ -113,6 +113,28 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
 7. **key-ების როტაცია** (Gemini, `FB_APP_SECRET`, Supabase service-role) — როდის, მფლობელი წყვეტს. `FB_TOKEN_ENCRYPTION_KEY`-ს არ ვეხებით.
 8. ლოკალურ `.env`-ში `APP_ENV=development`.
+
+### 🔑 Supabase API key-ების გადასვლა (T23) — ზუსტი რიგი
+> key-ების მნიშვნელობებს მფლობელი სვამს. **ძველი service_role გაჟონა → ის ძალაში რჩება, სანამ legacy key-ები არ გამოირთვება (ნაბიჯი K7). არ გააჭიანურო.**
+> ახალი env სახელები: `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`, ძველი: `SUPABASE_ANON_KEY`), `SUPABASE_SECRET_KEY` (`sb_secret_…`, ძველი: `SUPABASE_SERVICE_ROLE_KEY`). ახალი სახელი უპირატესია; ძველი მუშაობს fallback-ად. ცარიელ-მაგრამ-არსებული ახალი ცვლადი ძველს **ფარავს** → rollback-ისას ახალი ცვლადი **წაშალე**, ცარიელზე ნუ დააყენებ.
+> სად ვიღებთ: Supabase Dashboard → Project Settings → API Keys → ახალი tab (Publishable / Secret). Secret key-ს არ ვაჩვენებთ არსად, არ ვაგზავნით.
+
+- **K1. კოდის deploy** (merge `agent-system` → `main` + push). ძველი env ჯერ არ იცვლება — ბოლო ეტაპზე ცვლილება უხილავია (fallback). frontend `config.js`-ში ახლა ველი უკვე `SUPABASE_PUBLISHABLE_KEY`, მნიშვნელობა ჯერ ძველი anon JWT. შემოწმება: საიტი/პანელი/ბოტი ისევ მუშაობს.
+- **K2. Render env:** დაამატე `SUPABASE_SECRET_KEY=sb_secret_…` და `SUPABASE_PUBLISHABLE_KEY=sb_publishable_…` (ძველებს ჯერ ნუ წაშლი) → Render restart.
+- **K3. შემოწმება backend-ზე ახალი key-ებით** (ეს არის ერთადერთი ადგილი, სადაც `sb_secret_`-ის რეალური მუშაობა დგინდება — offline ვერ დადასტურდა):
+  - პანელში login, მაღაზიების/პროდუქტების სია (publishable + მომხმარებლის JWT, RLS);
+  - ფოტოს ატვირთვა/წაშლა (Storage, secret key);
+  - საჯარო შეკვეთა `order.html`-იდან (service client);
+  - Messenger-ში ბოტი პასუხობს (webhook → service client);
+  - admin პანელი იხსნება (service client);
+  - Render-ის ლოგში `Invalid API key`/`401`/`permission denied` არ არის.
+  თუ რამე ცუდადაა — **rollback:** წაშალე `SUPABASE_SECRET_KEY` და `SUPABASE_PUBLISHABLE_KEY` Render-ზე (ძველი სახელები გააგრძელებს მუშაობას), restart.
+- **K4. ლოკალური `.env`:** იგივე ორი ცვლადი ახალი სახელებით (ძველი ორი ხაზი წაშალე); ლოკალური backend-ი production Supabase-ს უკავშირდება — მხოლოდ შენ გაუშვი.
+- **K5. frontend:** `frontend/public/config.js`-ში `SUPABASE_PUBLISHABLE_KEY`-ის მნიშვნელობა შეცვალე `sb_publishable_…`-ით (ეს key საჯაროა, git-ში ჩადება ნორმალურია) → `cd frontend && npm run build` → commit `public/config.js` + `dist/` → push. შემოწმება: login/logout, რეგისტრაცია, პაროლის აღდგენა (`reset.html`), `order.html` (მენიუ იტვირთება), admin.html.
+- **K6. Render env-ის გასუფთავება:** წაშალე `SUPABASE_SERVICE_ROLE_KEY` და `SUPABASE_ANON_KEY` → restart → K3-ის შემოწმება ხელახლა (დარწმუნდი, რომ ახალი სახელები ნამდვილად მუშაობს და fallback-ზე არ იყავი).
+- **K7. legacy key-ების გამორთვა:** Supabase Dashboard → Project Settings → API Keys → **Legacy API keys** → გამორთვა („Disable JWT-based API keys" / legacy anon & service_role). ეს ააქტიურებს გაჟონილი service_role-ის გაუქმებას. ეფექტი: ძველი anon/service_role JWT-ები აღარ მუშაობს; მომხმარებლების სესიის JWT-ები Auth-ისაა და არ ირღვევა. უკან დასაბრუნებელია Dashboard-იდან (დროებით, თუ რამე გაფუჭდა).
+- **K8. შემოწმება K7-ის შემდეგ:** იგივე სია, რაც K3 + ახალი მომხმარებლის რეგისტრაცია/login + admin. გაჟონილი service_role-ით სცადე ერთი read (curl `apikey: <ძველი>` → 401 უნდა იყოს) — ამით დაადასტურებ, რომ გაუქმდა.
+- **K9. გაჟონვის შემდეგ:** გადახედე Supabase Logs/Auth-ს საეჭვო აქტივობაზე (უცნობი მომხმარებლები, მასობრივი წაკითხვა/წაშლა) იმ პერიოდში, როცა key ძალაში იყო; საჭიროებისას ეს ცალკე task იქნება.
 
 ### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
 - `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.

@@ -17,7 +17,7 @@ backend ცალკე უნდა გაუშვა: `../start-backend.ps1` 
 ```
 *.html              8 გვერდი — Vite-ის entry-ები (MPA, არა SPA)
 public/             უცვლელად კოპირდება dist/-ში
-  config.js         public კონფიგი (SUPABASE_URL, anon key, API_BASE)
+  config.js         public კონფიგი (SUPABASE_URL, publishable key, API_BASE)
   favicon.svg, sample-products.{csv,xlsx}
 styles.css · landing.css · order.css
 src/

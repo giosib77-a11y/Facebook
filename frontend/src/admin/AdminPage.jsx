@@ -7,7 +7,7 @@ import ShopDetailModal from "./ShopDetailModal.jsx";
 
 const cfg = window.APP_CONFIG;
 // detectSessionInUrl:false — იგივე კონფიგი, რაც პანელს აქვს (Facebook-ის #_=_ გამო)
-const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
 

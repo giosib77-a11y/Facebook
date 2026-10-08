@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const cfg = window.APP_CONFIG;
 
-export const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+export const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,

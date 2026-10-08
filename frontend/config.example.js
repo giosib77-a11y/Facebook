@@ -1,8 +1,8 @@
 // გადააკოპირე frontend/public/config.js-ად და შეავსე შენი public მნიშვნელობებით.
 // (public/ საქაღალდეს Vite უცვლელად აკოპირებს dist/-ში — build არ სჭირდება.)
-// anon key public-ია (ბრაუზერისთვის). service_role key აქ არასდროს ჩასვა!
+// publishable key (sb_publishable_...) public-ია (ბრაუზერისთვის). secret key აქ არასდროს ჩასვა!
 window.APP_CONFIG = {
   SUPABASE_URL: "https://YOUR-PROJECT-ref.supabase.co",
-  SUPABASE_ANON_KEY: "your-anon-public-key",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_your-key-here",
   API_BASE: "http://localhost:8000",
 };

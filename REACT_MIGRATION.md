@@ -143,7 +143,7 @@ smoke-ტესტის #6 („Connect Facebook Page") **რეალურ გ
    → შედეგი უნდა იყოს **ცარიელი**.
 2. Vite ბრაუზერში ამჟღავნებს **მხოლოდ `VITE_`-პრეფიქსიან** ცვლადებს.
    არც ერთი სერვერული საიდუმლო არ დაარქვა `VITE_`-ით.
-3. `config.js`-ში მხოლოდ **`SUPABASE_ANON_KEY`** (საჯაროა, RLS იცავს) — `service_role` არასდროს.
+3. `config.js`-ში მხოლოდ **`SUPABASE_PUBLISHABLE_KEY`** (საჯაროა, RLS იცავს) — `service_role` არასდროს.
 4. `package-lock.json` **ჩააკომიტე** — რომ build განმეორებადი იყოს.
 
 ---

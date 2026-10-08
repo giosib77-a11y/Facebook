@@ -13,7 +13,7 @@ const cfg = window.APP_CONFIG;
 
 // ცალკე კლიენტი — პანელისგან განსხვავებით detectSessionInUrl:true,
 // რადგან email-ის ბმულიდან recovery token უნდა წაიკითხოს.
-export const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+export const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_PUBLISHABLE_KEY, {
   auth: { detectSessionInUrl: true, persistSession: false, flowType: "implicit" },
 });
 

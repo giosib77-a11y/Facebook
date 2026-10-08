@@ -44,7 +44,7 @@ def get_current_auth(authorization: str | None = Header(default=None)) -> Curren
     settings = get_settings()
     token = _extract_token(authorization)
 
-    client = create_client(settings.supabase_url, settings.supabase_anon_key)
+    client = create_client(settings.supabase_url, settings.supabase_publishable_key)
 
     try:
         user_resp = client.auth.get_user(token)
