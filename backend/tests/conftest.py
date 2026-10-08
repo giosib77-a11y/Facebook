@@ -5,11 +5,21 @@ Two separate fakes are wired in:
   - `service_db` — what `get_service_client()` returns (service_role, no RLS)
 so a test can tell which client performed each write.
 """
+# ruff: noqa: E402  (env must be pinned before the app imports below)
 import os
 
-# No real Supabase: blank credentials override any local .env before the app loads.
-os.environ["SUPABASE_URL"] = ""
-os.environ["SUPABASE_ANON_KEY"] = ""
+# Tests never read a local .env (T19): the env_file is switched off on the Settings class
+# before any Settings() is built, and every string setting is pinned to a blank value so a
+# stray shell variable cannot leak in either. Must stay above the app imports.
+from app.config import Settings
+
+Settings.model_config["env_file"] = None
+for _name in (
+    "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "ORIGIN_SECRET",
+    "GEMINI_API_KEY", "FB_APP_ID", "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_REDIRECT_URI",
+    "FB_LOGIN_CONFIG_ID", "FB_TOKEN_ENCRYPTION_KEY", "PUBLIC_BASE_URL", "ADMIN_USER_IDS",
+):
+    os.environ[_name] = ""
 # default is now production (fail-closed); tests run in development explicitly.
 os.environ["APP_ENV"] = "development"
 

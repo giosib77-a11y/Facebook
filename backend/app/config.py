@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # root .env და backend/.env — ორივეს ვცდილობთ წაკითხვას
@@ -12,8 +13,8 @@ _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 class Settings(BaseSettings):
     # Supabase
     supabase_url: str = ""
-    supabase_anon_key: str = ""
-    supabase_service_role_key: str = ""
+    supabase_anon_key: str = Field("", repr=False)
+    supabase_service_role_key: str = Field("", repr=False)
 
     # App
     # fail-closed: APP_ENV-ის გარეშე production. dev-ში .env-ში APP_ENV=development (A-4)
@@ -34,11 +35,11 @@ class Settings(BaseSettings):
     # Origin lock (FA-03): proxy-ს (მაგ. Cloudflare Transform Rule) ამ header-ს საიდუმლოთი ამატებს.
     # production-ში, თუ დაყენებულია, origin-ზე პირდაპირი მოთხოვნა (header-ის გარეშე) → 403.
     # ახლა არ გამოიყენება (Cloudflare არ არის); T13 — Backlog.
-    origin_secret: str = ""
+    origin_secret: str = Field("", repr=False)
     origin_secret_header: str = "x-origin-secret"
 
     # Gemini (ბოტი — ნაბიჯი 4)
-    gemini_api_key: str = ""
+    gemini_api_key: str = Field("", repr=False)
     gemini_model: str = "gemini-2.5-flash"
 
     # ბოტის საუბრის მეხსიერება — ბოლო N შეტყობინება, ბოლო H საათში (0 = გამორთული)
@@ -47,15 +48,15 @@ class Settings(BaseSettings):
 
     # Facebook Messenger (ნაბიჯი 5)
     fb_app_id: str = ""
-    fb_app_secret: str = ""
-    fb_verify_token: str = ""              # ჩვენი არჩეული token webhook-ის ვერიფიკაციისთვის
+    fb_app_secret: str = Field("", repr=False)
+    fb_verify_token: str = Field("", repr=False)              # ჩვენი არჩეული token webhook-ის ვერიფიკაციისთვის
     fb_graph_version: str = "v21.0"
     fb_redirect_uri: str = ""              # backend callback (ngrok https + /facebook/connect/callback)
     # Facebook Login for Business — Login Configuration ID (business asset/page flow).
     # თუ დაყენებულია → config-based login (business-owned გვერდებისთვის); თუ არა → scope-based.
     fb_login_config_id: str = ""
     frontend_url: str = "http://localhost:5500"
-    fb_token_encryption_key: str = ""      # Fernet key page token-ის დასაშიფრად
+    fb_token_encryption_key: str = Field("", repr=False)      # Fernet key page token-ის დასაშიფრად
 
     # საჯარო base URL (პანელი/ფორმა აქედან იხსნება). ცარიელია → fb_redirect_uri-დან გამოითვლება.
     public_base_url: str = ""
