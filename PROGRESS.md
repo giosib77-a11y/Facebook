@@ -74,7 +74,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - Fix: conftest ყველა secret-ს (GEMINI_API_KEY, SUPABASE_SERVICE_ROLE_KEY, FB_APP_SECRET, FB_TOKEN_ENCRYPTION_KEY, FB_VERIFY_TOKEN, ...) ცარიელებს/ფიქტიურ მნიშვნელობას უსვამს app-ის import-მდე, და/ან secret ველები `SecretStr`/`repr=False`. Tests ლოკალურ `.env`-ზე არ უნდა იყვნენ დამოკიდებული.
   - Verify: ტესტი — `repr(get_settings())` არ შეიცავს secret-ს; `pytest -q` გადის `.env`-ის გარეშეც (ცარიელი env-ით).
   - ⚠️ მფლობელს: ტრანსკრიპტში უკვე გამოჩნდა Gemini key, FB_APP_SECRET, Supabase service-role და FB_TOKEN_ENCRYPTION_KEY — როტაცია საკუთარ შეფასებაზე.
-- [ ] **T20 — CRITICAL (finish-check): deploy-მდე შექმნილ `new` შეკვეთებზე მარაგი არასწორად დაითვლება** · `supabase/one-off/release_legacy_new_order_stock.sql`
+- [x] **T20 — CRITICAL (finish-check): deploy-მდე შექმნილ `new` შეკვეთებზე მარაგი არასწორად დაითვლება** · `supabase/one-off/release_legacy_new_order_stock.sql`
   - ძველი კოდი მარაგს `create_order`-ისას აკლებდა; ახალი `new`-ს „მარაგი არ ჩამოწერილა"-დ თვლის → `new → processing` მარაგს მეორედ აკლებს (ან 409), `new → cancelled` აღარ აბრუნებს (მარაგი იკარგება). Render-ის deploy-ზე ძველი instance რამდენიმე წუთი კიდევ იღებს შეკვეთებს ძველი წესით.
   - Fix: ერთჯერადი SQL (მფლობელი უშვებს backend deploy-ის დასრულებისთანავე): preview → cutoff (ახალი instance-ის live დრო) → `apply_stock_delta(..., +1)` cutoff-მდე შექმნილ `new` შეკვეთებზე, ერთ ტრანზაქციაში, double-run-ისგან დაცვით. Deploy plan-ში ცალკე ნაბიჯი.
   - Verify: SQL-ის ხელით გადამოწმება RPC-სთან; რეალურ Postgres-ზე ვერ გაიშვება (მფლობელი).
@@ -92,6 +92,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 2. **Backend deploy** (⚠️ `CLIENT_IP_DEBUG=true` Render env-ში **deploy-მდე** დააყენე, რომ არასწორი hops-ის ფანჯარა მინიმალური იყოს) ⚠️ deploy-ის შემდეგ **დაუყოვნებლივ** T17-ის ნაბიჯი (ნაბიჯი 7): სანამ `CLIENT_IP_TRUSTED_HOPS` სწორად არ არის, ყველა კლიენტი შეიძლება ერთ IP-bucket-ში მოხვდეს და საჯარო შეკვეთა (20/დღე) მთელ საიტზე ამოიწუროს. (`agent-system` → `main` merge/push — შენი თანხმობით, Render auto-deploy). რატომ პირველი: მიგრაციები backend-ს არ არღვევს, მაგრამ 0020-მდე connect-ის „სხვა მაღაზიიდან IG id-ის მოხსნა" უკვე უნდა მუშაობდეს.
    შემდეგ შეამოწმე: `GET /status` → `env=production`; Messenger-ში ბოტი პასუხობს; საჯარო შეკვეთა მარაგს **არ** ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს; Actions-ში CI მწვანეა (ახალი ruff ნაბიჯი).
 2a. **T20 — ერთჯერადი მარაგის გასწორება (CRITICAL)** — backend deploy-ის live გახდომისთანავე: `supabase/one-off/release_legacy_new_order_stock.sql` (preview → cutoff = Render deploy event-ის დრო → გაშვება ერთხელ). ამის გარეშე deploy-მდე შექმნილი `new` შეკვეთების დადასტურება მარაგს მეორედ დააკლებს, გაუქმება კი ვერ დააბრუნებს.
+   პროცედურა: (1) Render → Events-ში ჩაიწერე ახალი deploy-ის ზუსტი live დრო UTC-ში; (2) SQL Editor-ში STEP 1a/1b — `EDIT_CUTOFF` ჩაანაცვლე ამ დროით, გაუშვი, შეამოწმე `orders_to_process` და `newest < cutoff`, შეინახე 1b შედეგი; (3) STEP 2-ში იგივე cutoff და გაშვება; (4) STEP 3a: `details` → `orders_processed=N` = 1a-ის რიცხვს. ორჯერ გაშვება PK-ით ჩავარდება და მარაგს არ შეცვლის.
+   ⚠️ ფანჯარა deploy-სა და სკრიპტს შორის: ამ ხანში გაუქმებული ძველი `new` შეკვეთის მარაგი არ დაბრუნდება, `processing`-ზე გადაყვანილისა კი ორჯერ დაიკლება — დროულად გაუშვი და ფანჯარაში შეცვლილები ხელით გადაამოწმე (`updated_at >= cutoff and created_at < cutoff`). SQL რეალურ Postgres-ზე გაუშვებელია — პირველი გაშვება შენთან.
 3. **`0017_revoke_shops_delete.sql`** → verification: `anon_delete=false, auth_delete=false, service_delete=true, auth_select=true` → ხელით: admin-იდან სატესტო მაღაზიის წაშლა, Storage-ში საქაღალდე გაქრა.
 4. **`0018_orders_privileges.sql`** → ჯერ PRE-CHECK (0 მწკრივი), მერე გაშვება → verification `t,f,f,f,f,f,t,t,1,t` → პანელში: სტატუსის შეცვლა მუშაობს; `done/cancelled`-ის წაშლა მუშაობს; `new/processing`-ის წაშლა → 409.
 5. **`0019_upgrade_requests_checks.sql`** → PRE-CHECK (0 მწკრივი) → verification `chk_valid=2, insert_policy_ok=t` → პანელში პაკეტის მოთხოვნა მუშაობს; მეორე მოთხოვნა პირველს `cancelled`-ზე გადაიყვანს; admin approve/reject მუშაობს.
@@ -166,4 +168,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: T20 (fix round 1) → მიზნობრივი გადამოწმება → Stage Done
+- Next: Stage Done — დარჩენილი მხოლოდ მფლობელის ნაბიჯები (Deploy plan)
