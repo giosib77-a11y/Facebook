@@ -97,15 +97,14 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   ⚠️ პირობა: თუ deploy-მდე ძველმა backend-მა ახალი შეკვეთა მიიღო (ძველი წესით მარაგი უკვე დაკლებულია), `orders` ცხრილი deploy-ის შემდეგ ისევ შეამოწმე (`select count(*) from public.orders;`); თუ > 0 და ისინი `new`-ია deploy-მდე შექმნილი — გამოიყენე ის სკრიპტი. ცარიელი ცხრილი = არაფერი გასაკეთებელია.
 - ⚠️ გაითვალისწინე: მიგრაციები ახლა **ძველ backend-ზე** მუშაობს deploy-მდე. გადამოწმებულია კოდით, რომ ძველი backend თავსებადია (orders UPDATE მხოლოდ `status`, delete მხოლოდ done/cancelled, upgrade_requests იგივე ველები).
 
+### ✅ Backend deploy (მფლობელი, ლაივზე)
+- `832997f` live. `CLIENT_IP_TRUSTED_HOPS=3`; `CLIENT_IP_DEBUG=false` (გამორთულია).
+- ლაივ XFF ჯაჭვი (მფლობელის ინფორმაციით): `<ყალბი>, <კლიენტი>, <Render-ის Cloudflare>, <Render-ის შიდა>` → კლიენტი მარჯვნიდან მე-3 პოზიციაზეა. `resolved` სწორად აჩვენებს კლიენტის IP-ს და ყალბ XFF-ს ანგარიშში არ აგდებს. (მფლობელმა შეამოწმა; აგენტს ლაივზე არაფერი გაუშვია.)
+- შესრულებულია Deploy plan-ის ნაბიჯები: 1 (`CLIENT_IP_DEBUG`), 2 (merge + deploy), 3 (hops-ის შემოწმება), 4 (debug გამორთვა).
+
 ### ⏳ დარჩენილი
-1. Render env: `CLIENT_IP_DEBUG=true` (deploy-მდე).
-2. **Backend deploy:** merge `agent-system` → `main` + push (Render auto-deploy). Branch-ის მზადყოფნა — იხ. ქვემოთ.
-3. **T17 — hops-ის შემოწმება** (T22-ის deploy-ის შემდეგ, `CLIENT_IP_DEBUG=true`): გაგზავნე მოთხოვნა ლიმიტიან endpoint-ზე ყალბი XFF-ით, მაგ. PowerShell:
-   `Invoke-WebRequest -Method POST https://chatassist.ge/orders -Headers @{"X-Forwarded-For"="1.2.3.4"} -ContentType "application/json" -Body '{"shop_id":"00000000-0000-0000-0000-000000000000","items":[],"customer_name":"x","customer_phone":"555000000"}' -SkipHttpErrorCheck`
-   (404/400/422 არ აინტერესებს — ლიმიტის dependency ამ მოთხოვნაზე მაინც ეშვება). Render-ის ლოგში ეძებე **ერთი** ხაზი: `client-ip debug: xff='…' entries=N peer(untrusted)=… hops=1 resolved=…`. `xff` არის სრული ჯაჭვი; იპოვე მარჯვნიდან პოზიცია, სადაც შენი რეალური IP დგას (`(Invoke-RestMethod https://api.ipify.org)`) = `CLIENT_IP_TRUSTED_HOPS`; დააყენე Render-ზე და გაიმეორე — `resolved` უნდა გახდეს შენი IP და არა `1.2.3.4`. ხაზი ითვლება 10 წამში ერთხელ: თუ არ ჩანს, გაიმეორე; თუ `resolved=unknown`, ჯაჭვს hops-ზე ნაკლები ჩანაწერი აქვს.
-   (დიაგნოსტიკის ალტერნატივა: ადმინის token-ით `GET /admin/client-ip` — მფლობელმა არჩია არ გამოიყენოს.)
-4. `CLIENT_IP_DEBUG` გამორთე (წაშალე ან `false`).
-5. deploy-ის შემდეგ ხელით შემოწმება: `GET /status` → `env=production`; ბოტი Messenger-ში პასუხობს; საჯარო შეკვეთა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს, `new/processing`-ის წაშლა → 409; IG connect უკვე დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე.
+5. deploy-ის შემდეგ ხელით შემოწმება (დადასტურება მფლობელისგან ჯერ არ მიმიღია): `GET /status` → `env=production`; ბოტი Messenger-ში პასუხობს; საჯარო შეკვეთა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს, `new/processing`-ის წაშლა → 409; IG connect უკვე დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე.
+   + `select count(*) from public.orders;` — თუ deploy-მდე ძველმა backend-მა შეკვეთა მიიღო და ისინი `new`-ია → სათადარიგო `supabase/one-off/release_legacy_new_order_stock.sql` (იხ. ზემოთ).
 6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
 7. **key-ების როტაცია** (Gemini, `FB_APP_SECRET`, Supabase service-role) — როდის, მფლობელი წყვეტს. `FB_TOKEN_ENCRYPTION_KEY`-ს არ ვეხებით.
 8. ლოკალურ `.env`-ში `APP_ENV=development`.
@@ -181,4 +180,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: მფლობელი — Deploy plan-ის დარჩენილი ნაბიჯები (T22-ის deploy → T17 hops); კოდის task-ები დასრულებულია
+- Next: მფლობელი — Deploy plan-ის ნაბიჯები 5–8 (ხელით შემოწმებები, 2026-10-16 საგანგებო გეგმა, key-ების როტაცია); კოდის task-ები დასრულებულია
