@@ -151,3 +151,13 @@ def client(user_db, service_db):
         yield TestClient(fastapi_app)
     finally:
         fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """In-memory per-IP buckets are process-global; keep tests independent."""
+    from app.core import ratelimit
+
+    ratelimit._HITS.clear()
+    yield
+    ratelimit._HITS.clear()

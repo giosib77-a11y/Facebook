@@ -64,7 +64,7 @@ def test_a5_two_open_orders_proceed(client, service_db):
     _open_orders(service_db, ["995555123456", "+995 555 12-34-56", "599000000"])
     res = client.post("/orders", json=_order([1], phone=VALID_PHONE))
     assert res.status_code == 201, res.text
-    assert len(service_db.rpc_calls) == 1
+    assert service_db.rpc_calls == []
     inserts = service_db.calls_for("orders", "insert")
     assert len(inserts) == 1
     assert "website" not in inserts[0].payload

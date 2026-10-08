@@ -15,7 +15,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
     არსებული დარღვევები გასწორდეს ან ცხადად გამოირიცხოს; CI-ში ნაბიჯი `ruff check app tests`.
   - `.claude/hooks/verify.sh` → CHECKS: ruff + pytest (მფლობელის თანხმობით).
   - Verify: `ruff check` სუფთაა, `pytest -q` გადის.
-- [ ] **T2 — B-1 (critical): ყალბი საჯარო შეკვეთებით მარაგის განულება** · `backend/app/api/orders.py:203-364`
+- [x] **T2 — B-1 (critical): ყალბი საჯარო შეკვეთებით მარაგის განულება** · `backend/app/api/orders.py:203-364`
   - ✅ გადაწყვეტილება (მფლობელი, 2026-10-08): ვარიანტი (გ) — მარაგი იკლებს **მხოლოდ `new → processing` გადასვლისას**;
     დამატებით **IP-ზე დღიური ლიმიტი** საჯარო შეკვეთებზე.
   - შედეგები, რაც ამ ცვლილებას თან მოჰყვება (გასათვალისწინებელი):
@@ -69,6 +69,10 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [ ] **T13 — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
   - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
   - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.
+- [ ] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
+  - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
+  - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
+  - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
 
 ## Backlog (needs user decision)
 ### Nits (აუდიტიდან)
@@ -109,4 +113,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5, T6, T8, T9) გაშვება — მფლობელი.
-- Next: T2 (critical, პირველი) → T3 → T4 → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Next: T3 → T4 → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.

@@ -91,12 +91,75 @@ def test_o5_valid_order_at_limit_accepted(client, service_db):
     _setup(service_db, recent_orders=orders.SHOP_ORDERS_PER_HOUR - 1)
     res = client.post("/orders", json=_order([orders.MAX_ITEM_QTY]))
     assert res.status_code == 201, res.text
-    assert len(service_db.rpc_calls) == 1
-    assert service_db.rpc_calls[0].fn == "decrement_stock"
+    assert service_db.rpc_calls == []  # B-1: creating an order never touches stock
+    assert service_db.calls_for("products", "update") == []
     assert len(service_db.calls_for("orders", "insert")) == 1
 
 
-# ---------- F-06: re-opening a cancelled order takes stock atomically ----------
+def test_o6_order_creation_leaves_stock_unchanged(client, service_db):
+    _setup(service_db)
+    res = client.post("/orders", json=_order([3]))
+    assert res.status_code == 201, res.text
+    assert service_db.rpc_calls == []
+    assert service_db.calls_for("products", "update") == []
+    assert service_db.calls_for("orders", "insert")[0].payload["status"] == "new"
+
+
+def test_o7_order_over_available_stock_rejected_without_write(client, service_db):
+    _setup(service_db)
+    service_db.responses[("products", "select")] = [
+        {"id": PRODUCT_ID, "name": "Test Product", "price": 5, "quantity": 2}
+    ]
+    res = client.post("/orders", json=_order([3]))
+    assert res.status_code == 400, res.text
+    assert "მარაგში მხოლოდ 2 ცალია" in res.json()["detail"]
+    _assert_nothing_written(service_db)
+
+
+def test_o8_insert_failure_returns_400_and_no_stock_calls(client, service_db):
+    _setup(service_db)
+    service_db.responses[("orders", "insert")] = []
+    res = client.post("/orders", json=_order([1]))
+    assert res.status_code == 400, res.text
+    assert service_db.rpc_calls == []
+
+
+def test_o9_daily_ip_limit_returns_429(client, service_db):
+    from app.core import ratelimit
+
+    _setup(service_db)
+    # per-minute bucket (10) would trip first, so pre-fill the daily bucket directly
+    now = ratelimit.time.monotonic()
+    hits = [now] * orders.PUBLIC_ORDERS_PER_IP_PER_DAY
+    ratelimit._HITS["create_order_day"]["testclient"].extend(hits)
+    res = client.post("/orders", json=_order([1]))
+    assert res.status_code == 429, res.text
+    assert "Retry-After" in res.headers
+    _assert_nothing_written(service_db)
+
+
+def test_o10_below_daily_limit_accepted(client, service_db):
+    from app.core import ratelimit
+
+    _setup(service_db)
+    now = ratelimit.time.monotonic()
+    hits = [now] * (orders.PUBLIC_ORDERS_PER_IP_PER_DAY - 1)
+    ratelimit._HITS["create_order_day"]["testclient"].extend(hits)
+    res = client.post("/orders", json=_order([1]))
+    assert res.status_code == 201, res.text
+
+
+def test_o11_daily_bucket_survives_short_window_sweep():
+    from app.core import ratelimit
+
+    now = ratelimit.time.monotonic()
+    ratelimit._HITS["create_order_day"]["1.2.3.4"].append(now - 3600)
+    ratelimit._last_sweep[0] = now - 1000  # force a sweep
+    ratelimit._sweep(now)
+    assert len(ratelimit._HITS["create_order_day"]["1.2.3.4"]) == 1
+
+
+# ---------- B-1/F-06: stock is taken atomically on entering processing/done ----------
 from postgrest.exceptions import APIError  # noqa: E402
 
 ORDER_ID = "55555555-5555-5555-5555-555555555555"
@@ -129,57 +192,96 @@ def _rpcs(db, fn):
     return [c for c in db.rpc_calls if c.fn == fn]
 
 
-def test_s1_reopen_with_enough_stock_decrements_atomically(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "cancelled", "new")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+def _take_params():
+    return {"p_shop_id": SHOP_ID, "p_items": [{"product_id": PRODUCT_ID, "quantity": 2}]}
+
+
+def test_s1_new_to_processing_decrements_atomically(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
     assert res.status_code == 200, res.text
     dec = _rpcs(service_db, "decrement_stock")
     assert len(dec) == 1
-    assert dec[0].params == {
-        "p_shop_id": SHOP_ID,
-        "p_items": [{"product_id": PRODUCT_ID, "quantity": 2}],
-    }
+    assert dec[0].params == _take_params()
     assert len(user_db.calls_for("orders", "update")) == 1
     assert _rpcs(service_db, "apply_stock_delta") == []
 
 
-def test_s2_reopen_with_insufficient_stock_rejected(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "cancelled", "new")
+def test_s2_processing_with_insufficient_stock_is_409(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
     service_db.rpc_errors["decrement_stock"] = APIError(
         {"message": "INSUFFICIENT_STOCK|Test Product|1", "code": "P0001"}
     )
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
     assert res.status_code == 409, res.text
     assert res.json()["detail"] == (
-        "შეკვეთის აღდგენა შეუძლებელია — მარაგი არასაკმარისია: Test Product"
+        "შეკვეთის დადასტურება შეუძლებელია — მარაგი არასაკმარისია: Test Product"
     )
     assert user_db.calls_for("orders", "update") == []
     assert _rpcs(service_db, "apply_stock_delta") == []
 
 
-def test_s3_reopen_status_conflict_returns_taken_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "cancelled", "new", update_matches=False)
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+def test_s3_status_conflict_returns_taken_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing", update_matches=False)
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
     assert res.status_code == 409, res.text
     assert "სტატუსი ამასობაში შეიცვალა" in res.json()["detail"]
     assert len(_rpcs(service_db, "decrement_stock")) == 1
     comp = _rpcs(service_db, "apply_stock_delta")
     assert len(comp) == 1
-    assert comp[0].params == {
-        "p_shop_id": SHOP_ID,
-        "p_items": [{"product_id": PRODUCT_ID, "quantity": 2}],
-        "p_sign": 1,
-    }
+    assert comp[0].params == {**_take_params(), "p_sign": 1}
 
 
-def test_s4_cancel_still_returns_stock(client, user_db, service_db):
+def test_s4_cancel_from_new_does_not_touch_stock(client, user_db, service_db):
     _setup_status_change(user_db, service_db, "new", "cancelled")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
+    assert res.status_code == 200, res.text
+    assert service_db.rpc_calls == []
+
+
+def test_s5_cancel_from_processing_returns_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "processing", "cancelled")
     res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
     assert res.status_code == 200, res.text
     assert _rpcs(service_db, "decrement_stock") == []
     delta = _rpcs(service_db, "apply_stock_delta")
     assert len(delta) == 1
-    assert delta[0].params["p_sign"] == 1
+    assert delta[0].params == {**_take_params(), "p_sign": 1}
+
+
+def test_s6_cancel_from_done_returns_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "done", "cancelled")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
+    assert res.status_code == 200, res.text
+    assert len(_rpcs(service_db, "apply_stock_delta")) == 1
+
+
+def test_s7_processing_to_done_leaves_stock_alone(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "processing", "done")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "done"})
+    assert res.status_code == 200, res.text
+    assert service_db.rpc_calls == []
+
+
+def test_s8_reopen_cancelled_to_new_takes_no_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "cancelled", "new")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+    assert res.status_code == 200, res.text
+    assert service_db.rpc_calls == []
+
+
+def test_s9_reopen_cancelled_to_processing_takes_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "cancelled", "processing")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 200, res.text
+    assert len(_rpcs(service_db, "decrement_stock")) == 1
+
+
+def test_s10_processing_back_to_new_returns_stock(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "processing", "new")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
+    assert res.status_code == 200, res.text
+    assert len(_rpcs(service_db, "apply_stock_delta")) == 1
 
 
 # ---------- F-07: only terminal orders can be deleted (stock stays reserved) ----------

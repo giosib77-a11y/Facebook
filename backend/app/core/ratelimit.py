@@ -23,6 +23,9 @@ _HITS: dict[str, dict[str, deque]] = defaultdict(lambda: defaultdict(deque))
 _last_sweep = [time.monotonic()]
 # გაფრთხილება „header აკლია" — პროცესზე მაქსიმუმ ერთხელ
 _warned_missing_header = [False]
+# bucket -> window (წმ). sweep-მა ყოველ bucket-ს თავისი window უნდა გამოიყენოს,
+# თორემ მოკლე window-ის მქონე endpoint-ი გრძელი (მაგ. დღიური) ლიმიტის ჩანაწერებს წაშლიდა.
+_WINDOWS: dict[str, int] = {}
 
 
 def _client_ip(request: Request) -> str:
@@ -46,13 +49,14 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _sweep(now: float, window: float) -> None:
+def _sweep(now: float) -> None:
     """ძველი ჩანაწერების პერიოდული გაწმენდა — ~5 წუთში ერთხელ."""
     if now - _last_sweep[0] < 300:
         return
     _last_sweep[0] = now
     for bucket in list(_HITS.keys()):
         ips = _HITS[bucket]
+        window = _WINDOWS.get(bucket, 0)
         for ip in list(ips.keys()):
             dq = ips[ip]
             while dq and now - dq[0] > window:
@@ -68,9 +72,11 @@ def rate_limit(bucket: str, limit: int, window: int = 60):
 
     ლიმიტის გადაცილებაზე → HTTP 429.
     """
+    _WINDOWS[bucket] = max(_WINDOWS.get(bucket, 0), window)
+
     def _dep(request: Request) -> None:
         now = time.monotonic()
-        _sweep(now, window)
+        _sweep(now)
         dq = _HITS[bucket][_client_ip(request)]
         while dq and now - dq[0] > window:
             dq.popleft()
