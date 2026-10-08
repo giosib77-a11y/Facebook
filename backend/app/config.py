@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
 
     # App
-    app_env: str = "development"
+    # fail-closed: APP_ENV-ის გარეშე production. dev-ში .env-ში APP_ENV=development (A-4)
+    app_env: str = "production"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 

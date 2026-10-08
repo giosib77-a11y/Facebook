@@ -10,6 +10,8 @@ import os
 # No real Supabase: blank credentials override any local .env before the app loads.
 os.environ["SUPABASE_URL"] = ""
 os.environ["SUPABASE_ANON_KEY"] = ""
+# default is now production (fail-closed); tests run in development explicitly.
+os.environ["APP_ENV"] = "development"
 
 import pytest
 from fastapi.testclient import TestClient

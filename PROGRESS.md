@@ -26,7 +26,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
     - IP-ლიმიტი in-memory-ია (deploy-ზე ნულდება) და **მხოლოდ მაშინ არის სანდო, როცა `ORIGIN_SECRET` აქტიურია (იხ. T13)**.
   - Verify: ტესტები — შეკვეთა მარაგს არ ცვლის; processing-ზე იკლებს; არასაკმარისი მარაგი → 409; cancel processing-იდან აბრუნებს;
     IP-ის დღიური ლიმიტი → 429.
-- [ ] **T3 — A-4 (hardening, დაბალი): `APP_ENV` default fail-open** · `backend/app/config.py:19`
+- [x] **T3 — A-4 (hardening, დაბალი): `APP_ENV` default fail-open** · `backend/app/config.py:19`
   - მფლობელმა დაადასტურა: Render-ზე `APP_ENV=production` (`/status` → `env=production`), ე.ი. ლაივ-რისკი ახლა არ არსებობს.
     Fix მაინც ღირს (მომავალი გარემო/აღდგენა): default `production`; dev-ში `.env`-ით `APP_ENV=development`; tests/conftest ცხადად `development`.
   - Verify: ტესტი — env-ის გარეშე `is_production is True`; არსებული ტესტები გადის.
@@ -113,4 +113,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5, T6, T8, T9) გაშვება — მფლობელი.
-- Next: T3 → T4 → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Next: T4 → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.

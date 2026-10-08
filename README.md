@@ -504,7 +504,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `SUPABASE_URL` | ✅ | — | პროექტის URL |
 | `SUPABASE_ANON_KEY` | ✅ | — | საჯარო გასაღები |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | — | 🔒 სერვერის გასაღები — **არასდროს frontend-ში** |
-| `APP_ENV` | | `development` | `production` → HSTS, დამალული შეცდომები, `/test-chat` off |
+| `APP_ENV` | | `production` | `production` (default, fail-closed) → HSTS, დამალული შეცდომები, `/test-chat` off. ლოკალურად `.env`-ში `APP_ENV=development` |
 | `APP_HOST` · `APP_PORT` | | `0.0.0.0` · `8000` | |
 | `CORS_ORIGINS` | | `*` | production-ში კონკრეტული დომენი |
 | `GEMINI_API_KEY` | ✅ | — | <https://aistudio.google.com/apikey> |
