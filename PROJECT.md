@@ -34,7 +34,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 2. Facebook OAuth connect → page token (დაშიფრული) → webhook subscribe.
 3. Meta webhook (`POST /webhook`, ხელმოწერით) → page_id → მაღაზია → ლიმიტები →
    Gemini → Send API პასუხი (background task).
-4. საჯარო შეკვეთა (`POST /orders`) → სერვერი ითვლის ჯამს → შეკვეთა `new` სტატუსით; მარაგი **არ იკლებს** (IP-ზე დღიური ლიმიტი).
+4. საჯარო შეკვეთა (`POST /orders`) → სერვერი ითვლის ჯამს → შეკვეთა `new` სტატუსით; მარაგი **არ იკლებს** ((IP, shop)-ზე დღიური ლიმიტი).
 5. გამყიდველი მართავს შეკვეთებს: `new → processing` ატომურად აკლებს მარაგს (არასაკმარისზე 409); `processing/done → cancelled` აბრუნებს; `new`-ის გაუქმება მარაგს არ ეხება.
 6. პაკეტის მოთხოვნა (`upgrade_requests`) → ადმინი ხელით ადასტურებს.
 7. Meta Data Deletion callback + ხელმოწერილი დადასტურების კოდი.
@@ -184,8 +184,8 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Decision: `.github/workflows/ci.yml`, lock-ფაილიდან ინსტალაცია.
 - Reason: რეგრესიების დაჭერა ლაივ პროექტზე.
 
-### 2026-10 — მარაგი იკლებს მხოლოდ `new → processing`-ზე + IP-ზე დღიური ლიმიტი (B-1)
-- Decision: საჯარო შეკვეთა მარაგს არ ეხება; დაკლება გამყიდველის დადასტურებისას; `PUBLIC_ORDERS_PER_IP_PER_DAY = 20`.
+### 2026-10 — მარაგი იკლებს მხოლოდ `new → processing`-ზე + (IP, shop)-ზე დღიური ლიმიტი (B-1, T21)
+- Decision: საჯარო შეკვეთა მარაგს არ ეხება; დაკლება გამყიდველის დადასტურებისას; `PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY = 20` (key `ip|shop_id`, შემოწმება handler-შია, DB-მდე).
 - Reason: ყალბი საჯარო შეკვეთებით მარაგის განულება.
 - Alternatives considered: დროებითი reservation/TTL; CAPTCHA.
 - Why rejected: სირთულე; `new`-ში overselling მისაღებია, გამყიდველი ადასტურებს.

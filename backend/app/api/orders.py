@@ -4,11 +4,11 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from postgrest.exceptions import APIError
 
 from app.core.db import run
-from app.core.ratelimit import rate_limit
+from app.core.ratelimit import check_rate_limit, rate_limit, register_window
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.models.order import OrderCreate, OrderOut, OrderStatusUpdate
@@ -25,9 +25,14 @@ OPEN_ORDERS_PER_PHONE = 3  # ერთი ნომრის დაუდას�
 _PHONE_CHARS = re.compile(r"[0-9 +\-()]+")
 _NON_DIGITS = re.compile(r"[^0-9]")
 
-# საჯარო შეკვეთების დღიური ლიმიტი ერთ IP-ზე (B-1). in-memory; სანდოა მხოლოდ მაშინ,
+# საჯარო შეკვეთების დღიური ლიმიტი თითო (IP, shop_id) წყვილზე (B-1, T21) — ერთი მაღაზიის
+# სპამი სხვა მაღაზიის მყიდველებს (საერთო IP, CGNAT) არ ბლოკავს. in-memory; სანდოა მხოლოდ მაშინ,
 # როცა CLIENT_IP_TRUSTED_HOPS სწორადაა დაყენებული (IP = X-Forwarded-For-ის მარჯვენა ჩანაწერი).
-PUBLIC_ORDERS_PER_IP_PER_DAY = 20
+# shop_id body-შია, ამიტომ შემოწმება handler-შია (dependency-ს body არ ჩანს).
+PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY = 20
+_ORDER_DAY_BUCKET = "create_order_day"
+_ORDER_DAY_WINDOW = 86400
+register_window(_ORDER_DAY_BUCKET, _ORDER_DAY_WINDOW)  # sweep-მა დღიური ჩანაწერები არ წაშალოს (T2)
 
 # მარაგი იკლებს მხოლოდ `new → processing` (ან სხვა „დაკავებულ“ სტატუსზე) გადასვლისას (B-1):
 # „new“ შეკვეთა მარაგს არ ეხება, ამიტომ ყალბი საჯარო შეკვეთით მარაგს ვერავინ განულებს.
@@ -182,13 +187,15 @@ def public_menu(shop_id: uuid.UUID):
 @router.post(
     "/orders",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[
-        Depends(rate_limit("create_order", limit=10, window=60)),
-        Depends(rate_limit("create_order_day", limit=PUBLIC_ORDERS_PER_IP_PER_DAY, window=86400)),
-    ],
+    dependencies=[Depends(rate_limit("create_order", limit=10, window=60))],
 )
-def create_order(payload: OrderCreate):
+def create_order(payload: OrderCreate, request: Request):
     """კლიენტი ქმნის შეკვეთას (საჯარო). ჩაწერა service_role-ით."""
+    # დღიური (ip, shop) ლიმიტი — ნებისმიერ DB წვდომამდე; ითვლის ყველა მცდელობას (400-საც).
+    check_rate_limit(
+        request, _ORDER_DAY_BUCKET, str(payload.shop_id),
+        PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY, _ORDER_DAY_WINDOW,
+    )
     sc = get_service_client()
     shop = sc.table("shops").select("id").eq("id", str(payload.shop_id)).limit(1).execute()
     if not shop.data:

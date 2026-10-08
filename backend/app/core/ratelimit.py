@@ -84,26 +84,43 @@ def _sweep(now: float) -> None:
             del _HITS[bucket]
 
 
+def register_window(bucket: str, window: int) -> None:
+    """bucket-ის window-ის რეგისტრაცია — sweep-მა გრძელი (მაგ. დღიური) ჩანაწერები არ წაშალოს."""
+    _WINDOWS[bucket] = max(_WINDOWS.get(bucket, 0), window)
+
+
+def _hit(bucket: str, key: str, limit: int, window: int) -> None:
+    """ერთი მოთხოვნის აღრიცხვა; ლიმიტის გადაცილებაზე → HTTP 429 + Retry-After."""
+    now = time.monotonic()
+    _sweep(now)
+    dq = _HITS[bucket][key]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        retry = int(window - (now - dq[0])) + 1
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="ბევრი მოთხოვნა მოვიდა — სცადეთ ცოტა ხანში.",
+            headers={"Retry-After": str(max(retry, 1))},
+        )
+    dq.append(now)
+
+
 def rate_limit(bucket: str, limit: int, window: int = 60):
     """FastAPI dependency-ს აბრუნებს: `limit` მოთხოვნა `window` წამში, თითო IP-ზე.
 
     ლიმიტის გადაცილებაზე → HTTP 429.
     """
-    _WINDOWS[bucket] = max(_WINDOWS.get(bucket, 0), window)
+    register_window(bucket, window)
 
     def _dep(request: Request) -> None:
-        now = time.monotonic()
-        _sweep(now)
-        dq = _HITS[bucket][_client_ip(request)]
-        while dq and now - dq[0] > window:
-            dq.popleft()
-        if len(dq) >= limit:
-            retry = int(window - (now - dq[0])) + 1
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="ბევრი მოთხოვნა მოვიდა — სცადეთ ცოტა ხანში.",
-                headers={"Retry-After": str(max(retry, 1))},
-            )
-        dq.append(now)
+        _hit(bucket, _client_ip(request), limit, window)
 
     return _dep
+
+
+def check_rate_limit(request: Request, bucket: str, key_suffix: str, limit: int, window: int) -> None:
+    """იგივე ლიმიტი, ოღონდ key = `ip|key_suffix` — handler-იდან გამოსაძახებლად, როცა
+    key-ის ნაწილი (მაგ. shop_id) მხოლოდ request body-შია. `bucket`-ის window უნდა იყოს
+    რეგისტრირებული (`register_window`) import-ზე."""
+    _hit(bucket, f"{_client_ip(request)}|{key_suffix}", limit, window)

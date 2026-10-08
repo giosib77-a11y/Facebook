@@ -124,18 +124,23 @@ def test_o8_insert_failure_returns_400_and_no_stock_calls(client, service_db):
     assert service_db.rpc_calls == []
 
 
-def test_o9_daily_ip_limit_returns_429(client, service_db):
+def _day_key(ip, shop=SHOP_ID):
+    return f"{ip}|{shop}"
+
+
+def test_o9_daily_ip_shop_limit_returns_429(client, service_db):
     from app.core import ratelimit
 
     _setup(service_db)
     # per-minute bucket (10) would trip first, so pre-fill the daily bucket directly
     now = ratelimit.time.monotonic()
-    hits = [now] * orders.PUBLIC_ORDERS_PER_IP_PER_DAY
-    ratelimit._HITS["create_order_day"]["testclient"].extend(hits)
+    hits = [now] * orders.PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY
+    ratelimit._HITS["create_order_day"][_day_key("testclient")].extend(hits)
     res = client.post("/orders", json=_order([1]))
     assert res.status_code == 429, res.text
     assert "Retry-After" in res.headers
     _assert_nothing_written(service_db)
+    assert service_db.calls_for("shops", "select") == []  # checked before any DB access
 
 
 def test_o10_below_daily_limit_accepted(client, service_db):
@@ -143,8 +148,8 @@ def test_o10_below_daily_limit_accepted(client, service_db):
 
     _setup(service_db)
     now = ratelimit.time.monotonic()
-    hits = [now] * (orders.PUBLIC_ORDERS_PER_IP_PER_DAY - 1)
-    ratelimit._HITS["create_order_day"]["testclient"].extend(hits)
+    hits = [now] * (orders.PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY - 1)
+    ratelimit._HITS["create_order_day"][_day_key("testclient")].extend(hits)
     res = client.post("/orders", json=_order([1]))
     assert res.status_code == 201, res.text
 
@@ -153,10 +158,58 @@ def test_o11_daily_bucket_survives_short_window_sweep():
     from app.core import ratelimit
 
     now = ratelimit.time.monotonic()
-    ratelimit._HITS["create_order_day"]["1.2.3.4"].append(now - 3600)
+    ratelimit._HITS["create_order_day"][_day_key("1.2.3.4")].append(now - 3600)
     ratelimit._last_sweep[0] = now - 1000  # force a sweep
     ratelimit._sweep(now)
-    assert len(ratelimit._HITS["create_order_day"]["1.2.3.4"]) == 1
+    assert len(ratelimit._HITS["create_order_day"][_day_key("1.2.3.4")]) == 1
+    assert ratelimit._WINDOWS["create_order_day"] == 86400
+
+
+def test_o12_daily_limit_is_per_shop(client, service_db):
+    from app.core import ratelimit
+
+    _setup(service_db)
+    other_shop = "66666666-6666-6666-6666-666666666666"
+    now = ratelimit.time.monotonic()
+    ratelimit._HITS["create_order_day"][_day_key("testclient")].extend(
+        [now] * orders.PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY
+    )
+    assert client.post("/orders", json=_order([1])).status_code == 429
+    service_db.responses[("shops", "select")] = [{"id": other_shop}]
+    body = _order([1])
+    body["shop_id"] = other_shop
+    assert client.post("/orders", json=body).status_code == 201
+
+
+def test_o13_daily_limit_is_per_ip(client, service_db):
+    from app.core import ratelimit
+
+    _setup(service_db)
+    now = ratelimit.time.monotonic()
+    ratelimit._HITS["create_order_day"][_day_key("9.9.9.9")].extend(
+        [now] * orders.PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY
+    )
+    spoof = {"x-forwarded-for": "spoofed, 9.9.9.9"}
+    other = {"x-forwarded-for": "spoofed, 8.8.8.8"}
+    assert client.post("/orders", json=_order([1]), headers=spoof).status_code == 429
+    assert client.post("/orders", json=_order([1]), headers=other).status_code == 201
+
+
+def test_o14_21st_request_same_ip_shop_blocked_and_400s_count(client, service_db):
+    from app.core import ratelimit
+
+    _setup(service_db)
+    # per-minute bucket is cleared inside the loop so only the daily one can trip
+    limit = orders.PUBLIC_ORDERS_PER_IP_SHOP_PER_DAY
+    headers = {"x-forwarded-for": "7.7.7.7"}
+    for _ in range(limit):
+        ratelimit._HITS["create_order"].clear()
+        res = client.post("/orders", json=_order([1], phone="abc"), headers=headers)
+        assert res.status_code == 400  # invalid requests still count
+    ratelimit._HITS["create_order"].clear()
+    res = client.post("/orders", json=_order([1]), headers=headers)
+    assert res.status_code == 429
+    assert int(res.headers["Retry-After"]) > 0
 
 
 # ---------- B-1/F-06: stock is taken atomically on entering processing/done ----------
