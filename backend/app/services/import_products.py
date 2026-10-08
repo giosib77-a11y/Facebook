@@ -7,6 +7,7 @@ parse_products_file(content, filename) -> (products, errors)
 """
 import csv
 import io
+import zipfile
 
 from openpyxl import load_workbook
 
@@ -19,6 +20,8 @@ COLUMN_ALIASES = {
     "sku": {"sku", "კოდი", "არტიკული"},
 }
 MAX_ROWS = 5000
+MAX_COLS = 100  # რეალური ფაილი იშვიათად აღემატება ~20 სვეტს; დიდი dimension (A1:XFD…) მეხსიერებას ჭამს
+MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024  # zip-bomb დაცვა: xlsx-ის გაშლილი ზომის ჭერი
 
 
 def _norm(value) -> str:
@@ -48,7 +51,19 @@ def _read_csv(content: bytes):
     return rows
 
 
+def _check_xlsx_size(content: bytes):
+    """.xlsx zip-ია — load_workbook-მდე ვამოწმებთ გაშლილ ზომას (zip bomb)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            total = sum(i.file_size for i in zf.infolist())
+    except Exception:
+        raise ValueError("Excel ფაილის გახსნა ვერ მოხერხდა — დარწმუნდი, რომ .xlsx ფორმატია.")
+    if total > MAX_UNCOMPRESSED_BYTES:
+        raise ValueError("Excel ფაილი ძალიან დიდია გახსნის შემდეგ.")
+
+
 def _read_xlsx(content: bytes):
+    _check_xlsx_size(content)
     try:
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception:
@@ -60,7 +75,7 @@ def _read_xlsx(content: bytes):
     # ჩაიტვირთებოდა და MAX_ROWS მხოლოდ ამის შემდეგ მოწმდებოდა — .xlsx zip-ია,
     # ანუ 5MB მილიონ მწკრივამდე იშლებოდა და instance-ს მეხსიერებას ამოწურავდა.
     rows = []
-    for row in ws.iter_rows(values_only=True):
+    for row in ws.iter_rows(max_col=MAX_COLS, values_only=True):
         rows.append(list(row))
         if len(rows) > MAX_ROWS + 1:  # +1 = სათაურის მწკრივი
             raise ValueError(f"ძალიან ბევრი მწკრივი (მაქს. {MAX_ROWS}).")
