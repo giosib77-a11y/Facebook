@@ -16,15 +16,19 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `.claude/hooks/verify.sh` → CHECKS: ruff + pytest (მფლობელის თანხმობით).
   - Verify: `ruff check` სუფთაა, `pytest -q` გადის.
 - [ ] **T2 — B-1 (critical): ყალბი საჯარო შეკვეთებით მარაგის განულება** · `backend/app/api/orders.py:203-364`
-  - `POST /orders` ავტორიზაციის გარეშე აკლებს მარაგს; არსებული ლიმიტებით (10/წთ IP, 30/სთ მაღაზია, 3/ტელეფონი, ≤10 ცალი)
-    ერთ IP-ს საათში ~300 ერთეულის „დაჭერა" შეუძლია თითო პროდუქტზე და ამავე დროს ამოწურავს მაღაზიის საათობრივ ლიმიტს.
-  - ⚠️ **საჭიროა მფლობელის გადაწყვეტილება** (business rule): (ა) ჯამური ერთეულების ჭერი შეკვეთაზე + IP-ზე დღიური ლიმიტი;
-    (ბ) დაუდასტურებელი `new` შეკვეთის ავტო-გაუქმება X საათში მარაგის დაბრუნებით; (გ) მარაგი იკლებს მხოლოდ `processing`-ზე.
-  - Verify: ტესტი — ლიმიტის გადაჭარბება → 4xx, მარაგი უცვლელი.
-- [ ] **T3 — A-4 (should-fix, შესაძლოა critical): `APP_ENV` default fail-open** · `backend/app/config.py:19`
-  - default `development` → თუ Render-ზე `APP_ENV` არ არის, ღიაა `/test-chat` (სხვისი knowledge/კატალოგი + Gemini-ს ხარჯი),
-    ითიშება FA-03 origin lock, FA-05 nonce, HSTS, შეცდომების დამალვა.
-  - Fix: default `production`; dev-ში `.env`-ით `APP_ENV=development` (`.env.example` უკვე ასეა). ტესტების conftest-ში ცხადად `development`.
+  - ✅ გადაწყვეტილება (მფლობელი, 2026-10-08): ვარიანტი (გ) — მარაგი იკლებს **მხოლოდ `new → processing` გადასვლისას**;
+    დამატებით **IP-ზე დღიური ლიმიტი** საჯარო შეკვეთებზე.
+  - შედეგები, რაც ამ ცვლილებას თან მოჰყვება (გასათვალისწინებელი):
+    - `create_order` აღარ იძახებს `decrement_stock`-ს; `new` შეკვეთის გაუქმებისას მარაგი **არ ბრუნდება** (არაფერი ჩამოვრიცხულა).
+    - `new → processing`: ატომური დაკლება; თუ მარაგი არ ჰყოფნის → 409 + გასაგები შეტყობინება გამყიდველს.
+    - `processing/done → cancelled` აბრუნებს მარაგს (როგორც ახლა); F-06 reopen-ის ლოგიკა ახალ მდგომარეობებს მოერგოს.
+    - `public-menu` / ბოტი აჩვენებს რეალურ მარაგს, `new` შეკვეთები მარაგს აღარ ამცირებს → შეიძლება overselling `new`-ში (მისაღებია, გამყიდველი ადასტურებს).
+    - IP-ლიმიტი in-memory-ია (deploy-ზე ნულდება) და **მხოლოდ მაშინ არის სანდო, როცა `ORIGIN_SECRET` აქტიურია (იხ. T13)**.
+  - Verify: ტესტები — შეკვეთა მარაგს არ ცვლის; processing-ზე იკლებს; არასაკმარისი მარაგი → 409; cancel processing-იდან აბრუნებს;
+    IP-ის დღიური ლიმიტი → 429.
+- [ ] **T3 — A-4 (hardening, დაბალი): `APP_ENV` default fail-open** · `backend/app/config.py:19`
+  - მფლობელმა დაადასტურა: Render-ზე `APP_ENV=production` (`/status` → `env=production`), ე.ი. ლაივ-რისკი ახლა არ არსებობს.
+    Fix მაინც ღირს (მომავალი გარემო/აღდგენა): default `production`; dev-ში `.env`-ით `APP_ENV=development`; tests/conftest ცხადად `development`.
   - Verify: ტესტი — env-ის გარეშე `is_production is True`; არსებული ტესტები გადის.
 - [ ] **T4 — B-2 (should-fix, high): xlsx-ის სვეტებით OOM** · `backend/app/services/import_products.py:62`
   - `iter_rows` `max_col`-ის გარეშე: 4.8KB ფაილი `dimension=A1:XFD…`-ით ≈ 660MB (გაზომილი ლოკალურად) → instance OOM.
@@ -56,6 +60,15 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [ ] **T11 — B-5 (should-fix): webhook-ის ხელმოწერას ტესტი არ აქვს** · `backend/tests/`
   - Fix: ტესტები — სწორი ხელმოწერა → 200; არასწორი/არარსებული → 403. (ცარიელი secret → 403 ტესტი — მხოლოდ Backlog-ის A-9/B-6-ის გასწორების შემდეგ.)
   - Verify: `pytest -q`.
+- [ ] **T12 — Gemini: გადასვლა `gemini-3.5-flash`-ზე (2.5 Flash ითიშება 2026-10-16)** · `GEMINI_MODEL`
+  - ეტაპი 1: ლოკალური შედარების სკრიპტი (მარტივი, ერთჯერადი, scratchpad-ში) — იგივე ქართული შეკითხვები ორივე მოდელზე, პასუხები გვერდიგვერდ.
+    ⚠️ საჭიროებს რეალურ Gemini key-ს — **გაშვებამდე მფლობელს ვეკითხები** (key-ს მფლობელი აძლევს; `.env` არ იკითხება).
+  - ეტაპი 2: შედარების შედეგის დამტკიცების შემდეგ — Render-ზე `GEMINI_MODEL=gemini-3.5-flash` (მფლობელი ცვლის თვითონ) + კოდის default-ის განახლება.
+  - შესამოწმებელი: ფასი/ტოკენი ([project-costs-pricing] memory), `max_output_tokens`, multimodal (ფოტოს გაგება), `[[HANDOFF]]` ნიშნის დაცვა.
+  - Deadline: **2026-10-16**.
+- [ ] **T13 — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
+  - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
+  - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.
 
 ## Backlog (needs user decision)
 ### Nits (აუდიტიდან)
@@ -95,5 +108,5 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   აუდიტი (standard-reviewer ×2); PROGRESS.md; verify.sh — agent-dashboard-ის 3 ცვლილება (CHECKS ცარიელი).
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
-- Known issues / blockers: T2 მფლობელის გადაწყვეტილებას ელოდება; მიგრაციების (T5, T6, T8, T9) გაშვება — მფლობელი.
-- Next: T1 (ruff), შემდეგ T3 → T4 (მცირე, დაბალი რისკის, მიგრაციის გარეშე), T2 გადაწყვეტილების შემდეგ.
+- Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5, T6, T8, T9) გაშვება — მფლობელი.
+- Next: T1 (ruff) → T3 → T4 → T2 (გადაწყვეტილება მიღებულია) → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
