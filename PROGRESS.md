@@ -9,7 +9,7 @@ ID-ები (A-n / B-n) commit message-ში იწერება: `fix(scope
 backend-ის deploy-მდე ან მის შემდეგ — task-ში მითითებული რიგით.
 
 ## Tasks
-- [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS — ელოდება მფლობელის თანხმობას)
+- [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS: ruff + pytest დამატებულია, hook-ით შემოწმებული)
   - ruff ჯერ არ არის; ტესტები არის (114, offline, CI-ში).
   - `ruff` → `backend/requirements-dev.txt`; მინიმალური კონფიგი (`E`, `F` წესები) `backend/pyproject.toml`-ში ან `ruff.toml`-ში;
     არსებული დარღვევები გასწორდეს ან ცხადად გამოირიცხოს; CI-ში ნაბიჯი `ruff check app tests`.
@@ -109,4 +109,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5, T6, T8, T9) გაშვება — მფლობელი.
-- Next: T1 (ruff) → T3 → T4 → T2 (გადაწყვეტილება მიღებულია) → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Next: T2 (critical, პირველი) → T3 → T4 → T10 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.

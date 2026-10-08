@@ -4,10 +4,8 @@
 
 # ---- შეავსე ამ პროექტის ბრძანებებით (ცარიელი სია = hook არაფერს აკეთებს) ----
 CHECKS=(
-  # "pnpm lint"
-  # "pnpm typecheck"
-  # "uv run ruff check ."
-  # "uv run pytest -q"
+  "cd backend && .venv/Scripts/python.exe -m ruff check app tests"
+  "cd backend && .venv/Scripts/python.exe -m pytest -q"
 )
 # ------------------------------------------------------------------------------
 
