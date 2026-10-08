@@ -2,8 +2,9 @@
 import hmac
 import json
 import logging
+import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
@@ -74,6 +75,43 @@ def _already_handled(mid: str | None) -> bool:
     _SEEN_MIDS[mid] = now
     while len(_SEEN_MIDS) > _SEEN_MAX:
         _SEEN_MIDS.popitem(last=False)
+    return False
+
+
+# B-3: წუთობრივი ლიმიტი — ერთმა კლიენტმა/მაღაზიამ საერთო Gemini კვოტა და threadpool
+# არ უნდა ამოწუროს. ლიმიტს გადაცილებულს ჩუმად ვტოვებთ (პასუხი და Gemini-ს გამოძახება არ არის).
+# მეხსიერებაშია (_SEEN_MIDS-ის მსგავსად ერთი instance-ისთვის); ბლოკირებული შეტყობინება არ ითვლება.
+_RATE_WINDOW = 60.0       # წამი
+_RATE_PER_PSID = 6        # (shop, psid)-ზე წუთში
+_RATE_PER_SHOP = 30       # shop-ზე წუთში
+_RATE_SWEEP_EVERY = 60.0  # ამ ინტერვალით ვასუფთავებთ ძველ გასაღებებს
+_RATE_HITS: "dict[tuple, deque[float]]" = {}
+_RATE_LOCK = threading.Lock()
+_rate_last_sweep = 0.0
+
+
+def _rate_limited(shop_id: str, psid: str) -> bool:
+    """True — ამ კლიენტმა/მაღაზიამ წუთობრივი ლიმიტი გადააჭარბა (შეტყობინება გამოსატოვებელია)."""
+    global _rate_last_sweep
+    now = time.monotonic()
+    cutoff = now - _RATE_WINDOW
+    keys = ((shop_id, psid), (shop_id,))
+    limits = (_RATE_PER_PSID, _RATE_PER_SHOP)
+    with _RATE_LOCK:
+        if now - _rate_last_sweep > _RATE_SWEEP_EVERY or now < _rate_last_sweep:
+            _rate_last_sweep = now
+            for k in [k for k, q in _RATE_HITS.items() if not q or q[-1] <= cutoff]:
+                del _RATE_HITS[k]
+        queues = []
+        for key, limit in zip(keys, limits):
+            q = _RATE_HITS.setdefault(key, deque())
+            while q and q[0] <= cutoff:
+                q.popleft()
+            if len(q) >= limit:
+                return True
+            queues.append(q)
+        for q in queues:
+            q.append(now)
     return False
 
 
@@ -257,6 +295,13 @@ def _process_events(data: dict) -> None:
             # Meta-ს გამეორებული მოვლენა — ერთხელ უკვე ვუპასუხეთ (P1-3)
             if _already_handled(message.get("mid")):
                 logger.info("გამეორებული შეტყობინება იგნორდა (mid=%s)", message.get("mid"))
+                continue
+            # B-3: წუთობრივი ლიმიტი — ბაზისა და Gemini-ს წინ, რომ spam იაფად მოიჭრას
+            if _rate_limited(str(shop["id"]), str(sender_id)):
+                logger.warning(
+                    "წუთობრივი ლიმიტი გადაჭარბდა — შეტყობინება გამოტოვებულია (shop=%s, psid=%s)",
+                    shop.get("id"), sender_id,
+                )
                 continue
 
             # --- მონეტიზაცია: კლიენტის თვლა + ლიმიტების შემოწმება ---

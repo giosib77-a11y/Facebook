@@ -160,6 +160,10 @@ def _reset_rate_limits():
     """In-memory per-IP buckets are process-global; keep tests independent."""
     from app.core import ratelimit
 
+    from app.api import webhook
+
     ratelimit._HITS.clear()
+    webhook._RATE_HITS.clear()
     yield
     ratelimit._HITS.clear()
+    webhook._RATE_HITS.clear()
