@@ -286,7 +286,7 @@ def test_s10_processing_back_to_new_returns_stock(client, user_db, service_db):
 
 # ---------- F-07: only terminal orders can be deleted (stock stays reserved) ----------
 ACTIVE_DELETE_MSG = (
-    "აქტიური შეკვეთის წაშლა შეუძლებელია — ჯერ გააუქმეთ შეკვეთა (მარაგი დაბრუნდება)."
+    "აქტიური შეკვეთის წაშლა შეუძლებელია — ჯერ გააუქმეთ შეკვეთა (თუ ის „მუშავდება“ იყო, მარაგი დაბრუნდება)."
 )
 
 

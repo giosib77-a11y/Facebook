@@ -77,7 +77,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - კოდიდან დადგინდეს, რა ბილიკებით ინახება ფოტო (`{shop_id}/...` ბრტყელი თუ ქვესაქაღალდეები); თუ ქვესაქაღალდეებია — `admin._remove_shop_images` რეკურსიულად წაშალოს.
   - Verify: ტესტი ქვესაქაღალდიანი fake-ით (თუ ბრტყელია — დადასტურება მოკლედ, ტესტი ბრტყელზე).
   - ✅ შედეგი: ბილიკი ყოველთვის ბრტყელია `{shop_id}/{uuid}.{ext}` (`products.py:179`, ერთადერთი upload) → cleanup-ის გასწორება არ სჭირდება. ისტორიული ხელით ატვირთული nested ობიექტები offline ვერ შემოწმდა.
-- [ ] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
+- [x] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
   - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
   - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
   - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
@@ -87,9 +87,19 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 > სექცია ივსება ყოველი მიგრაციის/frontend ცვლილების დამატებისას; საბოლოო რიგი — Stage-ის ბოლოს.
 - **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · `0019_upgrade_requests_checks.sql` (T8; PRE-CHECK 0 მწკრივი; verification: chk_valid=2, insert_policy_ok=t; status CHECK-ში 'cancelled' შედის — shops.py:67 იყენებს) · `0020_instagram_unique.sql` (T9; PRE-CHECK დუბლიკატები → 0 მწკრივი; verification: index_ok=1, duplicates=0; მიგრაციამდე backend deploy სასურველია)
 - **წამკითხველი (გაუშვი ჯერ):** `supabase/checks/check_0014_0016.sql` (T15) — ყველა ok=true უნდა იყოს
-- **წინაპირობა:** T15-ის წამკითხველი SQL → 0014–0016 live ბაზაზე გაშვებულია?
-- **Frontend build:** `dist/` commit-შია (T14-ის შემდეგ).
-- **რიგი და შემოწმება:** (შეივსება საბოლოოდ)
+- **Frontend build:** ამ stage-ში frontend არ შეცვლილა → `npm run build` და `dist/` ცვლილება არ სჭირდება (T14-ზე დადასტურდა).
+- **ლოკალური წინაპირობა:** შენს `.env`-ში `APP_ENV=development` (T3: default ახლა production).
+
+### რიგი და შემოწმება
+1. **წამკითხველი:** `supabase/checks/check_0014_0016.sql` SQL Editor-ში → ყველა `ok=true`? თუ არა — ჯერ აკლია 0014/0015/0016 (ფაილებში verification-ებით), მერე გაგრძელება.
+2. **Backend deploy** (`agent-system` → `main` merge/push — შენი თანხმობით, Render auto-deploy). რატომ პირველი: მიგრაციები backend-ს არ არღვევს, მაგრამ 0020-მდე connect-ის „სხვა მაღაზიიდან IG id-ის მოხსნა" უკვე უნდა მუშაობდეს.
+   შემდეგ შეამოწმე: `GET /status` → `env=production`; Messenger-ში ბოტი პასუხობს; საჯარო შეკვეთა მარაგს **არ** ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს; Actions-ში CI მწვანეა (ახალი ruff ნაბიჯი).
+3. **`0017_revoke_shops_delete.sql`** → verification: `anon_delete=false, auth_delete=false, service_delete=true, auth_select=true` → ხელით: admin-იდან სატესტო მაღაზიის წაშლა, Storage-ში საქაღალდე გაქრა.
+4. **`0018_orders_privileges.sql`** → ჯერ PRE-CHECK (0 მწკრივი), მერე გაშვება → verification `t,f,f,f,f,f,t,t,1,t` → პანელში: სტატუსის შეცვლა მუშაობს; `done/cancelled`-ის წაშლა მუშაობს; `new/processing`-ის წაშლა → 409.
+5. **`0019_upgrade_requests_checks.sql`** → PRE-CHECK (0 მწკრივი) → verification `chk_valid=2, insert_policy_ok=t` → პანელში პაკეტის მოთხოვნა მუშაობს; მეორე მოთხოვნა პირველს `cancelled`-ზე გადაიყვანს; admin approve/reject მუშაობს.
+6. **`0020_instagram_unique.sql`** → PRE-CHECK დუბლიკატებზე (0 მწკრივი; თუ არა — ჯერ გაასუფთავე) → verification `index_ok=1, duplicates=0` → IG-ის ხელახალი connect სხვა მაღაზიიდან: ძველზე NULL, ახალზე დაყენებულია.
+7. **T13** (Cloudflare პროქსირება დადასტურების შემდეგ): `ORIGIN_SECRET` Render-ზე → `curl -i https://<render-url>/status` → 403, `https://chatassist.ge/status` → 200, ბოტი პასუხობს. ამის შემდეგ სანდოა IP-ლიმიტები (T2).
+8. **T12** (Gemini მოდელი) — დედლაინი 2026-10-16, დამოუკიდებელია ზემოთაგან.
 
 ## Backlog (needs user decision)
 ### Nits (აუდიტიდან)
