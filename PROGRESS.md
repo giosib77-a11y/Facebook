@@ -38,7 +38,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   `supabase/migrations/0001_init.sql:104-107`, `backend/app/api/admin.py:381-383`
   - Fix: მიგრაცია `0017` — `revoke delete on public.shops from anon, authenticated`; `admin.delete_shop` შლის `product-images/{shop_id}/*`-საც.
   - Verify: ტესტი — admin delete იძახებს storage remove-ს; მიგრაციის verification query.
-- [ ] **T6 — A-2 (should-fix): `orders`-ზე column privileges / status CHECK არ არის** · `supabase/migrations/0002_orders.sql`
+- [x] **T6 — A-2 (should-fix): `orders`-ზე column privileges / status CHECK არ არის** · `supabase/migrations/0002_orders.sql`
   - გამყიდველს PostgREST-ით შეუძლია `items`/`total` შეცვლა და მერე API-ით გაუქმება → მარაგის გაბერვა; აქტიური შეკვეთის წაშლა (F-07-ის გვერდის ავლა).
   - Fix: მიგრაცია — `revoke update, delete` + `grant update (status)`; `check (status in (...))`; delete policy მხოლოდ `done`/`cancelled`.
   - Verify: SQL verification query მიგრაციაში; API ტესტები გადის.
@@ -73,9 +73,10 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - მხოლოდ SELECT (არაფერს ცვლის); აგრეგირებს 0014/0015/0016 ფაილებში არსებულ verification query-ებს ერთ ფაილში,
     თითო შედეგი — ერთი მკაფიო სტრიქონი (migration, ok true/false, რა აკლია). **გაშვება — მფლობელი** (SQL Editor).
   - Verify: ფაილში არც ერთი DDL/DML (grep), query-ები ემთხვევა მიგრაციების ფაილებს.
-- [ ] **T16 — product-images ბილიკების სტრუქტურა და T5 cleanup-ის გასწორება** · `backend/app/api/products.py`, `backend/app/api/admin.py`
+- [x] **T16 — product-images ბილიკების სტრუქტურა და T5 cleanup-ის გასწორება** · `backend/app/api/products.py`, `backend/app/api/admin.py`
   - კოდიდან დადგინდეს, რა ბილიკებით ინახება ფოტო (`{shop_id}/...` ბრტყელი თუ ქვესაქაღალდეები); თუ ქვესაქაღალდეებია — `admin._remove_shop_images` რეკურსიულად წაშალოს.
   - Verify: ტესტი ქვესაქაღალდიანი fake-ით (თუ ბრტყელია — დადასტურება მოკლედ, ტესტი ბრტყელზე).
+  - ✅ შედეგი: ბილიკი ყოველთვის ბრტყელია `{shop_id}/{uuid}.{ext}` (`products.py:179`, ერთადერთი upload) → cleanup-ის გასწორება არ სჭირდება. ისტორიული ხელით ატვირთული nested ობიექტები offline ვერ შემოწმდა.
 - [ ] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
   - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
   - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
@@ -84,7 +85,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): მიგრაციებს ახლა არ უშვებს — ყველა task-ის შემდეგ ერთი დაგეგმილი deploy.
 > სექცია ივსება ყოველი მიგრაციის/frontend ცვლილების დამატებისას; საბოლოო რიგი — Stage-ის ბოლოს.
-- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · (T6, T8, T9 — დაემატება)
+- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · (T8, T9 — დაემატება)
 - **წინაპირობა:** T15-ის წამკითხველი SQL → 0014–0016 live ბაზაზე გაშვებულია?
 - **Frontend build:** `dist/` commit-შია (T14-ის შემდეგ).
 - **რიგი და შემოწმება:** (შეივსება საბოლოოდ)
@@ -128,4 +129,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: T6 → T7 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Next: T7 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
