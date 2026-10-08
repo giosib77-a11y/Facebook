@@ -34,7 +34,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `iter_rows` `max_col`-ის გარეშე: 4.8KB ფაილი `dimension=A1:XFD…`-ით ≈ 660MB (გაზომილი ლოკალურად) → instance OOM.
   - Fix: `iter_rows(max_col=MAX_COLS)`; `load_workbook`-მდე zip-ის გაშლილი ზომის ჭერი.
   - Verify: ტესტი სინთეზური xlsx-ით (ფართო dimension) — სწრაფად ბრუნდება / ValueError.
-- [ ] **T5 — A-1 (should-fix): მაღაზიის პირდაპირი DELETE PostgREST-ით → storage კვოტის და კლიენტების მრიცხველის გვერდის ავლა** ·
+- [x] **T5 — A-1 (should-fix): მაღაზიის პირდაპირი DELETE PostgREST-ით → storage კვოტის და კლიენტების მრიცხველის გვერდის ავლა** ·
   `supabase/migrations/0001_init.sql:104-107`, `backend/app/api/admin.py:381-383`
   - Fix: მიგრაცია `0017` — `revoke delete on public.shops from anon, authenticated`; `admin.delete_shop` შლის `product-images/{shop_id}/*`-საც.
   - Verify: ტესტი — admin delete იძახებს storage remove-ს; მიგრაციის verification query.
@@ -112,5 +112,5 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   აუდიტი (standard-reviewer ×2); PROGRESS.md; verify.sh — agent-dashboard-ის 3 ცვლილება (CHECKS ცარიელი).
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
-- Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5, T6, T8, T9) გაშვება — მფლობელი.
-- Next: T5 → T6 → T7 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
+- Next: T6 → T7 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.

@@ -22,6 +22,8 @@ from app.core.tiers import (
     normalize_tier,
 )
 
+PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger("app")
 
@@ -373,7 +375,7 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
 
 @router.delete("/shops/{shop_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_shop(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
-    """მაღაზიის სრული წაშლა (პროდუქტები + შეკვეთები + მაღაზია)."""
+    """მაღაზიის სრული წაშლა (პროდუქტები + შეკვეთები + მაღაზია + Storage-ის ფოტოები)."""
     sc = get_service_client()
     exists = sc.table("shops").select("id").eq("id", shop_id).limit(1).execute().data
     if not exists:
@@ -381,7 +383,22 @@ def delete_shop(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
     sc.table("orders").delete().eq("shop_id", shop_id).execute()
     sc.table("products").delete().eq("shop_id", shop_id).execute()
     sc.table("shops").delete().eq("id", shop_id).execute()
+    _remove_shop_images(sc, shop_id)
     return None
+
+
+def _remove_shop_images(sc, shop_id: str) -> None:
+    """Best-effort: product-images/{shop_id}/* წაშლა. შეცდომა მხოლოდ ლოგდება."""
+    try:
+        bucket = sc.storage.from_(PRODUCT_IMAGES_BUCKET)
+        for _ in range(50):  # ზედა ზღვარი — უსასრულო ციკლის წინააღმდეგ
+            objects = bucket.list(shop_id, {"limit": 100}) or []
+            paths = [f"{shop_id}/{o['name']}" for o in objects if o.get("name")]
+            if not paths:
+                break
+            bucket.remove(paths)
+    except Exception:
+        logger.warning("shop image cleanup failed for shop %s", shop_id)
 
 
 @router.get("/upgrade-requests")
