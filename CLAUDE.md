@@ -14,7 +14,7 @@
 - dev backend: `cd backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
   (⚠️ ლოკალური `.env` production Supabase-ს უკავშირდება — აგენტმა backend არ გაუშვას მფლობელის თანხმობის გარეშე)
 - dev frontend: `cd frontend && npm run dev` → http://localhost:5173/panel/
-- lint: **არ არის** (არც backend-ზე — ruff არ არის დაყენებული, არც frontend-ზე — eslint არ არის). იხ. PROGRESS.md
+- lint (backend): `cd backend && .venv/Scripts/python.exe -m ruff check app tests` (E,F; E501 ignored; CI-ში). Frontend-ზე eslint არ არის.
 - typecheck: **არ არის** (Python type hints უმოწმებელია; frontend JS-ია)
 - compile check (CI-ში): `cd backend && .venv/Scripts/python.exe -m compileall -q app`
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`

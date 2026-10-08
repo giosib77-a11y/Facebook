@@ -9,7 +9,7 @@
 """
 from dataclasses import dataclass
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Header, HTTPException, status
 from supabase import Client, create_client
 
 from app.config import get_settings

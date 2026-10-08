@@ -9,7 +9,7 @@ ID-ები (A-n / B-n) commit message-ში იწერება: `fix(scope
 backend-ის deploy-მდე ან მის შემდეგ — task-ში მითითებული რიგით.
 
 ## Tasks
-- [ ] **T1 — Minimal lint setup (backend)** · infra
+- [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS — ელოდება მფლობელის თანხმობას)
   - ruff ჯერ არ არის; ტესტები არის (114, offline, CI-ში).
   - `ruff` → `backend/requirements-dev.txt`; მინიმალური კონფიგი (`E`, `F` წესები) `backend/pyproject.toml`-ში ან `ruff.toml`-ში;
     არსებული დარღვევები გასწორდეს ან ცხადად გამოირიცხოს; CI-ში ნაბიჯი `ruff check app tests`.

@@ -1,0 +1,4 @@
+[lint]
+select = ["E", "F"]
+# E501: 299 existing long lines (Georgian comments/prompts); no mass reformatting
+ignore = ["E501"]
