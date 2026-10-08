@@ -119,9 +119,9 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 > ახალი env სახელები: `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`, ძველი: `SUPABASE_ANON_KEY`), `SUPABASE_SECRET_KEY` (`sb_secret_…`, ძველი: `SUPABASE_SERVICE_ROLE_KEY`). ახალი სახელი უპირატესია; ძველი მუშაობს fallback-ად. ცარიელ-მაგრამ-არსებული ახალი ცვლადი ძველს **ფარავს** → rollback-ისას ახალი ცვლადი **წაშალე**, ცარიელზე ნუ დააყენებ.
 > სად ვიღებთ: Supabase Dashboard → Project Settings → API Keys → ახალი tab (Publishable / Secret). Secret key-ს არ ვაჩვენებთ არსად, არ ვაგზავნით.
 
-- **K1. კოდის deploy** (merge `agent-system` → `main` + push). ძველი env ჯერ არ იცვლება — ბოლო ეტაპზე ცვლილება უხილავია (fallback). frontend `config.js`-ში ახლა ველი უკვე `SUPABASE_PUBLISHABLE_KEY`, მნიშვნელობა ჯერ ძველი anon JWT. შემოწმება: საიტი/პანელი/ბოტი ისევ მუშაობს.
-- **K2. Render env:** დაამატე `SUPABASE_SECRET_KEY=sb_secret_…` და `SUPABASE_PUBLISHABLE_KEY=sb_publishable_…` (ძველებს ჯერ ნუ წაშლი) → Render restart.
-- **K3. შემოწმება backend-ზე ახალი key-ებით** (ეს არის ერთადერთი ადგილი, სადაც `sb_secret_`-ის რეალური მუშაობა დგინდება — offline ვერ დადასტურდა):
+- **K1. კოდის deploy** ✅ (მფლობელი) (merge `agent-system` → `main` + push). ძველი env ჯერ არ იცვლება — ბოლო ეტაპზე ცვლილება უხილავია (fallback). frontend `config.js`-ში ახლა ველი უკვე `SUPABASE_PUBLISHABLE_KEY`, მნიშვნელობა ჯერ ძველი anon JWT. შემოწმება: საიტი/პანელი/ბოტი ისევ მუშაობს.
+- **K2. Render env:** ✅ დაამატე `SUPABASE_SECRET_KEY=sb_secret_…` და `SUPABASE_PUBLISHABLE_KEY=sb_publishable_…` (ძველებს ჯერ ნუ წაშლი) → Render restart.
+- **K3. შემოწმება backend-ზე ✅ (მფლობელი: ფოტოს ატვირთვა 200, შეკვეთა 201, ლოგში შეცდომა არ არის) ახალი key-ებით** (ეს არის ერთადერთი ადგილი, სადაც `sb_secret_`-ის რეალური მუშაობა დგინდება — offline ვერ დადასტურდა):
   - პანელში login, მაღაზიების/პროდუქტების სია (publishable + მომხმარებლის JWT, RLS);
   - ფოტოს ატვირთვა/წაშლა (Storage, secret key);
   - საჯარო შეკვეთა `order.html`-იდან (service client);
@@ -129,8 +129,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - admin პანელი იხსნება (service client);
   - Render-ის ლოგში `Invalid API key`/`401`/`permission denied` არ არის.
   თუ რამე ცუდადაა — **rollback:** წაშალე `SUPABASE_SECRET_KEY` და `SUPABASE_PUBLISHABLE_KEY` Render-ზე (ძველი სახელები გააგრძელებს მუშაობას), restart.
-- **K4. ლოკალური `.env`:** იგივე ორი ცვლადი ახალი სახელებით (ძველი ორი ხაზი წაშალე); ლოკალური backend-ი production Supabase-ს უკავშირდება — მხოლოდ შენ გაუშვი.
-- **K5. frontend:** `frontend/public/config.js`-ში `SUPABASE_PUBLISHABLE_KEY`-ის მნიშვნელობა შეცვალე `sb_publishable_…`-ით (ეს key საჯაროა, git-ში ჩადება ნორმალურია) → `cd frontend && npm run build` → commit `public/config.js` + `dist/` → push. შემოწმება: login/logout, რეგისტრაცია, პაროლის აღდგენა (`reset.html`), `order.html` (მენიუ იტვირთება), admin.html.
+- **K4. ლოკალური `.env`:** ✅ (ახალ სახელებზეა) იგივე ორი ცვლადი ახალი სახელებით (ძველი ორი ხაზი წაშალე); ლოკალური backend-ი production Supabase-ს უკავშირდება — მხოლოდ შენ გაუშვი.
+- **K5. frontend:** ✅ `public/config.js` და `dist/` განახლებულია `sb_publishable_…`-ით (commit agent-system-ზე; push/deploy და ქვემოთ ჩამოთვლილი ხელით შემოწმებები ჯერ მფლობელს ელის) — `frontend/public/config.js`-ში `SUPABASE_PUBLISHABLE_KEY`-ის მნიშვნელობა შეცვალე `sb_publishable_…`-ით (ეს key საჯაროა, git-ში ჩადება ნორმალურია) → `cd frontend && npm run build` → commit `public/config.js` + `dist/` → push. შემოწმება: login/logout, რეგისტრაცია, პაროლის აღდგენა (`reset.html`), `order.html` (მენიუ იტვირთება), admin.html.
 - **K6. Render env-ის გასუფთავება:** წაშალე `SUPABASE_SERVICE_ROLE_KEY` და `SUPABASE_ANON_KEY` → restart → K3-ის შემოწმება ხელახლა (დარწმუნდი, რომ ახალი სახელები ნამდვილად მუშაობს და fallback-ზე არ იყავი).
 - **K7. legacy key-ების გამორთვა:** Supabase Dashboard → Project Settings → API Keys → **Legacy API keys** → გამორთვა („Disable JWT-based API keys" / legacy anon & service_role). ეს ააქტიურებს გაჟონილი service_role-ის გაუქმებას. ეფექტი: ძველი anon/service_role JWT-ები აღარ მუშაობს; მომხმარებლების სესიის JWT-ები Auth-ისაა და არ ირღვევა. უკან დასაბრუნებელია Dashboard-იდან (დროებით, თუ რამე გაფუჭდა).
 - **K8. შემოწმება K7-ის შემდეგ:** იგივე სია, რაც K3 + ახალი მომხმარებლის რეგისტრაცია/login + admin. გაჟონილი service_role-ით სცადე ერთი read (curl `apikey: <ძველი>` → 401 უნდა იყოს) — ამით დაადასტურებ, რომ გაუქმდა.

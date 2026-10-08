@@ -4,7 +4,7 @@
 window.APP_CONFIG = {
   SUPABASE_URL: "https://xtvuqanwqocxgwetpzze.supabase.co",
   SUPABASE_PUBLISHABLE_KEY:
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh0dnVxYW53cW9jeGd3ZXRwenplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwOTU3NTUsImV4cCI6MjA5NzY3MTc1NX0.9QxS7SLWnEp7XH3wAou7FCFfAfe7GtieX6wjln39Vp8",
+    "sb_publishable_SCqdd9pDsLkG371fqzr8kQ_DtvOyLnv",
   // FastAPI backend-ის მისამართი.
   // თუ პანელი backend-იდან იხსნება (localhost:8000/panel ან ngrok), API იმავე origin-ზეა.
   // თუ ცალკე static სერვერიდან (localhost:5500), API ლოკალურ 8000-ზეა.
