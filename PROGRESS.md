@@ -81,6 +81,11 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [x] **T21 — IP-ლიმიტი (ip, shop)-ზე, 20/დღე (მფლობელის გადაწყვეტილება 2026-10-08)** · `backend/app/api/orders.py`, `backend/app/core/ratelimit.py`
   - ახლა `create_order_day` 20/დღე მხოლოდ IP-ზეა და ყველა მაღაზიაზე საერთოა (CGNAT-ის რისკი). გადავიდეს key-ზე `(ip, shop_id)`; ლიმიტი 20/დღე რჩება. წუთობრივი `create_order` (10/წთ, IP) უცვლელია.
   - Verify: ტესტი — ერთი IP + shop A: 21-ე → 429; იგივე IP + shop B ჯერ გადის; სხვა IP + shop A გადის; PROJECT.md Decision Log-ის B-1 ჩანაწერი განახლდეს.
+- [ ] **T22 — should-fix (ლაივ-შემოწმებიდან): INFO ლოგები production-ში არ ჩანს; `peer` გაყალბებადია (uvicorn proxy headers)** · `backend/app/main.py`, `backend/app/core/ratelimit.py`
+  - (ა) მიზეზი: `logging.getLogger("app")`-ზე არც handler, არც level არ არის მორგებული (`basicConfig` არსად არის); uvicorn მხოლოდ საკუთარ `uvicorn*` logger-ებს აყენებს → `app`-ის INFO ჩანაწერები იკარგება, WARNING-ები კი lastResort handler-ით ჩანს. ამიტომ `client-ip debug` (INFO) ლოგში არ გამოჩნდა — და ბოტის/webhook-ის სხვა `logger.info` ჩანაწერებიც production-ში უხილავია.
+  - (ბ) uvicorn-ის proxy-headers (ნაგულისხმევად ჩართულია; access log-ში `1.2.3.4:0` ამას აჩვენებს) `request.client.host`-ს XFF-ით ანაცვლებს → `peer` კლიენტის კონტროლშია. `_client_ip` პირველ რიგში XFF-ის მარჯვენა ჩანაწერს იღებს (ეს გაყალბებას უძლებს), მაგრამ fallback (`entries < hops`) `peer`-ზეა → გაყალბებადი. სხვა გამოყენება: `admin.py:154` (მხოლოდ დიაგნოსტიკა).
+  - Fix: (1) `LOG_LEVEL` (default INFO) — `app` logger-ი stdout-ზე; **წინასწარ გადაამოწმე ყველა `logger.info`/`debug` — PII (ტექსტი, PSID, ტელეფონი, token) არ იწერებოდეს**; (2) production-ში `_client_ip` fallback = ფიქსირებული საერთო bucket (`"unknown"`) და არა `peer`; dev-ში peer; ტესტი — გაყალბებული peer (XFF-ის გარეშე/ცოტა ჩანაწერით) ლიმიტს ვერ აცდენს; (3) მფლობელს ვთავაზობ (კოდი არა): Render start command-ში `--no-proxy-headers`, რომ `request.client` რეალური socket peer იყოს (access log-ში IP-ები ვეღარ გამოჩნდება).
+  - Verify: ტესტები; ლოგის ფორმატი/ლოგში secrets არ ხვდება.
 
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
@@ -95,7 +100,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 ### ⏳ დარჩენილი
 1. Render env: `CLIENT_IP_DEBUG=true` (deploy-მდე).
 2. **Backend deploy:** merge `agent-system` → `main` + push (Render auto-deploy). Branch-ის მზადყოფნა — იხ. ქვემოთ.
-3. **T17 — hops-ის შემოწმება:** ერთი მოთხოვნა ცნობილი IP-დან გაყალბებული `X-Forwarded-For: 1.2.3.4`-ით (მაგ. `curl -H "X-Forwarded-For: 1.2.3.4" https://chatassist.ge/status`; ლიმიტიან endpoint-ზე სჯობს), Render-ის ლოგში `client-ip debug: xff='...' entries=N peer=... hops=1 chosen=...` → მარჯვნიდან ის პოზიცია, სადაც შენი რეალური IP დგას = `CLIENT_IP_TRUSTED_HOPS`; დააყენე Render-ზე.
+3. **T17 — hops-ის შემოწმება** (სანამ T22 არ გასწორებულა, `client-ip debug` ლოგში არ ჩანს — გამოიყენე `GET /admin/client-ip`, იხ. T22): ერთი მოთხოვნა ცნობილი IP-დან გაყალბებული `X-Forwarded-For: 1.2.3.4`-ით (მაგ. `curl -H "X-Forwarded-For: 1.2.3.4" https://chatassist.ge/status`; ლიმიტიან endpoint-ზე სჯობს), Render-ის ლოგში `client-ip debug: xff='...' entries=N peer=... hops=1 chosen=...` → მარჯვნიდან ის პოზიცია, სადაც შენი რეალური IP დგას = `CLIENT_IP_TRUSTED_HOPS`; დააყენე Render-ზე.
 4. `CLIENT_IP_DEBUG` გამორთე (წაშალე ან `false`).
 5. deploy-ის შემდეგ ხელით შემოწმება: `GET /status` → `env=production`; ბოტი Messenger-ში პასუხობს; საჯარო შეკვეთა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს, `new/processing`-ის წაშლა → 409; IG connect უკვე დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე.
 6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
