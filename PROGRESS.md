@@ -83,27 +83,30 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - Verify: ტესტი — ერთი IP + shop A: 21-ე → 429; იგივე IP + shop B ჯერ გადის; სხვა IP + shop A გადის; PROJECT.md Decision Log-ის B-1 ჩანაწერი განახლდეს.
 
 ## Deploy plan
-> მფლობელის გადაწყვეტილება (2026-10-08): მიგრაციებს ახლა არ უშვებს — ყველა task-ის შემდეგ ერთი დაგეგმილი deploy.
-> სექცია ივსება ყოველი მიგრაციის/frontend ცვლილების დამატებისას; საბოლოო რიგი — Stage-ის ბოლოს.
-- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · `0019_upgrade_requests_checks.sql` (T8; PRE-CHECK 0 მწკრივი; verification: chk_valid=2, insert_policy_ok=t; status CHECK-ში 'cancelled' შედის — shops.py:67 იყენებს) · `0020_instagram_unique.sql` (T9; PRE-CHECK დუბლიკატები → 0 მწკრივი; verification: index_ok=1, duplicates=0; მიგრაციამდე backend deploy სასურველია; connect ახლა უარს იღებს `ig_taken`-ით)
-- **წამკითხველი (გაუშვი ჯერ):** `supabase/checks/check_0014_0016.sql` (T15) — ყველა ok=true უნდა იყოს
-- **Frontend build:** T18-მა შეცვალა `fbConnect.js` და `dist/` უკვე rebuild-ებულია და commit-შია (finish-check-ზე `npm run build` იგივე შედეგს იძლევა) — დამატებითი build არ სჭირდება.
-- **ლოკალური წინაპირობა:** შენს `.env`-ში `APP_ENV=development` (T3: default ახლა production).
+> მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
 
-### რიგი და შემოწმება
-1. **წამკითხველი:** `supabase/checks/check_0014_0016.sql` SQL Editor-ში → ყველა `ok=true`? თუ არა — ჯერ აკლია 0014/0015/0016 (ფაილებში verification-ებით), მერე გაგრძელება.
-2. **Backend deploy** (⚠️ `CLIENT_IP_DEBUG=true` Render env-ში **deploy-მდე** დააყენე, რომ არასწორი hops-ის ფანჯარა მინიმალური იყოს) ⚠️ deploy-ის შემდეგ **დაუყოვნებლივ** T17-ის ნაბიჯი (ნაბიჯი 7): სანამ `CLIENT_IP_TRUSTED_HOPS` სწორად არ არის, ყველა კლიენტი შეიძლება ერთ IP-bucket-ში მოხვდეს და საჯარო შეკვეთა (20/დღე) მთელ საიტზე ამოიწუროს. (`agent-system` → `main` merge/push — შენი თანხმობით, Render auto-deploy). რატომ პირველი: მიგრაციები backend-ს არ არღვევს, მაგრამ 0020-მდე connect-ის „სხვა მაღაზიიდან IG id-ის მოხსნა" უკვე უნდა მუშაობდეს.
-   შემდეგ შეამოწმე: `GET /status` → `env=production`; Messenger-ში ბოტი პასუხობს; საჯარო შეკვეთა მარაგს **არ** ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს; Actions-ში CI მწვანეა (ახალი ruff ნაბიჯი).
-2a. **T20 — ერთჯერადი მარაგის გასწორება (CRITICAL)** — backend deploy-ის live გახდომისთანავე: `supabase/one-off/release_legacy_new_order_stock.sql` (preview → cutoff = Render deploy event-ის დრო → გაშვება ერთხელ). ამის გარეშე deploy-მდე შექმნილი `new` შეკვეთების დადასტურება მარაგს მეორედ დააკლებს, გაუქმება კი ვერ დააბრუნებს.
-   პროცედურა: (1) Render → Events-ში ჩაიწერე ახალი deploy-ის ზუსტი live დრო UTC-ში; (2) SQL Editor-ში STEP 1a/1b — `EDIT_CUTOFF` ჩაანაცვლე ამ დროით, გაუშვი, შეამოწმე `orders_to_process` და `newest < cutoff`, შეინახე 1b შედეგი; (3) STEP 2-ში იგივე cutoff და გაშვება; (4) STEP 3a: `details` → `orders_processed=N` = 1a-ის რიცხვს. ორჯერ გაშვება PK-ით ჩავარდება და მარაგს არ შეცვლის.
-   ⚠️ ფანჯარა deploy-სა და სკრიპტს შორის: ამ ხანში გაუქმებული ძველი `new` შეკვეთის მარაგი არ დაბრუნდება, `processing`-ზე გადაყვანილისა კი ორჯერ დაიკლება — დროულად გაუშვი და ფანჯარაში შეცვლილები ხელით გადაამოწმე (`updated_at >= cutoff and created_at < cutoff`). SQL რეალურ Postgres-ზე გაუშვებელია — პირველი გაშვება შენთან.
-3. **`0017_revoke_shops_delete.sql`** → verification: `anon_delete=false, auth_delete=false, service_delete=true, auth_select=true` → ხელით: admin-იდან სატესტო მაღაზიის წაშლა, Storage-ში საქაღალდე გაქრა.
-4. **`0018_orders_privileges.sql`** → ჯერ PRE-CHECK (0 მწკრივი), მერე გაშვება → verification `t,f,f,f,f,f,t,t,1,t` → პანელში: სტატუსის შეცვლა მუშაობს; `done/cancelled`-ის წაშლა მუშაობს; `new/processing`-ის წაშლა → 409.
-5. **`0019_upgrade_requests_checks.sql`** → PRE-CHECK (0 მწკრივი) → verification `chk_valid=2, insert_policy_ok=t` → პანელში პაკეტის მოთხოვნა მუშაობს; მეორე მოთხოვნა პირველს `cancelled`-ზე გადაიყვანს; admin approve/reject მუშაობს.
-6. **`0020_instagram_unique.sql`** → PRE-CHECK დუბლიკატებზე (0 მწკრივი; თუ არა — ჯერ გაასუფთავე) → verification `index_ok=1, duplicates=0` → IG-ის connect სხვა მაღაზიიდან უკვე დაკავებულ ანგარიშზე → უარი `ig_taken` შეტყობინებით; იგივე მაღაზიის ხელახალი connect გადის.
-7. **T17** (კლიენტის IP Render-იდან): deploy-ის შემდეგ diagnostic დროებით ჩართე → ერთი მოთხოვნა ცნობილი IP-დან (+ გაყალბებული `X-Forwarded-For`) → Render-ის ლოგში ნახე რეალური XFF → დააყენე `CLIENT_IP_TRUSTED_HOPS` → გამორთე diagnostic. (T13/ORIGIN_SECRET — Backlog.)
-8. **საგანგებო ნაბიჯი (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა (ბოტი 404/ცარიელ პასუხებს აბრუნებს), Render-ზე `GEMINI_MODEL=gemini-3.5-flash` და restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10 ჩამოიჭრა) — ეს პირდაპირ ბოტს აფუჭებს; ამიტომ ეს მხოლოდ ბოლო გამოსავალია, სანამ `thinking_config` კოდში არ შეიზღუდება (Backlog T12).
-9. **key-ების როტაცია** (Gemini, `FB_APP_SECRET`, Supabase service-role): ტრანსკრიპტში გამოჩნდა — **როდის გააკეთებ, შენ წყვეტ**. `FB_TOKEN_ENCRYPTION_KEY`-ს **არ ვეხებით** (შეცვლა დაშიფრულ page token-ებს გამოუსადეგარს გახდის). როტაციისას: ახალი მნიშვნელობა Render-ზე + ლოკალურ `.env`-ში; `FB_APP_SECRET` — Meta App Dashboard-ში reset-იც, შემდეგ webhook-ის ხელმოწერა/OAuth შეამოწმე (ბოტი პასუხობს, connect მუშაობს); service-role — Supabase Settings → API.
+### ✅ შესრულებულია (მფლობელი, ლაივ ბაზაზე)
+- `supabase/checks/check_0014_0016.sql` → ყველა 32 შემოწმება `ok=true` — 0014–0016 ლაივზე გაშვებული იყო.
+- მიგრაციები **0017, 0018, 0019, 0020** გაშვებულია ლაივ ბაზაზე (Supabase migration history-ში ჩაიწერა): PRE-CHECK-ები (0 მწკრივი) და თითოეულის verification query — ყველა შედეგი მოსალოდნელს ემთხვევა.
+- **T20 (ერთჯერადი მარაგის გასწორება) არ დასჭირდა:** სატესტო შეკვეთები წაიშალა, `orders` ცხრილი ცარიელია. `supabase/one-off/release_legacy_new_order_stock.sql` რჩება მხოლოდ როგორც სათადარიგო.
+  ⚠️ პირობა: თუ deploy-მდე ძველმა backend-მა ახალი შეკვეთა მიიღო (ძველი წესით მარაგი უკვე დაკლებულია), `orders` ცხრილი deploy-ის შემდეგ ისევ შეამოწმე (`select count(*) from public.orders;`); თუ > 0 და ისინი `new`-ია deploy-მდე შექმნილი — გამოიყენე ის სკრიპტი. ცარიელი ცხრილი = არაფერი გასაკეთებელია.
+- ⚠️ გაითვალისწინე: მიგრაციები ახლა **ძველ backend-ზე** მუშაობს deploy-მდე. გადამოწმებულია კოდით, რომ ძველი backend თავსებადია (orders UPDATE მხოლოდ `status`, delete მხოლოდ done/cancelled, upgrade_requests იგივე ველები).
+
+### ⏳ დარჩენილი
+1. Render env: `CLIENT_IP_DEBUG=true` (deploy-მდე).
+2. **Backend deploy:** merge `agent-system` → `main` + push (Render auto-deploy). Branch-ის მზადყოფნა — იხ. ქვემოთ.
+3. **T17 — hops-ის შემოწმება:** ერთი მოთხოვნა ცნობილი IP-დან გაყალბებული `X-Forwarded-For: 1.2.3.4`-ით (მაგ. `curl -H "X-Forwarded-For: 1.2.3.4" https://chatassist.ge/status`; ლიმიტიან endpoint-ზე სჯობს), Render-ის ლოგში `client-ip debug: xff='...' entries=N peer=... hops=1 chosen=...` → მარჯვნიდან ის პოზიცია, სადაც შენი რეალური IP დგას = `CLIENT_IP_TRUSTED_HOPS`; დააყენე Render-ზე.
+4. `CLIENT_IP_DEBUG` გამორთე (წაშალე ან `false`).
+5. deploy-ის შემდეგ ხელით შემოწმება: `GET /status` → `env=production`; ბოტი Messenger-ში პასუხობს; საჯარო შეკვეთა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს, `new/processing`-ის წაშლა → 409; IG connect უკვე დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე.
+6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
+7. **key-ების როტაცია** (Gemini, `FB_APP_SECRET`, Supabase service-role) — როდის, მფლობელი წყვეტს. `FB_TOKEN_ENCRYPTION_KEY`-ს არ ვეხებით.
+8. ლოკალურ `.env`-ში `APP_ENV=development`.
+
+### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
+- `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
+- სუფთა venv-ში CI-ის ნაბიჯები (`requirements.lock.txt` + `requirements-dev.txt` → `pip check` → `compileall` → `ruff check app tests` → `pytest -q`, `.env`-ის გარეშე): ყველა გავიდა, 174 passed. ლოკალური Python-ის ვერსია შეიძლება CI-ის 3.14.3-ისგან განსხვავდებოდეს — GitHub-ზე რეალური CI გაშვება დაუდასტურებელია.
+- Frontend: `npm run build` ახლა `frontend/dist/`-ს არ ცვლის (git status სუფთაა) → dist commit-შია და აქტუალურია.
+- `git status` სუფთაა; secrets repo-ში არ ჩაგდებულა (T19: ტესტები `.env`-ს არ კითხულობენ).
 
 ## Backlog (needs user decision)
 - **T12 (გადადებულია 2026-10-08) — Gemini მოდელი / AI provider-ის შეფასება.** მომავალი ეტაპი: AI provider-ის შეფასება — gemini-2.5-flash, gemini-3.5-flash (შეზღუდული thinking-ით) და Claude Haiku 4.5; შედარება ხარისხით, სიჩქარით და ფასით (თითო პასუხზე).
@@ -170,4 +173,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: Stage Done (დარჩენილი მხოლოდ მფლობელის ნაბიჯები — Deploy plan)
+- Next: მფლობელი — Deploy plan-ის დარჩენილი ნაბიჯები; კოდის task-ები დასრულებულია
