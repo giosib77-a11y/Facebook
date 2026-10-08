@@ -154,7 +154,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         17 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         19 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -334,7 +334,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (18)
+### მიგრაციები (19)
 
 | # | რა |
 |---|---|
@@ -356,6 +356,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0016` | 🔒 ტექსტური სვეტების სიგრძის CHECK ლიმიტები |
 | `0017` | 🔒 `shops`-ის DELETE მოხსნილია `anon`/`authenticated`-დან (წაშლა მხოლოდ admin endpoint-ით) |
 | `0018` | 🔒 `orders`: UPDATE მხოლოდ `status` სვეტზე, status CHECK, DELETE პოლისი მხოლოდ `done`/`cancelled` |
+| `0019` | 🔒 `upgrade_requests`: INSERT პოლისი მოითხოვს `pending` + tier-ის სიას; status/tier CHECK |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
 

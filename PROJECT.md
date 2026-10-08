@@ -51,7 +51,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 - Excel/CSV/PDF ატვირთვა — მხოლოდ ფასიან პაკეტებზე.
 
 ## Data
-Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0018`
+Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0019`
 (სია: [README.md](README.md) §7, მოძველებულია 0014-ზე).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`

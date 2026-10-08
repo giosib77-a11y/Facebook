@@ -46,7 +46,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   `backend/app/api/webhook.py:262-273`
   - Fix: in-memory ლიმიტი `(shop_id, psid)` (~6/წთ) და `shop_id` (~30/წთ); გადაჭარბება — ჩუმად გამოტოვება + log.
   - Verify: ტესტი — N+1-ე შეტყობინება `get_bot_reply`-ს არ იძახებს.
-- [ ] **T8 — A-3 (should-fix): `upgrade_requests` insert policy სვეტებს არ ზღუდავს** · `supabase/migrations/0005_upgrade_requests.sql:22-27`
+- [x] **T8 — A-3 (should-fix): `upgrade_requests` insert policy სვეტებს არ ზღუდავს** · `supabase/migrations/0005_upgrade_requests.sql:22-27`
   - Fix: მიგრაცია — WITH CHECK `status='pending' and resolved_at is null and requested_tier in (...)` + CHECK constraints.
   - Verify: SQL verification query.
 - [ ] **T9 — A-5 / B-9 (should-fix, low): `instagram_account_id` არ არის unique → IG DM შეიძლება სხვა tenant-ის მაღაზიას მიება** ·
@@ -85,7 +85,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): მიგრაციებს ახლა არ უშვებს — ყველა task-ის შემდეგ ერთი დაგეგმილი deploy.
 > სექცია ივსება ყოველი მიგრაციის/frontend ცვლილების დამატებისას; საბოლოო რიგი — Stage-ის ბოლოს.
-- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · (T8, T9 — დაემატება)
+- **Migrations დაწერილი, გაუშვებელი:** `0017_revoke_shops_delete.sql` (T5) · `0018_orders_privileges.sql` (T6; PRE-CHECK query ფაილის header-ში; მოსალოდნელი verification: t,f,f,f,f,f,t,t,1,t) · `0019_upgrade_requests_checks.sql` (T8; PRE-CHECK 0 მწკრივი; verification: chk_valid=2, insert_policy_ok=t; status CHECK-ში 'cancelled' შედის — shops.py:67 იყენებს) · (T9 — დაემატება)
 - **წინაპირობა:** T15-ის წამკითხველი SQL → 0014–0016 live ბაზაზე გაშვებულია?
 - **Frontend build:** `dist/` commit-შია (T14-ის შემდეგ).
 - **რიგი და შემოწმება:** (შეივსება საბოლოოდ)
@@ -129,4 +129,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: T8 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Next: T9 → T10 → T11 → T15 → T14 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
