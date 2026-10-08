@@ -108,11 +108,13 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - შესრულებულია Deploy plan-ის ნაბიჯები: 1 (`CLIENT_IP_DEBUG`), 2 (merge + deploy), 3 (hops-ის შემოწმება), 4 (debug გამორთვა).
 
 ### ⏳ დარჩენილი
-5. deploy-ის შემდეგ ხელით შემოწმება (დადასტურება მფლობელისგან ჯერ არ მიმიღია): `GET /status` → `env=production`; ბოტი Messenger-ში პასუხობს; საჯარო შეკვეთა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს, `processing → cancelled` აბრუნებს, `new/processing`-ის წაშლა → 409; IG connect უკვე დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე.
-   + `select count(*) from public.orders;` — თუ deploy-მდე ძველმა backend-მა შეკვეთა მიიღო და ისინი `new`-ია → სათადარიგო `supabase/one-off/release_legacy_new_order_stock.sql` (იხ. ზემოთ).
+5. deploy-ის შემდეგ ხელით შემოწმება:
+   - ✅ (მფლობელი) login, ფოტოს ატვირთვა, საჯარო შეკვეთა (201), ბოტი, admin.
+   - ⏳ **ღია (მფლობელის თქმით ერთადერთი): მარაგის შემოწმება** — საჯარო შეკვეთის შექმნა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს; `processing → cancelled` აბრუნებს. (სადაც 409 არასაკმარის მარაგზე და `new/processing`-ის წაშლა → 409 — ეს ორი მფლობელს ცალკე არ დაუდასტურებია.)
+   - ℹ️ საწყისი სიის დანარჩენი პუნქტები, რომლებზეც ცალკე დადასტურება არ მიმიღია (მფლობელმა ისინი ღიად არ დატოვა, ამიტომ აქ მხოლოდ ინფორმაციისთვის): `GET /status` → `env=production`; IG connect დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე; `select count(*) from public.orders;` (T20-ის სათადარიგო პირობა).
 6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
 7. **key-ების როტაცია:** ✅ `FB_APP_SECRET` — შეცვლილია; ✅ Supabase — legacy key-ები გამორთულია, 401 დადასტურებულია (T23); ✅ `FB_TOKEN_ENCRYPTION_KEY` — შეცვლილია (Render + ლოკალური `.env`), ერთადერთი Facebook/Instagram-მიბმული მაღაზია ხელახლა დაკავშირდა, ბოტი პასუხობს. ⏳ **ღია: Gemini key-ის როტაცია** — როდის, მფლობელი წყვეტს.
-8. ლოკალურ `.env`-ში `APP_ENV=development`.
+8. ✅ ლოკალურ `.env`-ში `APP_ENV=development` (მფლობელმა დაადასტურა).
 
 ### 🔑 Supabase API key-ების გადასვლა (T23) — ზუსტი რიგი
 > key-ების მნიშვნელობებს მფლობელი სვამს. **ძველი service_role გაჟონა → ის ძალაში რჩება, სანამ legacy key-ები არ გამოირთვება (ნაბიჯი K7). არ გააჭიანურო.**
