@@ -57,7 +57,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [x] **T10 — B-4 (should-fix, low): საჯარო შეკვეთა იღებს `is_active=false` პროდუქტს** · `backend/app/api/orders.py:255-262`
   - Fix: `.eq("is_active", True)` `db_products` select-ში.
   - Verify: ტესტი — არააქტიური პროდუქტი → „ვერ მოიძებნა", მარაგი უცვლელი.
-- [ ] **T11 — B-5 (should-fix): webhook-ის ხელმოწერას ტესტი არ აქვს** · `backend/tests/`
+- [x] **T11 — B-5 (should-fix): webhook-ის ხელმოწერას ტესტი არ აქვს** · `backend/tests/`
   - Fix: ტესტები — სწორი ხელმოწერა → 200; არასწორი/არარსებული → 403. (ცარიელი secret → 403 ტესტი — მხოლოდ Backlog-ის A-9/B-6-ის გასწორების შემდეგ.)
   - Verify: `pytest -q`.
 - [ ] **T12 — Gemini: გადასვლა `gemini-3.5-flash`-ზე (2.5 Flash ითიშება 2026-10-16)** · `GEMINI_MODEL`
@@ -131,4 +131,4 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: T11 → T14 → T12 (⏸ key) → T13 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Next: T14 → T12 (⏸ key) → T13 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
