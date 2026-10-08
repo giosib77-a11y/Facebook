@@ -39,3 +39,6 @@ logs/
 # Supabase local
 supabase/.branches/
 supabase/.temp/
+
+# T12 one-off comparison output
+backend/scripts/compare_gemini_output.md
