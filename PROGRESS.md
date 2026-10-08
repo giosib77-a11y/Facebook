@@ -66,21 +66,15 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - ეტაპი 2: შედარების შედეგის დამტკიცების შემდეგ — Render-ზე `GEMINI_MODEL=gemini-3.5-flash` (მფლობელი ცვლის თვითონ) + კოდის default-ის განახლება.
   - შესამოწმებელი: ფასი/ტოკენი ([project-costs-pricing] memory), `max_output_tokens`, multimodal (ფოტოს გაგება), `[[HANDOFF]]` ნიშნის დაცვა.
   - Deadline: **2026-10-16**.
-- [ ] **T13 — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
-  - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
-  - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.
-- [x] **T15 — წამკითხველი SQL: 0014–0016 გაშვებულია თუ არა ლაივ ბაზაზე** · `supabase/checks/check_0014_0016.sql`
-  - მხოლოდ SELECT (არაფერს ცვლის); აგრეგირებს 0014/0015/0016 ფაილებში არსებულ verification query-ებს ერთ ფაილში,
-    თითო შედეგი — ერთი მკაფიო სტრიქონი (migration, ok true/false, რა აკლია). **გაშვება — მფლობელი** (SQL Editor).
-  - Verify: ფაილში არც ერთი DDL/DML (grep), query-ები ემთხვევა მიგრაციების ფაილებს.
-- [x] **T16 — product-images ბილიკების სტრუქტურა და T5 cleanup-ის გასწორება** · `backend/app/api/products.py`, `backend/app/api/admin.py`
-  - კოდიდან დადგინდეს, რა ბილიკებით ინახება ფოტო (`{shop_id}/...` ბრტყელი თუ ქვესაქაღალდეები); თუ ქვესაქაღალდეებია — `admin._remove_shop_images` რეკურსიულად წაშალოს.
-  - Verify: ტესტი ქვესაქაღალდიანი fake-ით (თუ ბრტყელია — დადასტურება მოკლედ, ტესტი ბრტყელზე).
-  - ✅ შედეგი: ბილიკი ყოველთვის ბრტყელია `{shop_id}/{uuid}.{ext}` (`products.py:179`, ერთადერთი upload) → cleanup-ის გასწორება არ სჭირდება. ისტორიული ხელით ატვირთული nested ობიექტები offline ვერ შემოწმდა.
-- [x] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
-  - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
-  - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
-  - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
+- [ ] **T17 — should-fix: კლიენტის IP Render-ის სანდო header-იდან (CF-Connecting-IP გაყალბებადია)** · `backend/app/core/ratelimit.py`, `config.py`, `main.py`
+  - მფლობელის გადაწყვეტილება (2026-10-08): Cloudflare არ გამოიყენება (chatassist.ge პირდაპირ Render-ზეა). `CF-Connecting-IP` ახლა კლიენტის მიერ ყალბდება → ყველა IP-ლიმიტი (T2, შეკვეთები) შემოსავლელია.
+  - Render-ის დოკუმენტაცია ცალსახა არ არის: Render XFF-ს **არ ასუფთავებს, მხოლოდ ამატებს** (კლიენტის მიწოდებული მნიშვნელობა ინახება, Render ბოლოში ამატებს); Render-ის წარმომადგენელი 2021-ში წერს „first IP = real client", მაგრამ ეს მხოლოდ მაშინ სწორია, როცა კლიენტი XFF-ს არ აგზავნის.
+    ⇒ სანდოა მხოლოდ XFF-ის **მარჯვენა მხარე** (Render-ის დამატებული ჩანაწერები), არა პირველი. ზუსტი hop-ის რაოდენობა (Render-ის edge + LB) დოკუმენტაციით ვერ დადასტურდა.
+  - Fix: `CLIENT_IP_TRUSTED_HOPS` (int) — IP = XFF-ის მარჯვნიდან N-ური ჩანაწერი; კლიენტის `CF-Connecting-IP` სრულად იგნორირდება; დროებითი diagnostic (env-ით ჩასართავი), რომ მფლობელმა Render-ის ლოგში ნახოს რეალური XFF და N დააყენოს.
+  - Verify: ტესტი — გაყალბებული `CF-Connecting-IP` და გაყალბებული XFF-ის მარცხენა ჩანაწერები IP-ს ვერ ცვლის; ლიმიტი სწორ bucket-ზე ითვლება.
+- [ ] **T18 — IG: მეორე მაღაზიის connect-ზე უარი (T9-ის გადაწყვეტილება)** · `backend/app/api/facebook.py`
+  - მფლობელის გადაწყვეტილება: თუ IG ანგარიში უკვე სხვა მაღაზიასთანაა — connect უარს იღებს, მკაფიო შეტყობინებით („ანგარიში უკვე სხვა მაღაზიასთანაა, დაგვიკავშირდით"). T9-ის „სხვა მაღაზიიდან null-დება" ამოღდეს; webhook-ის ორაზროვნობის დაცვა და 0020 რჩება.
+  - Verify: ტესტი — სხვა მაღაზიის IG id → უარი, არაფერი იცვლება; იგივე მაღაზიის ხელახალი connect გადის.
 
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): მიგრაციებს ახლა არ უშვებს — ყველა task-ის შემდეგ ერთი დაგეგმილი deploy.
@@ -98,12 +92,27 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 4. **`0018_orders_privileges.sql`** → ჯერ PRE-CHECK (0 მწკრივი), მერე გაშვება → verification `t,f,f,f,f,f,t,t,1,t` → პანელში: სტატუსის შეცვლა მუშაობს; `done/cancelled`-ის წაშლა მუშაობს; `new/processing`-ის წაშლა → 409.
 5. **`0019_upgrade_requests_checks.sql`** → PRE-CHECK (0 მწკრივი) → verification `chk_valid=2, insert_policy_ok=t` → პანელში პაკეტის მოთხოვნა მუშაობს; მეორე მოთხოვნა პირველს `cancelled`-ზე გადაიყვანს; admin approve/reject მუშაობს.
 6. **`0020_instagram_unique.sql`** → PRE-CHECK დუბლიკატებზე (0 მწკრივი; თუ არა — ჯერ გაასუფთავე) → verification `index_ok=1, duplicates=0` → IG-ის ხელახალი connect სხვა მაღაზიიდან: ძველზე NULL, ახალზე დაყენებულია.
-7. **T13** (Cloudflare პროქსირება დადასტურების შემდეგ): `ORIGIN_SECRET` Render-ზე → `curl -i https://<render-url>/status` → 403, `https://chatassist.ge/status` → 200, ბოტი პასუხობს. ამის შემდეგ სანდოა IP-ლიმიტები (T2).
+7. **T17** (კლიენტის IP Render-იდან): deploy-ის შემდეგ diagnostic დროებით ჩართე → ერთი მოთხოვნა ცნობილი IP-დან (+ გაყალბებული `X-Forwarded-For`) → Render-ის ლოგში ნახე რეალური XFF → დააყენე `CLIENT_IP_TRUSTED_HOPS` → გამორთე diagnostic. (T13/ORIGIN_SECRET — Backlog.)
 8. **T12** (Gemini მოდელი) — დედლაინი 2026-10-16, დამოუკიდებელია ზემოთაგან.
 
 ## Backlog (needs user decision)
+- **T13 (გადატანილია Backlog-ში 2026-10-08) — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
+  - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
+  - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.
+- [x] **T15 — წამკითხველი SQL: 0014–0016 გაშვებულია თუ არა ლაივ ბაზაზე** · `supabase/checks/check_0014_0016.sql`
+  - მხოლოდ SELECT (არაფერს ცვლის); აგრეგირებს 0014/0015/0016 ფაილებში არსებულ verification query-ებს ერთ ფაილში,
+    თითო შედეგი — ერთი მკაფიო სტრიქონი (migration, ok true/false, რა აკლია). **გაშვება — მფლობელი** (SQL Editor).
+  - Verify: ფაილში არც ერთი DDL/DML (grep), query-ები ემთხვევა მიგრაციების ფაილებს.
+- [x] **T16 — product-images ბილიკების სტრუქტურა და T5 cleanup-ის გასწორება** · `backend/app/api/products.py`, `backend/app/api/admin.py`
+  - კოდიდან დადგინდეს, რა ბილიკებით ინახება ფოტო (`{shop_id}/...` ბრტყელი თუ ქვესაქაღალდეები); თუ ქვესაქაღალდეებია — `admin._remove_shop_images` რეკურსიულად წაშალოს.
+  - Verify: ტესტი ქვესაქაღალდიანი fake-ით (თუ ბრტყელია — დადასტურება მოკლედ, ტესტი ბრტყელზე).
+  - ✅ შედეგი: ბილიკი ყოველთვის ბრტყელია `{shop_id}/{uuid}.{ext}` (`products.py:179`, ერთადერთი upload) → cleanup-ის გასწორება არ სჭირდება. ისტორიული ხელით ატვირთული nested ობიექტები offline ვერ შემოწმდა.
+- [x] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
+  - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
+  - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
+  - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
+  - მიზეზი: Cloudflare ახლა არ გამოიყენება; ნაცვლად — T17. დაბრუნდება Cloudflare-ის მომავალ ჩართვასთან ერთად.
 ### Nits (აუდიტიდან)
-- **T9-ის შედეგი** — ორი tenant-ის ერთი IG ანგარიშის connect-ზე მეორე პირველს IG-ს ჩუმად ართმევს (პირველს გაფრთხილება არ აქვს). დავტოვოთ თუ მეორე connect-ს უარი ვუთხრათ?
 - **A-9 / B-6** — საიდუმლოები fail-open: ცარიელი `FB_APP_SECRET`-ით HMAC ყალბდება; `"chatassist"` fallback deletion კოდზე;
   production-ში `FB_TOKEN_ENCRYPTION_KEY`/`FB_APP_SECRET` startup-ზე არ მოწმდება; `encrypt` `subscribe_page`-ის შემდეგაა (`api/facebook.py:253`).
 - **A-6** — `knowledge` PostgREST-ით პირდაპირ ჩაწერადია → free პაკეტი PDF-ცოდნის gate-ს უვლის (`0015_column_privileges.sql:43`).
@@ -140,5 +149,5 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   აუდიტი (standard-reviewer ×2); PROGRESS.md; verify.sh — agent-dashboard-ის 3 ცვლილება (CHECKS ცარიელი).
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
-- Known issues / blockers: Cloudflare-ის პროქსირება ჯერ დაუდასტურებელია (T13/T2 დამოკიდებულია); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: T14 → T12 (⏸ key) → T13 → T8 → T9 → T10 → T11 → T14 → T11 → მიგრაციები T5/T6/T8/T9. T12/T13 — მფლობელთან.
+- Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
+- Next: T17, T18 (კოდი) → T12 (სკრიპტი დაწერილია; გაშვება — მფლობელი) → finish-check
