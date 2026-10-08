@@ -237,6 +237,7 @@ def create_order(payload: OrderCreate):
         sc.table("products")
         .select("id,name,price,quantity")
         .eq("shop_id", str(payload.shop_id))
+        .eq("is_active", True)  # B-4: გამორთული პროდუქტი არ იყიდება
         .in_("id", product_ids)
         .execute()
         .data

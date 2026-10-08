@@ -350,3 +350,22 @@ def test_d5_delete_missing_order_404(client, user_db, service_db):
     assert res.status_code == 404, res.text
     assert res.json()["detail"] == "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი"
     assert service_db.rpc_calls == []
+
+
+def test_o_b4_product_query_filters_active_only(client, service_db):
+    _setup(service_db)
+    res = client.post("/orders", json=_order([1]))
+    assert res.status_code == 201, res.text
+    q = service_db.calls_for("products", "select")[0]
+    assert ("eq", "is_active", True) in q.filters
+    assert ("eq", "shop_id", SHOP_ID) in q.filters
+
+
+def test_o_b4_inactive_product_rejected_without_write(client, service_db):
+    _setup(service_db)
+    # the is_active=true filter makes the DB return no row for an inactive product
+    service_db.responses[("products", "select")] = []
+    res = client.post("/orders", json=_order([1]))
+    assert res.status_code == 400
+    assert "ვერ მოიძებნა" in res.json()["detail"]
+    _assert_nothing_written(service_db)
