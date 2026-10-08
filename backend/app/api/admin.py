@@ -151,7 +151,8 @@ def client_ip(request: Request, admin: CurrentAuth = Depends(get_current_admin))
         "cf_connecting_ip": h.get("cf-connecting-ip"),
         "true_client_ip": h.get("true-client-ip"),
         "x_real_ip": h.get("x-real-ip"),
-        "peer": request.client.host if request.client else None,
+        # untrusted: uvicorn proxy-headers ამას X-Forwarded-For-ით ანაცვლებს (გაყალბებადია)
+        "peer_untrusted": request.client.host if request.client else None,
         "resolved": _client_ip(request),
         "client_ip_trusted_hops": get_settings().client_ip_trusted_hops,
     }

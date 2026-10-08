@@ -517,7 +517,8 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `APP_HOST` · `APP_PORT` | | `0.0.0.0` · `8000` | |
 | `CORS_ORIGINS` | | `*` | production-ში კონკრეტული დომენი |
 | `CLIENT_IP_TRUSTED_HOPS` | | `1` | კლიენტის IP = `X-Forwarded-For`-ის მარჯვნიდან N-ური ჩანაწერი (Render-ზე სწორი N დაადგინე `CLIENT_IP_DEBUG`-ით). `CF-Connecting-IP` იგნორირდება |
-| `CLIENT_IP_DEBUG` | | `false` | დროებით `true` → ლოგში XFF/peer/არჩეული IP (10 წმ-ში ერთხელ); შემდეგ გამორთე |
+| `CLIENT_IP_DEBUG` | | `false` | დროებით `true` → ერთი INFO ხაზი ლოგში: სრული XFF (≤1000 სიმბ.), entries, peer (არასანდო), hops, resolved IP (10 წმ-ში ერთხელ); შემდეგ გამორთე. production-ში XFF-ის ნაკლებობისას resolved = `unknown` (საერთო key, `peer` არ გამოიყენება — გაყალბებადია) |
+| `LOG_LEVEL` | | `INFO` | `app` logger-ის დონე (stdout-ზე): `DEBUG` / `INFO` / `WARNING` / `ERROR`; არავალიდური → `INFO` |
 | `GEMINI_API_KEY` | ✅ | — | <https://aistudio.google.com/apikey> |
 | `GEMINI_MODEL` | | `gemini-2.5-flash` | მოდელის შეცვლა კოდის გარეშე |
 | `BOT_MEMORY_MESSAGES` | | `20` | 0 = მეხსიერება გამორთული |

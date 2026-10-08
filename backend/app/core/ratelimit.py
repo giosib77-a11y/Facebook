@@ -28,6 +28,8 @@ _last_debug_log = [float("-inf")]
 # bucket -> window (წმ). sweep-მა ყოველ bucket-ს თავისი window უნდა გამოიყენოს,
 # თორემ მოკლე window-ის მქონე endpoint-ი გრძელი (მაგ. დღიური) ლიმიტის ჩანაწერებს წაშლიდა.
 _WINDOWS: dict[str, int] = {}
+# production-ში XFF-ის ნაკლებობისას გამოყენებული საერთო key
+_UNKNOWN_IP = "unknown"
 
 
 def _client_ip(request: Request) -> str:
@@ -35,33 +37,40 @@ def _client_ip(request: Request) -> str:
 
     Render ამატებს ჩანაწერებს მარჯვნივ და კლიენტის მიწოდებულს არ ასუფთავებს, ამიტომ მარცხენა
     ჩანაწერები გაყალბებადია; მხოლოდ მარჯვენა (proxy-ს დამატებული) სანდოა. CF-Connecting-IP
-    და სხვა კლიენტის header-ები არ იკითხება. ჩანაწერები არ ჰყოფნის → socket peer.
+    და სხვა კლიენტის header-ები არ იკითხება.
+
+    ჩანაწერები არ ჰყოფნის: production-ში → ერთი საერთო key `_UNKNOWN_IP` (ლიმიტი ყველასთვის
+    საერთო, მაგრამ გვერდს ვერ აუვლიან); dev-ში → socket peer (ლოკალურად proxy არ არის).
+    ⚠️ `peer` სანდო არ არის production-ში: uvicorn-ის proxy-headers `request.client.host`-ს
+    კლიენტის მიერ გაყალბებადი X-Forwarded-For-ით ანაცვლებს — ამიტომ იქ არ გამოიყენება key-ად.
     """
     settings = get_settings()
-    peer = request.client.host if request.client else "unknown"
+    peer = request.client.host if request.client else "unknown"  # untrusted (იხ. docstring)
     raw = request.headers.get("x-forwarded-for") or ""
     entries = [e.strip() for e in raw.split(",") if e.strip()]
     hops = max(settings.client_ip_trusted_hops, 1)
 
     if len(entries) >= hops:
         chosen = entries[-hops]
-    else:
-        chosen = peer
-        if settings.is_production and not _warned_missing_header[0]:
+    elif settings.is_production:
+        chosen = _UNKNOWN_IP
+        if not _warned_missing_header[0]:
             _warned_missing_header[0] = True
             logger.warning(
                 "rate limit: X-Forwarded-For has %d entries, CLIENT_IP_TRUSTED_HOPS=%d — "
-                "falling back to peer address; all clients may share one limit bucket",
-                len(entries), hops,
+                "using shared key %r; all such clients share one limit bucket",
+                len(entries), hops, _UNKNOWN_IP,
             )
+    else:
+        chosen = peer
 
     if settings.client_ip_debug:
         now = time.monotonic()
         if now - _last_debug_log[0] >= 10:
             _last_debug_log[0] = now
             logger.info(
-                "client-ip debug: xff=%r entries=%d peer=%s hops=%d chosen=%s",
-                raw[:300], len(entries), peer, hops, chosen,
+                "client-ip debug: xff=%r entries=%d peer(untrusted)=%s hops=%d resolved=%s",
+                raw[:1000], len(entries), peer, hops, chosen,
             )
     return chosen
 

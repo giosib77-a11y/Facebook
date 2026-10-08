@@ -197,6 +197,13 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Caveat: ერთი გაშვება, ერთგზისი შეკითხვები ისტორიისა და ფოტოს გარეშე; ბოტის რეალურ სცენარებზე არ განზოგადდეს.
 - Emergency: 2.5-flash-ის გათიშვისას (2026-10-16) `GEMINI_MODEL=gemini-3.5-flash` Render-ზე, ჩამოჭრის რისკით — იხ. Deploy plan.
 
+### 2026-10 — uvicorn proxy-headers რჩება ჩართული; `request.client.host` არ გამოიყენება IP-ლიმიტის key-ად (T22)
+- Context: ლაივ-ტესტით (X-Forwarded-For: 1.2.3.4) დადასტურდა — uvicorn proxy-headers `request.client.host`-ს კლიენტის XFF-ით ანაცვლებს (access log: `1.2.3.4:0`), ანუ `peer` გაყალბებადია. გარდა ამისა, `app` logger-ზე handler/level არ იყო → INFO ჩანაწერები production-ში იკარგებოდა.
+- Decision: (1) `_client_ip` production-ში XFF-ის ნაკლებობისას აბრუნებს ფიქსირებულ საერთო key-ს `unknown` და არა `peer`-ს; (2) `app` logger stdout-ზე `LOG_LEVEL`-ით (default INFO); (3) `--no-proxy-headers` **ჯერ არ ვრთავთ**.
+- Reason: კოდში `request.url.scheme`/`X-Forwarded-Proto` პირდაპირ არსად გამოიყენება (HSTS და cookie `secure` — `is_production`-ით, OAuth redirect — settings-იდან, `RedirectResponse` ფარდობითია), მაგრამ Starlette-ის `StaticFiles`/FastAPI-ის trailing-slash redirect აბსოლუტურ `Location`-ს scope-ის scheme-ით აგებს (TestClient-ით დადასტურდა: `http://chatassist.ge/panel/`). `--no-proxy-headers`-ით Render-ის უკან აპი `http`-ს დაინახავდა → redirect-ები `http://`-ზე წავიდოდა (ზედმეტი hop, fetch-ის შემთხვევაში mixed-content რისკი). ლაივზე ეს არ გამოცდილა.
+- Alternatives considered: `--no-proxy-headers`; `--forwarded-allow-ips` კონკრეტული CIDR-ით (მხოლოდ XFF ჯაჭვის რეალური ფორმის გაგების შემდეგ).
+- Why rejected: პირველი — redirect-ის რისკი, მეორე — ჯერ გაუგებარი ჯაჭვი; მიმდინარე გადაწყვეტა ამას გარეშე ხურავს გაყალბებას.
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 

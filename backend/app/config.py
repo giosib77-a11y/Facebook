@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # დროებითი diagnostic: true → ლოგში XFF/peer/არჩეული IP (მაქს. 10 წმ-ში ერთხელ).
     client_ip_debug: bool = False
 
+    # `app` logger-ის დონე (stdout-ზე): DEBUG / INFO / WARNING / ERROR. არავალიდური → INFO.
+    log_level: str = "INFO"
+
     # Origin lock (FA-03): proxy-ს (მაგ. Cloudflare Transform Rule) ამ header-ს საიდუმლოთი ამატებს.
     # production-ში, თუ დაყენებულია, origin-ზე პირდაპირი მოთხოვნა (header-ის გარეშე) → 403.
     # ახლა არ გამოიყენება (Cloudflare არ არის); T13 — Backlog.

@@ -19,8 +19,10 @@ from app.api.products import router as products_router
 from app.api.shops import router as shops_router
 from app.api.webhook import router as webhook_router
 from app.config import get_settings
+from app.core.logging import setup_logging
 
 settings = get_settings()
+setup_logging(settings.log_level)
 
 app = FastAPI(
     title="ქართული მაღაზიების AI ბოტი — API",

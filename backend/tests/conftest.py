@@ -170,6 +170,15 @@ def client(user_db, service_db):
 
 
 @pytest.fixture(autouse=True)
+def _app_logger_propagates(monkeypatch):
+    """app.main sets propagate=False on the `app` logger (T22); caplog hooks the root logger,
+    so tests need propagation back on. The stdout-handler test inspects handlers directly."""
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("app"), "propagate", True)
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limits():
     """In-memory per-IP buckets are process-global; keep tests independent."""
     from app.core import ratelimit
