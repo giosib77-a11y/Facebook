@@ -60,13 +60,6 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [x] **T11 — B-5 (should-fix): webhook-ის ხელმოწერას ტესტი არ აქვს** · `backend/tests/`
   - Fix: ტესტები — სწორი ხელმოწერა → 200; არასწორი/არარსებული → 403. (ცარიელი secret → 403 ტესტი — მხოლოდ Backlog-ის A-9/B-6-ის გასწორების შემდეგ.)
   - Verify: `pytest -q`.
-- [ ] **T12 — Gemini: გადასვლა `gemini-3.5-flash`-ზე (2.5 Flash ითიშება 2026-10-16)** · `GEMINI_MODEL`
-  - ეტაპი 1: ლოკალური შედარების სკრიპტი (მარტივი, ერთჯერადი, scratchpad-ში) — იგივე ქართული შეკითხვები ორივე მოდელზე, პასუხები გვერდიგვერდ.
-    ⚠️ საჭიროებს რეალურ Gemini key-ს — **გაშვებამდე მფლობელს ვეკითხები** (key-ს მფლობელი აძლევს; `.env` არ იკითხება).
-  - ✅ ეტაპი 1: სკრიპტი დაწერილია (`backend/scripts/compare_gemini_models.py`), **გაუშვებელი** — მფლობელი უშვებს თავის terminal-ში (key-ს ჩატში არ იძლევა). ბრძანება: Git Bash `backend/.venv/Scripts/python.exe backend/scripts/compare_gemini_models.py` (ჯერ `--dry-run`), PowerShell `backend\.venv\Scripts\python.exe backend\scripts\compare_gemini_models.py`; შედეგი `backend/scripts/compare_gemini_output.md` (gitignored). multimodal (ფოტო) ამ სკრიპტით არ მოწმდება; `thinking_config` საკითხი — შედეგის cut/thinking მრიცხველებით.
-  - ეტაპი 2: შედარების შედეგის დამტკიცების შემდეგ — Render-ზე `GEMINI_MODEL=gemini-3.5-flash` (მფლობელი ცვლის თვითონ) + კოდის default-ის განახლება.
-  - შესამოწმებელი: ფასი/ტოკენი ([project-costs-pricing] memory), `max_output_tokens`, multimodal (ფოტოს გაგება), `[[HANDOFF]]` ნიშნის დაცვა.
-  - Deadline: **2026-10-16**.
 - [x] **T17 — should-fix: კლიენტის IP Render-ის სანდო header-იდან (CF-Connecting-IP გაყალბებადია)** · `backend/app/core/ratelimit.py`, `config.py`, `main.py`
   - მფლობელის გადაწყვეტილება (2026-10-08): Cloudflare არ გამოიყენება (chatassist.ge პირდაპირ Render-ზეა). `CF-Connecting-IP` ახლა კლიენტის მიერ ყალბდება → ყველა IP-ლიმიტი (T2, შეკვეთები) შემოსავლელია.
   - Render-ის დოკუმენტაცია ცალსახა არ არის: Render XFF-ს **არ ასუფთავებს, მხოლოდ ამატებს** (კლიენტის მიწოდებული მნიშვნელობა ინახება, Render ბოლოში ამატებს); Render-ის წარმომადგენელი 2021-ში წერს „first IP = real client", მაგრამ ეს მხოლოდ მაშინ სწორია, როცა კლიენტი XFF-ს არ აგზავნის.
@@ -99,9 +92,13 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 5. **`0019_upgrade_requests_checks.sql`** → PRE-CHECK (0 მწკრივი) → verification `chk_valid=2, insert_policy_ok=t` → პანელში პაკეტის მოთხოვნა მუშაობს; მეორე მოთხოვნა პირველს `cancelled`-ზე გადაიყვანს; admin approve/reject მუშაობს.
 6. **`0020_instagram_unique.sql`** → PRE-CHECK დუბლიკატებზე (0 მწკრივი; თუ არა — ჯერ გაასუფთავე) → verification `index_ok=1, duplicates=0` → IG-ის connect სხვა მაღაზიიდან უკვე დაკავებულ ანგარიშზე → უარი `ig_taken` შეტყობინებით; იგივე მაღაზიის ხელახალი connect გადის.
 7. **T17** (კლიენტის IP Render-იდან): deploy-ის შემდეგ diagnostic დროებით ჩართე → ერთი მოთხოვნა ცნობილი IP-დან (+ გაყალბებული `X-Forwarded-For`) → Render-ის ლოგში ნახე რეალური XFF → დააყენე `CLIENT_IP_TRUSTED_HOPS` → გამორთე diagnostic. (T13/ORIGIN_SECRET — Backlog.)
-8. **T12** (Gemini მოდელი) — დედლაინი 2026-10-16, დამოუკიდებელია ზემოთაგან.
+8. **საგანგებო ნაბიჯი (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა (ბოტი 404/ცარიელ პასუხებს აბრუნებს), Render-ზე `GEMINI_MODEL=gemini-3.5-flash` და restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10 ჩამოიჭრა) — ეს პირდაპირ ბოტს აფუჭებს; ამიტომ ეს მხოლოდ ბოლო გამოსავალია, სანამ `thinking_config` კოდში არ შეიზღუდება (Backlog T12).
+9. **key-ების როტაცია** (Gemini, `FB_APP_SECRET`, Supabase service-role): ტრანსკრიპტში გამოჩნდა — **როდის გააკეთებ, შენ წყვეტ**. `FB_TOKEN_ENCRYPTION_KEY`-ს **არ ვეხებით** (შეცვლა დაშიფრულ page token-ებს გამოუსადეგარს გახდის). როტაციისას: ახალი მნიშვნელობა Render-ზე + ლოკალურ `.env`-ში; `FB_APP_SECRET` — Meta App Dashboard-ში reset-იც, შემდეგ webhook-ის ხელმოწერა/OAuth შეამოწმე (ბოტი პასუხობს, connect მუშაობს); service-role — Supabase Settings → API.
 
 ## Backlog (needs user decision)
+- **T12 (გადადებულია 2026-10-08) — Gemini მოდელი / AI provider-ის შეფასება.** მომავალი ეტაპი: AI provider-ის შეფასება — gemini-2.5-flash, gemini-3.5-flash (შეზღუდული thinking-ით) და Claude Haiku 4.5; შედარება ხარისხით, სიჩქარით და ფასით (თითო პასუხზე).
+  - შედარების სკრიპტი არსებობს: `backend/scripts/compare_gemini_models.py` (პირველი შედეგი — Decision Log 2026-10). multimodal (ფოტოს გაგება) და `[[HANDOFF]]` ჯერ მხოლოდ ტექსტზეა შემოწმებული.
+  - ⏰ დედლაინი: gemini-2.5-flash ითიშება 2026-10-16 — საგანგებო ნაბიჯი Deploy plan-შია.
 - **T13 (გადატანილია Backlog-ში 2026-10-08) — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
   - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
   - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.

@@ -190,10 +190,17 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Alternatives considered: დროებითი reservation/TTL; CAPTCHA.
 - Why rejected: სირთულე; `new`-ში overselling მისაღებია, გამყიდველი ადასტურებს.
 
+### 2026-10 — Gemini 2.5 Flash vs 3.5 Flash: პირველი შედარება (10 ქართული შეკითხვა, temperature 0.3, max 800)
+- Result (`backend/scripts/compare_gemini_models.py`): ორივე მოდელმა სწორად გაიგო ფასი, მარაგი, მიწოდება, ბმული, რუსული/ინგლისური და `[[HANDOFF]]`.
+  2.5-flash: საშ. 2.2 წმ, thinking 1517 ტოკენი სულ, 0 ჩამოჭრილი. 3.5-flash (default thinking): საშ. 4.2 წმ, thinking 6517 ტოკენი (≈4×), **4/10 პასუხი ჩამოიჭრა** `MAX_TOKENS`-ზე (thinking ბიუჯეტს ჭამს), პასუხები უფრო მრავლისმთქმელი, მაგრამ off-topic-ზე შარფის დაუსწრებელი შეთავაზება.
+- Decision: მოდელი ჯერ არ იცვლება; 3.5-flash `thinking_config`-ის შეზღუდვის გარეშე ბოტისთვის უვარგისია. შეფასება გადადებულია (PROGRESS.md Backlog T12): 2.5-flash, 3.5-flash შეზღუდული thinking-ით და Claude Haiku 4.5 — ხარისხი, სიჩქარე, ფასი თითო პასუხზე.
+- Caveat: ერთი გაშვება, ერთგზისი შეკითხვები ისტორიისა და ფოტოს გარეშე; ბოტის რეალურ სცენარებზე არ განზოგადდეს.
+- Emergency: 2.5-flash-ის გათიშვისას (2026-10-16) `GEMINI_MODEL=gemini-3.5-flash` Render-ზე, ჩამოჭრის რისკით — იხ. Deploy plan.
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 
 ## Open Questions
 - README §2/§6/§12/§14 მოძველებულია (ADMIN_EMAIL → ADMIN_USER_IDS, „ტესტები არ არსებობს",
   React 18 → 19, მიგრაციები 14 → 16) — განახლდეს?
-- Gemini 2.5 Flash retires 2026-10-16 — რომელ მოდელზე გადავდივართ?
+- Gemini 2.5 Flash retires 2026-10-16 — გადაწყვეტილება გადადებულია (Backlog T12, Decision Log 2026-10); საგანგებო გეგმა Deploy plan-შია.
