@@ -18,10 +18,10 @@
 - typecheck: **არ არის** (Python type hints უმოწმებელია; frontend JS-ია)
 - compile check (CI-ში): `cd backend && .venv/Scripts/python.exe -m compileall -q app`
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (262 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
+  (263 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
-- CI: `.github/workflows/ci.yml` — `pip check`, `compileall`, `pytest` (push/PR `main`-ზე)
+- CI: `.github/workflows/ci.yml` — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest` + frontend job (`npm ci`, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)
 
 ## Conventions
 - **აკრძალულია** (მფლობელის თანხმობის გარეშე): `git push`, `main`-ში merge, deploy, remote Supabase-ზე

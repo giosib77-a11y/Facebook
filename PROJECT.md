@@ -236,7 +236,7 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Reason: webhook მხოლოდ `bot_enabled`-ს ამოწმებს, ამიტომ `subscription_tier`-ის შეცვლა ჭერს ვერ იცავდა; პირდაპირი PostgREST INSERT ბაზას/ადმინის სიას უსაზღვროდ ავსებდა.
 
 ### 2026-10 — სურათის ჩამოტვირთვა: მთლიანი deadline + მხოლოდ საკუთარი Storage (S12-1, B-12)
-- Decision: `download_image` 15 წმ-იანი მთლიანი ზღვარი (`time.monotonic`); ბოტი საცნობარო ფოტოს მხოლოდ `<SUPABASE_URL>/storage/v1/object/public/product-images/` ბილიკიდან იღებს (UI-დან ფოტო მხოლოდ ატვირთვით მოდის; პირდაპირი PostgREST `image_url` გარე URL-ს ბოტი უგულებელყოფს). კლიენტის FB/IG CDN ფოტოები უცვლელია.
+- Decision: `download_image` 15 წმ-იანი ზღვარი body-ს კითხვასა და redirect-ებზე (`time.monotonic`; connect/header ფაზას httpx-ის timeout ზღუდავს); ბოტი საცნობარო ფოტოს მხოლოდ `<SUPABASE_URL>/storage/v1/object/public/product-images/` ბილიკიდან იღებს (UI-დან ფოტო მხოლოდ ატვირთვით მოდის; პირდაპირი PostgREST `image_url` გარე URL-ს ბოტი უგულებელყოფს). კლიენტის FB/IG CDN ფოტოები უცვლელია.
 - Reason: httpx timeout ფაზაზეა → slow-drip სერვერი thread-ს წუთობით იკავებდა (threadpool-ის ამოწურვა); გარე URL ამავდროულად SSRF-ის ზედაპირი იყო.
 
 ### 2026-10 — `CLIENT_IP_TRUSTED_HOPS` production-ში სავალდებულოა (S12-4)

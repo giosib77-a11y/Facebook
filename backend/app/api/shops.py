@@ -150,12 +150,13 @@ def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
         auth.client.table("products").select("id", count="exact")
         .eq("shop_id", str(shop_id)).limit(1)
     )
-    # მიმდინარე pending მოთხოვნა (თუ migration 0005 გაშვებულია)
+    # მიმდინარე pending მოთხოვნა (თუ migration 0005 გაშვებულია). per-account: RLS (ur_owner_select)
+    # მხოლოდ მფლობელის მაღაზიების მოთხოვნებს აჩვენებს, ამიტომ shop_id-ით არ ვფილტრავთ.
     pending = None
     try:
         pr = (
             auth.client.table("upgrade_requests").select("requested_tier")
-            .eq("shop_id", str(shop_id)).eq("status", "pending")
+            .eq("status", "pending")
             .order("created_at", desc=True).limit(1).execute()
         )
         if pr.data:

@@ -330,14 +330,21 @@ def is_own_storage_image_url(url: str | None) -> bool:
     ამიტომ ბოტი საცნობარო ფოტოს მხოლოდ საკუთარი Storage-იდან იღებს (UI-დან
     ფოტო ყოველთვის ატვირთვით მოდის). გარე URL-ზე სერვერი საერთოდ არ გადის.
     """
-    base = (get_settings().supabase_url or "").rstrip("/")
-    if not base or not url:
+    raw = (get_settings().supabase_url or "").strip()
+    if not raw or not url:
+        return False
+    try:
+        # httpx-ის ნორმალიზაცია (host lowercase, default port) — როგორც supabase-py-ს get_public_url
+        base = str(httpx.URL(raw)).rstrip("/")
+        candidate = str(httpx.URL(url))
+    except Exception:
         return False
     prefix = f"{base}/storage/v1/object/public/{PRODUCT_IMAGES_BUCKET}/"
-    return url.startswith(prefix) and ".." not in url
+    return candidate.startswith(prefix) and ".." not in candidate
 
 
-# მთლიანი ჩამოტვირთვის ზღვარი (წმ). httpx-ის timeout ფაზაზეა (connect/read/…), ამიტომ
+# ჩამოტვირთვის ზღვარი (წმ): მოწმდება redirect-ებს შორის და ყოველი chunk-ის შემდეგ (connect/header-ის
+# ფაზას httpx-ის ფაზური timeout ზღუდავს). httpx-ის timeout ფაზაზეა (connect/read/…), ამიტომ
 # slow-drip სერვერი (1 ბაიტი რამდენიმე წამში) ნაკადს განუსაზღვრელად გააჭიანურებდა და
 # threadpool-ის თრედს დაიკავებდა.
 _DOWNLOAD_DEADLINE_SECONDS = 15.0

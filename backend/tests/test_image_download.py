@@ -72,3 +72,8 @@ def test_slow_drip_download_is_cut_by_total_deadline(monkeypatch):
     assert fb.download_image("https://slow.example/a.jpg", max_bytes=10_000) is None
     # stopped around the 15 s deadline (3-4 ticks), not after 10_000 bytes
     assert clock["t"] - 1000.0 <= 25.0
+
+
+def test_own_storage_url_tolerates_host_case_and_default_port(monkeypatch):
+    monkeypatch.setattr(get_settings(), "supabase_url", "https://Proj.Supabase.co:443/")
+    assert fb.is_own_storage_image_url(OWN)
