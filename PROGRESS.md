@@ -114,12 +114,14 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 9. **Meta (README §2):** Business Verification ⏳ → App Review ⬜ → Development → Live ⬜. Review-ისთვის: Privacy/Terms/Data Deletion URL-ები და callback არსებობს (Accepted Risks #19).
 10. **Supabase Pro (Free გეგმაზე backup-ები საერთოდ არ არის — Dashboard-ში დადასტურდა, მფლობელი).** Live-მდე გადადი Pro-ზე, რომ DB-ს ავტომატური ყოველდღიური backup ჰქონდეს; ახლა შეკვეთების, მარაგისა და გამყიდველების მონაცემის დაკარგვის შემთხვევაში აღდგენა შეუძლებელია. გადასვლის შემდეგ Dashboard → Database → Backups-ში შეამოწმე, რომ backup-ები ჩანს, და ერთხელ გადაამოწმე აღდგენის გზა (Pro-ზე PITR ცალკე add-on-ია, ვადა დამოკიდებულია გეგმაზე — დააზუსტე Dashboard-ში). ხარჯი ბიუჯეტში (~35₾/თვე, `DEPLOYMENT.md`) არ არის გათვალისწინებული — განაახლე `DEPLOYMENT.md`-ის ხარჯების ცხრილი.
 
-### 🚀 S11-5 / S11-6 — Deploy plan (გარე აუდიტი #1–#3)
-1. **Render-ზე შეამოწმე production-ის აუცილებელი ცვლადები** (S11-6; სერვერი ამათ გარეშე აღარ ადგება, Render წინა ვერსიას დატოვებს): `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` (ან ძველი სახელები), `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key). `APP_ENV` თუ დაყენებული არ არის, default `production`-ია და ეს შვიდი ეხება.
-2. **Backend deploy** (S11-5 + S11-6). შემოწმება: სერვერი ადგება; `GET /status`; ბოტი პასუხობს (webhook-ის ხელმოწერა მუშაობს); Facebook connect იწყება; knowledge-ის ატვირთვა/წაშლა მუშაობს **ჯერ კიდევ 0022-მდე** (service client-ით).
-3. **PRE-CHECK (ინფორმაციული)**: free-პაკეტის მაღაზიები, რომლებსაც უკვე აქვთ `knowledge` (ფაილის თავში) — გადაწყვიტე დატოვო თუ გაასუფთავო.
-4. **`0022_revoke_orders_knowledge_update.sql`** — გაუშვი **deploy-ის შემდეგ** (ძველი backend + 0022 = knowledge-ის ატვირთვა/წაშლა გატეხილი). verification (მოსალოდნელი): `knowledge_upd=f, kfile_upd=f, name_upd=t, descr_upd=t, cur_upd=t, lang_upd=t, tier_upd=f, ord_status_upd=f, ord_items_upd=f, ord_tbl_upd=f, anon_ord_upd=f, ord_sel=t, ord_del=t, svc_ord_upd=t, svc_knowledge_upd=t`.
-5. **ხელით, მოსამართლის სახით**: knowledge PDF-ის ატვირთვა/წაშლა (ფასიან პაკეტზე), მაღაზიის სახელის/ენის შეცვლა, შეკვეთის სტატუსის შეცვლა — ყველა უნდა მუშაობდეს 0022-ის შემდეგაც.
+### 🚀 S11-5 / S11-6 — Deploy plan (გარე აუდიტი #1–#3) — ✅ დასრულებულია (მფლობელი, ლაივზე)
+1. ✅ Render-ის production-ის აუცილებელი ცვლადები: შვიდივე არსებობს (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY`).
+2. ✅ Backend deploy: `955cde6` live, fail-closed startup გავიდა (სერვერი ადგება).
+3. ✅ PRE-CHECK: free-პაკეტის მაღაზიებს `knowledge` არ აქვთ (გასასუფთავებელი არაფერია).
+4. ✅ `0022_revoke_orders_knowledge_update.sql` ლაივ ბაზაზე გაშვებულია; verification 15/15 ემთხვევა მოსალოდნელს.
+5. ✅ პანელში (მფლობელი, 0022-ის შემდეგ): knowledge POST/DELETE → 200; შეკვეთის სტატუსის PATCH → 200.
+   - ℹ️ „მაღაზიის სახელის შეცვლა" პანელში არ არსებობს, ამიტომ ეს შემოწმება არ ეხება (backend-ში `auth.client`-ით მხოლოდ `bot_language` იწერება — `PATCH /shops/{id}`).
+   - ⏳ ბოტის ენის შეცვლა (`bot_language`, ერთადერთი დარჩენილი `auth.client` ჩაწერა `shops`-ზე) 0022-ის შემდეგ ცალკე არ დადასტურებულა.
 
 ### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
 - `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
@@ -207,7 +209,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: Stage 11 დასრულებულია და deploy-ნია; მფლობელი — „Live-მდე აუცილებელი" სია (PAYMENT_*, CORS_ORIGINS, Gemini billing/key/მოდელი 2026-10-16, Render Starter, **Supabase Pro**, K9, Meta Live)
+- Next: Stage 11 (S11-1…S11-6) დასრულებულია და deploy-ნია; მფლობელი — „Live-მდე აუცილებელი" სია (PAYMENT_*, CORS_ORIGINS, Gemini billing/key/მოდელი 2026-10-16, Render Starter, Supabase Pro, K9, Meta Live); დარჩენილი შეუმოწმებელი: S11-2/S11-3 ბრაუზერში/ლაივზე, ბოტის ენის შეცვლა 0022-ის შემდეგ
 
 ## Stage 10 — Done
 - [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS: ruff + pytest დამატებულია, hook-ით შემოწმებული)
