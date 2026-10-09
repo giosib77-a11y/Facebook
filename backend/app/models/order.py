@@ -11,7 +11,7 @@ ORDER_STATUSES = ("new", "processing", "done", "cancelled")
 class OrderItem(BaseModel):
     product_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=500)
-    price: float = Field(default=0, ge=0)
+    price: float = Field(default=0, ge=0, allow_inf_nan=False)
     quantity: int = Field(ge=1)
 
 

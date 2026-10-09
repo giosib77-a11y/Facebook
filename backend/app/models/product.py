@@ -10,7 +10,7 @@ class ProductCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     sku: str | None = Field(default=None, max_length=100)
-    price: float = Field(default=0, ge=0)
+    price: float = Field(default=0, ge=0, allow_inf_nan=False)
     quantity: int = Field(default=0, ge=0)
     image_url: str | None = Field(default=None, max_length=2048)
     is_active: bool = True
@@ -21,7 +21,7 @@ class ProductUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     sku: str | None = Field(default=None, max_length=100)
-    price: float | None = Field(default=None, ge=0)
+    price: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     quantity: int | None = Field(default=None, ge=0)
     image_url: str | None = Field(default=None, max_length=2048)
     is_active: bool | None = None

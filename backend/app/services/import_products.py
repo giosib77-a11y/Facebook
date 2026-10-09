@@ -7,6 +7,7 @@ parse_products_file(content, filename) -> (products, errors)
 """
 import csv
 import io
+import math
 import zipfile
 
 from openpyxl import load_workbook
@@ -195,6 +196,9 @@ def parse_products_file(
             except ValueError:
                 errors.append({"row": line, "message": f"ფასი არ არის რიცხვი: „{price_raw}"})
                 continue
+            if not math.isfinite(price):
+                errors.append({"row": line, "message": f"ფასი არ არის სწორი რიცხვი: „{price_raw}"})
+                continue
             if price < 0:
                 errors.append({"row": line, "message": "ფასი უარყოფითია"})
                 continue
@@ -203,10 +207,14 @@ def parse_products_file(
         qty_raw = _norm(cell("quantity"))
         if qty_raw:
             try:
-                qty = int(float(qty_raw.replace(",", ".")))
+                qty_f = float(qty_raw.replace(",", "."))
             except ValueError:
                 errors.append({"row": line, "message": f"მარაგი არ არის რიცხვი: „{qty_raw}"})
                 continue
+            if not math.isfinite(qty_f) or qty_f != int(qty_f):
+                errors.append({"row": line, "message": f"მარაგი უნდა იყოს მთელი რიცხვი: „{qty_raw}"})
+                continue
+            qty = int(qty_f)
             if qty < 0:
                 errors.append({"row": line, "message": "მარაგი უარყოფითია"})
                 continue

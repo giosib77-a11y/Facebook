@@ -42,6 +42,11 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - ⚠️ **deploy-მდე** დარწმუნდი, რომ Render-ზე ყველა ზემოთ ჩამოთვლილი დაყენებულია (ახალი სახელებით Supabase-ისთვის), სხვაგვარად deploy ვერ ადგება (Render წინა ვერსიას დატოვებს). ADMIN_USER_IDS ცარიელი იყოს თუ არა — უკვე fail-closed და არ მოწმდება.
   - Verify: ტესტები production/development ორივე რეჟიმში; backlog A-9/B-6 დაიხურება (A-6 — S11-5).
 
+- [x] **S11-7 — should-fix (მესამე გარე აუდიტი): NaN/Infinity ფასი, არამთელი მარაგი იმპორტში, CI/docs** · `models/product.py`, `models/order.py`, `services/import_products.py`, migration `0023`, `.github/workflows/ci.yml`, `README.md`, `backend/.env.example`
+  - API: Infinity ფასი გადიოდა (NaN — არა); იმპორტი იღებდა `nan`/`inf`/`1e999` ფასს, `2.5` მარაგს ჩუმად აკეცავდა 2-მდე, `inf` მარაგი 500-ს (OverflowError) იძლეოდა. DB: `price >= 0` NaN-ს უშვებს → `0023` (`< 'Infinity'`, products + orders.total). Fix: `allow_inf_nan=False`, `math.isfinite`, მწკრივის ნომრით შეცდომა.
+  - CI: frontend job (`npm ci` + build + `git diff --exit-code -- dist`), `pip-audit -r requirements.lock.txt`, `permissions: contents: read`. Render build → `requirements.lock.txt`. Docs: `ADMIN_USER_IDS`, ტესტების აღწერა.
+  - ⚠️ მფლობელს: `0023` გაუშვი ხელით (PRE-CHECK ფაილის თავშია); Render Build Command შეცვალე (README §11). CI-ის ახალი ნაბიჯები (pip-audit, frontend job) GitHub-ზე ჯერ არ გაშვებულა.
+
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
 
@@ -103,6 +108,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ### 🚦 Live-მდე აუცილებელი (მფლობელის სია, 2026-10-09)
 > ეს ნაბიჯები ჯერ არ არის შესრულებული/დადასტურებული, თუ სხვაგვარად არ წერია. "Live" = Meta App Live mode + რეალური გამყიდველები.
+0. **Meta Graph API `v21.0` მოქმედებს 2027-01-21-მდე** (`FB_GRAPH_VERSION`, `config.py`). ვადამდე განახლდეს ახალ ვერსიაზე — ტესტით (Graph mock-ტესტები + ლაივზე webhook/OAuth/გაგზავნის შემოწმება) და არა ბრმად.
 1. **`PAYMENT_IBAN`** (მაგ. `GE00XX0000000000000000`, 22 სიმბოლო; სურვილისამებრ მიმღები) და **`PAYMENT_CONTACT`** (ელფოსტა/ტელეფონი, სადაც გამყიდველი ქვითარს გამოგზავნის) — Render env-ში. მფლობელი დააყენებს Live-მდე; დააყენების გარეშე გამყიდველი პაკეტის მოთხოვნისას placeholder-ს ხედავს (`Dashboard.jsx`). (Backlog #27)
 2. **Render plan = Starter და არა Free.** Free instance უმოქმედობისას „იძინებს" (`DEPLOYMENT.md`): პირველ webhook-ზე პასუხი Meta-ს timeout-ს აღემატება და შეტყობინება იკარგება + მეხსიერებაში არსებული ლიმიტები/dedup (`_SEEN_MIDS`, rate-limit) ნულდება. შეამოწმე Dashboard → service → Instance Type = **Starter** (always-on) და რომ **ერთი instance**-ია (Scaling: 1) — Accepted Risks #6, #9 სწორედ ერთ instance-ს ეყრდნობა; >1 instance-ზე ისინი უქმდება.
 3. **`CORS_ORIGINS=https://chatassist.ge`** Render-ზე (Accepted Risks #11).

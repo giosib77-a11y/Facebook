@@ -225,7 +225,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 
 ### 5.5 ადმინ-პანელი
 
-`/panel/admin.html` — ხელმისაწვდომია **მხოლოდ** `ADMIN_EMAIL`-ისთვის.
+`/panel/admin.html` — ხელმისაწვდომია **მხოლოდ** `ADMIN_USER_IDS`-ისთვის.
 
 მაღაზიები · გამყიდვლები · შეკვეთები · MRR · ზრდის გრაფიკი · პაკეტის მოთხოვნების
 დამუშავება · CSV ექსპორტი · ბოტის kill-switch · აღდგენის ინსტრუმენტი.
@@ -299,7 +299,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | POST | `/facebook/data-deletion` | Meta-ს Data Deletion callback |
 | GET | `/facebook/data-deletion/status` | კოდის შემოწმება (ხელმოწერილი) |
 
-### ადმინი (მხოლოდ `ADMIN_EMAIL`)
+### ადმინი (მხოლოდ `ADMIN_USER_IDS`)
 | Method | Path | აღწერა |
 |---|---|---|
 | GET | `/admin/check` | ადმინია თუ არა |
@@ -360,6 +360,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0020` | 🔒 `shops.instagram_account_id` — partial UNIQUE ინდექსი (IG შეტყობინება სხვა tenant-ს ვეღარ მიეწერება) |
 | `0021` | `change_order_status()` — შეკვეთის სტატუსი + მარაგი ერთ ტრანზაქციაში (გაუშვი backend-ის deploy-მდე) |
 | `0022` | 🔒 `orders`: UPDATE სრულად მოხსნილია `authenticated`-დან; `shops.knowledge*`-ზე UPDATE მოხსნილია (ჩაწერა მხოლოდ backend-ით). გაუშვი backend-ის deploy-ის **შემდეგ** |
+| `0023` | `products.price` / `orders.total`: CHECK `< 'Infinity'` — Postgres-ში NaN `>= 0`-ს აკმაყოფილებს, ამიტომ NaN/Infinity ბაზაში ჩაწერა შეიძლებოდა. PRE-CHECK ფაილის თავშია |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
 
@@ -489,7 +490,7 @@ App Review-ს ტექსტები: [APP_REVIEW_TEXTS.md](APP_REVIEW_TEXTS.
 **Render:** auto-deploy `main`-ზე push-ისას.
 
 ```
-Build:  pip install -r backend/requirements.txt
+Build:  pip install -r backend/requirements.lock.txt
 Start:  uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
 ```
 
@@ -534,7 +535,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `FB_TOKEN_ENCRYPTION_KEY` | ✅ | — | 🔒 Fernet key |
 | `PUBLIC_BASE_URL` | | `FB_REDIRECT_URI`-დან | შესაკვეთი ლინკების ბაზა |
 | `FRONTEND_URL` | | `localhost:5500` | |
-| `ADMIN_EMAIL` | | `giosib77@gmail.com` | ვინ ხედავს `/admin`-ს |
+| `ADMIN_USER_IDS` | | — | ვინ ხედავს `/admin`-ს (Supabase user UUID-ები, მძიმით; ცარიელი = ადმინი არავინაა) |
 | `PAYMENT_IBAN` · `PAYMENT_CONTACT` | | placeholder | გადახდის რეკვიზიტები |
 
 🔒 = საიდუმლო. **`.env` არასდროს ჩააქოს git-ში.**
@@ -573,7 +574,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | # | რა | რატომ |
 |---|---|---|
-| 1 | **ავტომატური ტესტები არ არსებობს** | ყველა შემოწმება ხელით კეთდება. ეს ბლოკავს ავტორიზაციის კოდის გადაწერას — ჯერ ტესტები, მერე რეფაქტორინგი |
+| 1 | **Frontend ტესტები არ არის** | backend-ს აქვს offline pytest (`backend/tests`, CI-ში); React-ის კოდი მხოლოდ ხელით მოწმდება |
 | 2 | **React-ის კოდი ხაზ-ხაზ არ წაკითხულა** | რევიუზე შემოწმდა სტრუქტურა, `useEffect`-ები და ძველთან დიფი; `AdminPage.jsx` (539 ხაზი) და `ProductsTab.jsx` (365) ცალკე გავლას იმსახურებს |
 | 3 | **CSP header არ არის** | თეთრი სიის პრინციპი — ერთი გამორჩენა ცარიელ გვერდს იძლევა. რედიზაინისას ისედაც გადაიწერება |
 | 4 | **Rate limit მეხსიერებაშია** | deploy-ზე ნულდება; მრავალ-instance-ზე Redis/Cloudflare დასჭირდება |
