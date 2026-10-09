@@ -74,7 +74,7 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Storage: Supabase Storage
 - Auth: Supabase Auth; backend ამოწმებს JWT-ს `auth.get_user()`-ით და DB-ს მომხმარებლის
   JWT-ით მიმართავს
-- Hosting / deployment: Render (Starter), auto-deploy `main`-ზე push-ისას, Cloudflare წინ.
+- Hosting / deployment: Render (Starter), auto-deploy `main`-ზე push-ისას; Cloudflare არ გამოიყენება (Render-ის საკუთარი edge; კლიენტის IP — `X-Forwarded-For`-ის მარჯვენა hop, იხ. Decision Log 2026-10).
   Checklist: [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ## Realistic Scale

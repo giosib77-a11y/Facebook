@@ -75,13 +75,25 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - **K9. გაჟონვის შემდეგ:** გადახედე Supabase Logs/Auth-ს საეჭვო აქტივობაზე (უცნობი მომხმარებლები, მასობრივი წაკითხვა/წაშლა) იმ პერიოდში, როცა key ძალაში იყო; საჭიროებისას ეს ცალკე task იქნება.
 
 ### Stage 11 — Deploy plan
-- **S11-1 (მიგრაცია `0021_change_order_status.sql`, გაუშვებელი):** რიგი — **ჯერ 0021, მერე backend deploy** (ძველი backend 0021-თან მუშაობს; ახალი backend 0021-ის გარეშე სტატუსის შეცვლა სუფთად 400-ს აბრუნებს, მონაცემები უცვლელია).
+- **S11-1 (მიგრაცია `0021_change_order_status.sql`) ✅ ლაივ ბაზაზე გაშვებულია და შემოწმებულია (მფლობელი): 1 ფუნქცია, `security_definer=false`, EXECUTE მხოლოდ `postgres` და `service_role`. დარჩა: backend deploy + ქვემოთ ნაბიჯი 4 (ხელით შემოწმება). (ორიგინალი რიგი/პროცედურა:** რიგი — **ჯერ 0021, მერე backend deploy** (ძველი backend 0021-თან მუშაობს; ახალი backend 0021-ის გარეშე სტატუსის შეცვლა სუფთად 400-ს აბრუნებს, მონაცემები უცვლელია.)
   1. PRE-CHECK: `select proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname in ('decrement_stock','apply_stock_delta');` → 2 მწკრივი.
   2. გაუშვი `0021_change_order_status.sql` (იდემპოტენტურია).
   3. Verification: `select p.proname, p.prosecdef as security_definer, coalesce(array_to_string(p.proacl, E'
 '),'(PUBLIC-საც აქვს!)') as acl from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace where ns.nspname='public' and p.proname='change_order_status';` → 1 მწკრივი, `security_definer=false`, acl-ში `service_role=X/…` და **არა** `=X/…`, `anon=X/…`, `authenticated=X/…`.
   4. Deploy-ის შემდეგ ხელით: `new → processing` (quantity მცირდება), `processing → cancelled` (ბრუნდება), `new → cancelled` (მარაგი არ იცვლება), მეორე ბრაუზერის ტაბიდან მოძველებული სტატუსით → 409.
 - **S11-2:** დამატებითი ნაბიჯი არ სჭირდება (backend + `dist/` ერთ deploy-ში). შემოწმება: ორი გვერდის წვდომით connect → ფანჯარაში შეტყობინება „თავიდან მიაბით…"; ერთი გვერდით → ჩვეულებრივად.
+
+### 🚦 Live-მდე აუცილებელი (მფლობელის სია, 2026-10-09)
+> ეს ნაბიჯები ჯერ არ არის შესრულებული/დადასტურებული, თუ სხვაგვარად არ წერია. "Live" = Meta App Live mode + რეალური გამყიდველები.
+1. **`PAYMENT_IBAN`** (მაგ. `GE00XX0000000000000000`, 22 სიმბოლო; სურვილისამებრ მიმღები) და **`PAYMENT_CONTACT`** (ელფოსტა/ტელეფონი, სადაც გამყიდველი ქვითარს გამოგზავნის) — Render env-ში. მფლობელი დააყენებს Live-მდე; დააყენების გარეშე გამყიდველი პაკეტის მოთხოვნისას placeholder-ს ხედავს (`Dashboard.jsx`). (Backlog #27)
+2. **Render plan = Starter და არა Free.** Free instance უმოქმედობისას „იძინებს" (`DEPLOYMENT.md`): პირველ webhook-ზე პასუხი Meta-ს timeout-ს აღემატება და შეტყობინება იკარგება + მეხსიერებაში არსებული ლიმიტები/dedup (`_SEEN_MIDS`, rate-limit) ნულდება. შეამოწმე Dashboard → service → Instance Type = **Starter** (always-on) და რომ **ერთი instance**-ია (Scaling: 1) — Accepted Risks #6, #9 სწორედ ერთ instance-ს ეყრდნობა; >1 instance-ზე ისინი უქმდება.
+3. **`CORS_ORIGINS=https://chatassist.ge`** Render-ზე (Accepted Risks #11).
+4. **Gemini billing ჩართული** (free tier = 5 მოთხოვნა/წთ; ტრაფიკზე ბოტი 429-ს დააბრუნებს — `PROJECT.md` Constraints) + **Gemini key-ის როტაცია** (ღიაა, იხ. ზემოთ ნაბიჯი 7).
+5. **Gemini მოდელი** — `gemini-2.5-flash` 2026-10-16-ს ითიშება: გადაწყვეტილება/საგანგებო ნაბიჯი 6 (Backlog T12).
+6. **Stage 11-ის deploy:** S11-1 (0021 ✅ გაშვებულია → backend deploy), S11-2, S11-3 + მათი ხელით შემოწმებები.
+7. **ნაბიჯი 5-ის დარჩენილი ხელით შემოწმებები** (მარაგი processing/cancelled-ზე; `/status` → `env=production`; CI GitHub-ზე; `select count(*) from public.orders;`).
+8. **K9:** Supabase Logs/Auth-ის გადახედვა გაჟონვის პერიოდისთვის.
+9. **Meta (README §2):** Business Verification ⏳ → App Review ⬜ → Development → Live ⬜. Review-ისთვის: Privacy/Terms/Data Deletion URL-ები და callback არსებობს (Accepted Risks #19).
 
 ### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
 - `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
