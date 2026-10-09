@@ -490,7 +490,7 @@ App Review-ს ტექსტები: [APP_REVIEW_TEXTS.md](APP_REVIEW_TEXTS.
 **Render:** auto-deploy `main`-ზე push-ისას.
 
 ```
-Build:  pip install -r backend/requirements.lock.txt
+Build:  pip install -r requirements.lock.txt   # Render Root Directory = backend
 Start:  uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
 ```
 

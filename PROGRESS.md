@@ -45,7 +45,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - [x] **S11-7 — should-fix (მესამე გარე აუდიტი): NaN/Infinity ფასი, არამთელი მარაგი იმპორტში, CI/docs** · `models/product.py`, `models/order.py`, `services/import_products.py`, migration `0023`, `.github/workflows/ci.yml`, `README.md`, `backend/.env.example`
   - API: Infinity ფასი გადიოდა (NaN — არა); იმპორტი იღებდა `nan`/`inf`/`1e999` ფასს, `2.5` მარაგს ჩუმად აკეცავდა 2-მდე, `inf` მარაგი 500-ს (OverflowError) იძლეოდა. DB: `price >= 0` NaN-ს უშვებს → `0023` (`< 'Infinity'`, products + orders.total). Fix: `allow_inf_nan=False`, `math.isfinite`, მწკრივის ნომრით შეცდომა.
   - CI: frontend job (`npm ci` + build + `git diff --exit-code -- dist`), `pip-audit -r requirements.lock.txt`, `permissions: contents: read`. Render build → `requirements.lock.txt`. Docs: `ADMIN_USER_IDS`, ტესტების აღწერა.
-  - ⚠️ მფლობელს: `0023` გაუშვი ხელით (PRE-CHECK ფაილის თავშია); Render Build Command შეცვალე (README §11). CI-ის ახალი ნაბიჯები (pip-audit, frontend job) GitHub-ზე ჯერ არ გაშვებულა.
+  - ⚠️ მფლობელს: `0023` გაუშვი ხელით (PRE-CHECK ფაილის თავშია). Render Build Command უკვე `pip install -r requirements.lock.txt` იყო (Root Directory = backend) — ცვლილება არ დასჭირდა. CI-ის ახალი ნაბიჯები (pip-audit, frontend job) GitHub-ზე ჯერ არ გაშვებულა.
 
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
