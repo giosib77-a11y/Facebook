@@ -1,14 +1,159 @@
 # Progress
 
 ## Current Stage
-Stage 10 — Audit fixes
+Stage 11 — Live-მზადყოფნა (მფლობელმა დაადასტურა 2026-10-09; წყარო — გარე აუდიტი, 27 პუნქტი)
+
+ID-ები S11-n; commit: `fix(scope): ... (S11-n)`. მიგრაცია `0021` — აგენტი წერს, **გაშვება მფლობელი, ხელით**.
+Stage 10 — დასრულებულია (კოდი); მისი task-ები ფაილის ბოლოშია (`## Stage 10 — Done`), Deploy plan-ის ღია ნაბიჯები აქვე რჩება.
+
+<!-- Stage 10 header (ისტორია):
 
 აუდიტი 2026-10-08 (standard-reviewer, ორი ნაწილი: A — isolation/auth/secrets, B — public/webhook/bot/uploads).
 ID-ები (A-n / B-n) commit message-ში იწერება: `fix(scope): ... (A-1)`.
 შენიშვნა: მიგრაციის ფაილს აგენტი წერს, **გაშვება — მფლობელი, ხელით** (Supabase SQL Editor),
 backend-ის deploy-მდე ან მის შემდეგ — task-ში მითითებული რიგით.
+-->
 
 ## Tasks
+- [ ] **S11-1 — should-fix: შეკვეთის სტატუსი და მარაგი ერთ ტრანზაქციაში** (აუდიტი #2) · `backend/app/api/orders.py` (`update_order_status`), მიგრაცია `0021`
+  - ახლა: სტატუსი `auth.client`-ით ახლდება, მარაგი ცალკე RPC-ით (`_take_stock` წინ, `_apply_stock_delta(+1)` შემდეგ). `processing/done → cancelled`-ზე, თუ სტატუსი შეიცვალა და მარაგის დაბრუნება ჩავარდა → შეკვეთა გაუქმებულია, მარაგი არ დაბრუნდა, პასუხი 500 (კომპენსაცია მხოლოდ აღების მხარეს არსებობს).
+  - Fix: ერთი Postgres ფუნქცია (`change_order_status(order_id, expected_old, new)`) — სტატუსის ოპტიმისტური ჩაკეტვა + მარაგის აღება/დაბრუნება ერთ ტრანზაქციაში; იძახება service client-ით მხოლოდ `auth.client`-ით ownership-ის შემოწმების შემდეგ; `REVOKE EXECUTE … FROM public, anon, authenticated`. Python-ის კომპენსაციის ლოგიკა ქრება.
+  - Verify: offline ტესტები (RPC-ის შეცდომის კოდები → 409/400), SQL verification query; მიგრაციას მფლობელი უშვებს.
+- [ ] **S11-2 — should-fix: Facebook OAuth ავტომატურად `pages[0]`-ს იღებს** (აუდიტი #8) · `backend/app/api/facebook.py` (connect callback)
+  - რამდენიმე Page-ზე წვდომის მიცემისას შემთხვევითი პირველი მიება მაღაზიას → ბოტი არასწორ გვერდზე პასუხობს.
+  - ✅ გადაწყვეტილება (მფლობელი, 2026-10-09): ვარიანტი (ა) — >1 გვერდზე უარი, შეტყობინებით: „თავიდან მიაბით და Facebook-ის ფანჯარაში მონიშნეთ მხოლოდ ის გვერდი, რომელზეც ბოტი გინდათ". backend + ახალი reason frontend-ში (`fbConnect.js`) + `npm run build`.
+  - Verify: ტესტი 0/1/2+ გვერდზე.
+- [ ] **S11-3 — should-fix: Gemini-ს გამოძახებას timeout არ აქვს** (აუდიტი #21) · `backend/app/services/bot.py` (`get_bot_reply`)
+  - `genai.Client` `http_options` timeout-ის გარეშეა; ჩამოკიდებული გამოძახება webhook-ის threadpool worker-ს უსასრულოდ იკავებს (4 მცდელობაც დამატებით), კლიენტი პასუხს ვერ იღებს.
+  - Fix: `HttpOptions(timeout=…)` (მაგ. 25 წმ) + მთლიანი ბიუჯეტი retry-ებით ≤ ~45 წმ; timeout → არსებული fallback პასუხი.
+  - Verify: ტესტი — timeout-ის exception → fallback; retry-ების ბიუჯეტი.
+
+## Deploy plan
+> მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
+
+### ✅ შესრულებულია (მფლობელი, ლაივ ბაზაზე)
+- `supabase/checks/check_0014_0016.sql` → ყველა 32 შემოწმება `ok=true` — 0014–0016 ლაივზე გაშვებული იყო.
+- მიგრაციები **0017, 0018, 0019, 0020** გაშვებულია ლაივ ბაზაზე (Supabase migration history-ში ჩაიწერა): PRE-CHECK-ები (0 მწკრივი) და თითოეულის verification query — ყველა შედეგი მოსალოდნელს ემთხვევა.
+- **T20 (ერთჯერადი მარაგის გასწორება) არ დასჭირდა:** სატესტო შეკვეთები წაიშალა, `orders` ცხრილი ცარიელია. `supabase/one-off/release_legacy_new_order_stock.sql` რჩება მხოლოდ როგორც სათადარიგო.
+  ⚠️ პირობა: თუ deploy-მდე ძველმა backend-მა ახალი შეკვეთა მიიღო (ძველი წესით მარაგი უკვე დაკლებულია), `orders` ცხრილი deploy-ის შემდეგ ისევ შეამოწმე (`select count(*) from public.orders;`); თუ > 0 და ისინი `new`-ია deploy-მდე შექმნილი — გამოიყენე ის სკრიპტი. ცარიელი ცხრილი = არაფერი გასაკეთებელია.
+- ⚠️ გაითვალისწინე: მიგრაციები ახლა **ძველ backend-ზე** მუშაობს deploy-მდე. გადამოწმებულია კოდით, რომ ძველი backend თავსებადია (orders UPDATE მხოლოდ `status`, delete მხოლოდ done/cancelled, upgrade_requests იგივე ველები).
+
+### ✅ Backend deploy (მფლობელი, ლაივზე)
+- `832997f` live. `CLIENT_IP_TRUSTED_HOPS=3`; `CLIENT_IP_DEBUG=false` (გამორთულია).
+- ლაივ XFF ჯაჭვი (მფლობელის ინფორმაციით): `<ყალბი>, <კლიენტი>, <Render-ის Cloudflare>, <Render-ის შიდა>` → კლიენტი მარჯვნიდან მე-3 პოზიციაზეა. `resolved` სწორად აჩვენებს კლიენტის IP-ს და ყალბ XFF-ს ანგარიშში არ აგდებს. (მფლობელმა შეამოწმა; აგენტს ლაივზე არაფერი გაუშვია.)
+- შესრულებულია Deploy plan-ის ნაბიჯები: 1 (`CLIENT_IP_DEBUG`), 2 (merge + deploy), 3 (hops-ის შემოწმება), 4 (debug გამორთვა).
+
+### ⏳ დარჩენილი
+5. deploy-ის შემდეგ ხელით შემოწმება:
+   - ✅ (მფლობელი) login, ფოტოს ატვირთვა, საჯარო შეკვეთა (201), ბოტი, admin.
+   - ⏳ **ღია (მფლობელის თქმით ერთადერთი): მარაგის შემოწმება** — საჯარო შეკვეთის შექმნა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს; `processing → cancelled` აბრუნებს. (სადაც 409 არასაკმარის მარაგზე და `new/processing`-ის წაშლა → 409 — ეს ორი მფლობელს ცალკე არ დაუდასტურებია.)
+   - ℹ️ საწყისი სიის დანარჩენი პუნქტები, რომლებზეც ცალკე დადასტურება არ მიმიღია (მფლობელმა ისინი ღიად არ დატოვა, ამიტომ აქ მხოლოდ ინფორმაციისთვის): `GET /status` → `env=production`; IG connect დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე; `select count(*) from public.orders;` (T20-ის სათადარიგო პირობა).
+6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
+7. **key-ების როტაცია:** ✅ `FB_APP_SECRET` — შეცვლილია; ✅ Supabase — legacy key-ები გამორთულია, 401 დადასტურებულია (T23); ✅ `FB_TOKEN_ENCRYPTION_KEY` — შეცვლილია (Render + ლოკალური `.env`), ერთადერთი Facebook/Instagram-მიბმული მაღაზია ხელახლა დაკავშირდა, ბოტი პასუხობს. ⏳ **ღია: Gemini key-ის როტაცია** — როდის, მფლობელი წყვეტს.
+8. ✅ ლოკალურ `.env`-ში `APP_ENV=development` (მფლობელმა დაადასტურა).
+
+### 🔑 Supabase API key-ების გადასვლა (T23) — ზუსტი რიგი
+> key-ების მნიშვნელობებს მფლობელი სვამს. **ძველი service_role გაჟონა → ის ძალაში რჩება, სანამ legacy key-ები არ გამოირთვება (ნაბიჯი K7). არ გააჭიანურო.**
+> ახალი env სახელები: `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`, ძველი: `SUPABASE_ANON_KEY`), `SUPABASE_SECRET_KEY` (`sb_secret_…`, ძველი: `SUPABASE_SERVICE_ROLE_KEY`). ახალი სახელი უპირატესია; ძველი მუშაობს fallback-ად. ცარიელ-მაგრამ-არსებული ახალი ცვლადი ძველს **ფარავს** → rollback-ისას ახალი ცვლადი **წაშალე**, ცარიელზე ნუ დააყენებ.
+> სად ვიღებთ: Supabase Dashboard → Project Settings → API Keys → ახალი tab (Publishable / Secret). Secret key-ს არ ვაჩვენებთ არსად, არ ვაგზავნით.
+
+- **K1. კოდის deploy** ✅ (მფლობელი) (merge `agent-system` → `main` + push). ძველი env ჯერ არ იცვლება — ბოლო ეტაპზე ცვლილება უხილავია (fallback). frontend `config.js`-ში ახლა ველი უკვე `SUPABASE_PUBLISHABLE_KEY`, მნიშვნელობა ჯერ ძველი anon JWT. შემოწმება: საიტი/პანელი/ბოტი ისევ მუშაობს.
+- **K2. Render env:** ✅ დაამატე `SUPABASE_SECRET_KEY=sb_secret_…` და `SUPABASE_PUBLISHABLE_KEY=sb_publishable_…` (ძველებს ჯერ ნუ წაშლი) → Render restart.
+- **K3. შემოწმება backend-ზე ✅ (მფლობელი: ფოტოს ატვირთვა 200, შეკვეთა 201, ლოგში შეცდომა არ არის) ახალი key-ებით** (ეს არის ერთადერთი ადგილი, სადაც `sb_secret_`-ის რეალური მუშაობა დგინდება — offline ვერ დადასტურდა):
+  - პანელში login, მაღაზიების/პროდუქტების სია (publishable + მომხმარებლის JWT, RLS);
+  - ფოტოს ატვირთვა/წაშლა (Storage, secret key);
+  - საჯარო შეკვეთა `order.html`-იდან (service client);
+  - Messenger-ში ბოტი პასუხობს (webhook → service client);
+  - admin პანელი იხსნება (service client);
+  - Render-ის ლოგში `Invalid API key`/`401`/`permission denied` არ არის.
+  თუ რამე ცუდადაა — **rollback:** წაშალე `SUPABASE_SECRET_KEY` და `SUPABASE_PUBLISHABLE_KEY` Render-ზე (ძველი სახელები გააგრძელებს მუშაობას), restart.
+- **K4. ლოკალური `.env`:** ✅ (ახალ სახელებზეა) იგივე ორი ცვლადი ახალი სახელებით (ძველი ორი ხაზი წაშალე); ლოკალური backend-ი production Supabase-ს უკავშირდება — მხოლოდ შენ გაუშვი.
+- **K5. frontend:** ✅ `public/config.js` და `dist/` განახლებულია `sb_publishable_…`-ით (commit agent-system-ზე; push/deploy და ქვემოთ ჩამოთვლილი ხელით შემოწმებები ჯერ მფლობელს ელის) — `frontend/public/config.js`-ში `SUPABASE_PUBLISHABLE_KEY`-ის მნიშვნელობა შეცვალე `sb_publishable_…`-ით (ეს key საჯაროა, git-ში ჩადება ნორმალურია) → `cd frontend && npm run build` → commit `public/config.js` + `dist/` → push. შემოწმება: login/logout, რეგისტრაცია, პაროლის აღდგენა (`reset.html`), `order.html` (მენიუ იტვირთება), admin.html.
+- **K6. Render env-ის გასუფთავება:** ✅ (მფლობელი: ძველი ორი ცვლადი წაშლილია, deploy live, შეკვეთა 201 მხოლოდ ახალ key-ებზე) წაშალე `SUPABASE_SERVICE_ROLE_KEY` და `SUPABASE_ANON_KEY` → restart → K3-ის შემოწმება ხელახლა (დარწმუნდი, რომ ახალი სახელები ნამდვილად მუშაობს და fallback-ზე არ იყავი).
+- **K7. legacy key-ების გამორთვა:** ✅ (მფლობელი: გამორთულია) Supabase Dashboard → Project Settings → API Keys → **Legacy API keys** → გამორთვა („Disable JWT-based API keys" / legacy anon & service_role). ეს ააქტიურებს გაჟონილი service_role-ის გაუქმებას. ეფექტი: ძველი anon/service_role JWT-ები აღარ მუშაობს; მომხმარებლების სესიის JWT-ები Auth-ისაა და არ ირღვევა. უკან დასაბრუნებელია Dashboard-იდან (დროებით, თუ რამე გაფუჭდა).
+- **K8. შემოწმება K7-ის შემდეგ:** ✅ ძველი anon key-ით REST მოთხოვნა → 401 (მფლობელმა დაადასტურა; გაჟონილი service_role-ის ცალკე curl-ზე ინფორმაცია არ მიმიღია, მაგრამ legacy JWT key-ები სრულად გამორთულია) — იგივე სია, რაც K3 + ახალი მომხმარებლის რეგისტრაცია/login + admin. გაჟონილი service_role-ით სცადე ერთი read (curl `apikey: <ძველი>` → 401 უნდა იყოს) — ამით დაადასტურებ, რომ გაუქმდა.
+- **K9. გაჟონვის შემდეგ:** გადახედე Supabase Logs/Auth-ს საეჭვო აქტივობაზე (უცნობი მომხმარებლები, მასობრივი წაკითხვა/წაშლა) იმ პერიოდში, როცა key ძალაში იყო; საჭიროებისას ეს ცალკე task იქნება.
+
+### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
+- `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
+- სუფთა venv-ში CI-ის ნაბიჯები (`requirements.lock.txt` + `requirements-dev.txt` → `pip check` → `compileall` → `ruff check app tests` → `pytest -q`, `.env`-ის გარეშე): ყველა გავიდა, 174 passed. ლოკალური Python-ის ვერსია შეიძლება CI-ის 3.14.3-ისგან განსხვავდებოდეს — GitHub-ზე რეალური CI გაშვება დაუდასტურებელია.
+- Frontend: `npm run build` ახლა `frontend/dist/`-ს არ ცვლის (git status სუფთაა) → dist commit-შია და აქტუალურია.
+- `git status` სუფთაა; secrets repo-ში არ ჩაგდებულა (T19: ტესტები `.env`-ს არ კითხულობენ).
+
+## Backlog (needs user decision)
+- **T12 (გადადებულია 2026-10-08) — Gemini მოდელი / AI provider-ის შეფასება.** მომავალი ეტაპი: AI provider-ის შეფასება — gemini-2.5-flash, gemini-3.5-flash (შეზღუდული thinking-ით) და Claude Haiku 4.5; შედარება ხარისხით, სიჩქარით და ფასით (თითო პასუხზე).
+  - შედარების სკრიპტი არსებობს: `backend/scripts/compare_gemini_models.py` (პირველი შედეგი — Decision Log 2026-10). multimodal (ფოტოს გაგება) და `[[HANDOFF]]` ჯერ მხოლოდ ტექსტზეა შემოწმებული.
+  - ⏰ დედლაინი: gemini-2.5-flash ითიშება 2026-10-16 — საგანგებო ნაბიჯი Deploy plan-შია.
+- **T13 (გადატანილია Backlog-ში 2026-10-08) — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
+  - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
+  - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.
+- [x] **T15 — წამკითხველი SQL: 0014–0016 გაშვებულია თუ არა ლაივ ბაზაზე** · `supabase/checks/check_0014_0016.sql`
+  - მხოლოდ SELECT (არაფერს ცვლის); აგრეგირებს 0014/0015/0016 ფაილებში არსებულ verification query-ებს ერთ ფაილში,
+    თითო შედეგი — ერთი მკაფიო სტრიქონი (migration, ok true/false, რა აკლია). **გაშვება — მფლობელი** (SQL Editor).
+  - Verify: ფაილში არც ერთი DDL/DML (grep), query-ები ემთხვევა მიგრაციების ფაილებს.
+- [x] **T16 — product-images ბილიკების სტრუქტურა და T5 cleanup-ის გასწორება** · `backend/app/api/products.py`, `backend/app/api/admin.py`
+  - კოდიდან დადგინდეს, რა ბილიკებით ინახება ფოტო (`{shop_id}/...` ბრტყელი თუ ქვესაქაღალდეები); თუ ქვესაქაღალდეებია — `admin._remove_shop_images` რეკურსიულად წაშალოს.
+  - Verify: ტესტი ქვესაქაღალდიანი fake-ით (თუ ბრტყელია — დადასტურება მოკლედ, ტესტი ბრტყელზე).
+  - ✅ შედეგი: ბილიკი ყოველთვის ბრტყელია `{shop_id}/{uuid}.{ext}` (`products.py:179`, ერთადერთი upload) → cleanup-ის გასწორება არ სჭირდება. ისტორიული ხელით ატვირთული nested ობიექტები offline ვერ შემოწმდა.
+- [x] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
+  - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
+  - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
+  - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
+  - მიზეზი: Cloudflare ახლა არ გამოიყენება; ნაცვლად — T17. დაბრუნდება Cloudflare-ის მომავალ ჩართვასთან ერთად.
+### Stage 11-ის აუდიტიდან (nit, 2026-10-09)
+- **#15** საუბრის ისტორიის race: Messenger-ში ორი სწრაფი შეტყობინება პარალელურად მუშავდება, ორივე ძველ history-ს კითხულობს → ბოტის მეხსიერებიდან ერთი turn იკარგება (`webhook.py` `_save_turn`). კლიენტს ორივე პასუხი მიდის. Fix: append RPC.
+- **#17** admin revenue `new` + `processing` + `done`-ს ერთად ითვლის (`admin.py` overview); B-1-ის შემდეგ `new` დაუდასტურებელია → ცალკე „დასრულებული" (done) და „მოლოდინში" მაჩვენებელი.
+- **#24** stale `dist/`-ის რისკი: CI-ში `npm ci && npm run build && git diff --exit-code frontend/dist` (იაფია და დავიწყებულ build-ს იჭერს).
+- **#27** `PAYMENT_IBAN`/`PAYMENT_CONTACT` default-ად placeholder ტექსტია (`config.py`) → გამყიდველი placeholder-ს ნახავს, თუ Render-ზე არ არის დაყენებული. მფლობელის შესამოწმებელი + production startup warning.
+- **#1-ის ნარჩენი** Send API-ს ჩავარდნისას (მაგ. ვადაგასული token) კლიენტი პასუხს ვერ იღებს და ეს მხოლოდ ლოგში ჩანს (`webhook.py`) → საუბარი `needs_attention`-ად მოინიშნოს, რომ გამყიდველმა დაინახოს.
+### Finish-check nits (2026-10-08, standard-reviewer)
+- 0018-ის header-ის დასაბუთება ზუსტი არ არის: გამყიდველს PostgREST-ით `status`-ის პირდაპირ შეცვლა მაინც შეუძლია (`new → processing` დაკლების გარეშე, მერე API-ით `→ cancelled` = მარაგი +N). ზიანი მხოლოდ საკუთარ მარაგზე (`products.quantity`-საც ისედაც ცვლის, 0015). სრულად დახურვა: UPDATE-ის სრული revoke და status-ის ჩაწერა service-ით ownership-ის შემდეგ.
+- `orders.py:410-411`: `_apply_stock_delta(+1)` შეცდომა სტატუსის შეცვლის შემდეგ 500-ს აბრუნებს — try/except + `logger.exception`.
+- `facebook.py`: პარალელური connect-ის race-ზე unique violation `page_taken`-ად მიდის `ig_taken`-ის ნაცვლად; `any(...)` `.neq`-ის შემდეგ ზედმეტია.
+- `admin.py:396-401`: storage cleanup-ის ციკლი — `break`, თუ `paths` არ შეცვლილა.
+- `webhook.py`: `_RATE_PER_SHOP = 30/წთ` ყველა პაკეტისთვის ერთია; 5 spam PSID მაღაზიის ბოტს წუთით აჩერებს.
+- README: 157 („19 მიგრაცია" → 20), 175/201 („მარაგი ავტომატურად კლებულობს" → `processing`-ზე).
+### Nits (აუდიტიდან)
+- **A-9 / B-6** — საიდუმლოები fail-open: ცარიელი `FB_APP_SECRET`-ით HMAC ყალბდება; `"chatassist"` fallback deletion კოდზე;
+  production-ში `FB_TOKEN_ENCRYPTION_KEY`/`FB_APP_SECRET` startup-ზე არ მოწმდება; `encrypt` `subscribe_page`-ის შემდეგაა (`api/facebook.py:253`).
+- **A-6** — `knowledge` PostgREST-ით პირდაპირ ჩაწერადია → free პაკეტი PDF-ცოდნის gate-ს უვლის (`0015_column_privileges.sql:43`).
+- **A-7** — `/admin/recovery` ადმინს recovery ბმულს აბრუნებს + `{e}` შეცდომაში (`admin.py:443-453`).
+- **A-8** — upgrade request-ის resolve `status='pending'`-ს არ ამოწმებს (`admin.py:416-439`).
+- **A-10** — მაღაზიის/პროდუქტის ლიმიტი TOCTOU (პარალელური POST-ით მცირე გადაჭარბება).
+- **B-7** — არა-ASCII შეყვანა `hmac.compare_digest`-ს 500-ით აგდებს (`webhook.py:170`, `services/facebook.py:101,148`, `api/facebook.py:110`).
+- **B-8a** — webhook batch-ში ერთი entry-ს exception დანარჩენებს კარგავს (`webhook.py:201-243`).
+- **B-8b** — `_SEEN_MIDS` threadpool-იდან lock-ის გარეშე იცვლება (`webhook.py:61-77`).
+- **B-10** — გვერდის „დაკავება" სხვის უფასო მაღაზიაზე; ნამდვილ მფლობელს მხოლოდ `page_taken` (`api/facebook.py:269-274`).
+- **B-11** — popup-ის `message` listener origin/source-ს არ ამოწმებს (`frontend/src/panel/fbConnect.js:19-24`).
+- **B-12** — SSRF: DNS rebinding TOCTOU, `is_private` არ ფარავს 100.64/10 → `is_global` + მხოლოდ საკუთარი Storage URL (`services/facebook.py:279-334`).
+- **B-13** — კლიენტის ფოტოები `INLINE_IMAGE_BUDGET`-ს არ ემორჩილება (`webhook.py:313-317`).
+- **B-14** — prompt extraction-ით PDF-ცოდნა ფაქტობრივად საჯაროა → გამყიდველს UI-ში გაფრთხილება (`bot.py:194-197`).
+- Frontend lint (eslint) — არ არის; საჭიროა თუ არა?
+- README მოძველებულია: `ADMIN_EMAIL` → `ADMIN_USER_IDS`, „ტესტები არ არსებობს", React 18 → 19, მიგრაციები 14 → 16.
+
+### მფლობელის შესამოწმებელი (კოდით ვერ დადასტურდა)
+- Render env: `APP_ENV=production`? (`GET https://chatassist.ge/status` → `env`), `ORIGIN_SECRET` დაყენებულია?
+  (თუ არა — `CF-Connecting-IP` ყალბდება და IP-ლიმიტები უქმდება), `CORS_ORIGINS`, `FB_TOKEN_ENCRYPTION_KEY`.
+- `product-images` bucket-ის policy-ები `storage.objects`-ზე (მიგრაციებში არ არის): შეუძლია თუ არა `authenticated`-ს პირდაპირ upload/delete?
+- live DB-ში 0014 / 0015 / 0016 გაშვებულია? (verification query-ები ფაილებშია)
+- Supabase Auth: anonymous sign-ins გამორთულია? email confirmation ჩართულია?
+- ⏰ Gemini 2.5 Flash retires **2026-10-16** — რომელ მოდელზე გადასვლა?
+
+## Run State
+- Finish-check this stage: not run
+- Fix rounds this stage: 0/2
+- Failed attempts: —
+
+## Last Session
+- Date: 2026-10-08
+- Done: კოდის/დოკუმენტების შესწავლა; PROJECT.md (Appendix A); CLAUDE.md ბრძანებებით;
+  აუდიტი (standard-reviewer ×2); PROGRESS.md; verify.sh — agent-dashboard-ის 3 ცვლილება (CHECKS ცარიელი).
+- Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
+  pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
+- Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
+- Next: მფლობელი — Deploy plan-ის ნაბიჯები 5–8 (ხელით შემოწმებები, 2026-10-16 საგანგებო გეგმა, key-ების როტაცია); კოდის task-ები დასრულებულია
+
+## Stage 10 — Done
 - [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS: ruff + pytest დამატებულია, hook-ით შემოწმებული)
   - ruff ჯერ არ არის; ტესტები არის (114, offline, CI-ში).
   - `ruff` → `backend/requirements-dev.txt`; მინიმალური კონფიგი (`E`, `F` წესები) `backend/pyproject.toml`-ში ან `ruff.toml`-ში;
@@ -92,150 +237,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - Verify: ტესტები (ახალი და ძველი env სახელი, ახალი უპირატესია, secrets repr-ში არ ჩანს); `npm run build` + `dist/` commit-ში; Deploy plan — ზუსტი ნაბიჯები.
   - ⚠️ ვერ გადამოწმდება offline: sb_secret key-ის მუშაობა supabase-py-ს `Authorization: Bearer <key>` header-ით PostgREST/Storage/Auth-ზე — მხოლოდ ლაივზე (შემოწმების სია Deploy plan-შია).
 
-## Deploy plan
-> მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
-
-### ✅ შესრულებულია (მფლობელი, ლაივ ბაზაზე)
-- `supabase/checks/check_0014_0016.sql` → ყველა 32 შემოწმება `ok=true` — 0014–0016 ლაივზე გაშვებული იყო.
-- მიგრაციები **0017, 0018, 0019, 0020** გაშვებულია ლაივ ბაზაზე (Supabase migration history-ში ჩაიწერა): PRE-CHECK-ები (0 მწკრივი) და თითოეულის verification query — ყველა შედეგი მოსალოდნელს ემთხვევა.
-- **T20 (ერთჯერადი მარაგის გასწორება) არ დასჭირდა:** სატესტო შეკვეთები წაიშალა, `orders` ცხრილი ცარიელია. `supabase/one-off/release_legacy_new_order_stock.sql` რჩება მხოლოდ როგორც სათადარიგო.
-  ⚠️ პირობა: თუ deploy-მდე ძველმა backend-მა ახალი შეკვეთა მიიღო (ძველი წესით მარაგი უკვე დაკლებულია), `orders` ცხრილი deploy-ის შემდეგ ისევ შეამოწმე (`select count(*) from public.orders;`); თუ > 0 და ისინი `new`-ია deploy-მდე შექმნილი — გამოიყენე ის სკრიპტი. ცარიელი ცხრილი = არაფერი გასაკეთებელია.
-- ⚠️ გაითვალისწინე: მიგრაციები ახლა **ძველ backend-ზე** მუშაობს deploy-მდე. გადამოწმებულია კოდით, რომ ძველი backend თავსებადია (orders UPDATE მხოლოდ `status`, delete მხოლოდ done/cancelled, upgrade_requests იგივე ველები).
-
-### ✅ Backend deploy (მფლობელი, ლაივზე)
-- `832997f` live. `CLIENT_IP_TRUSTED_HOPS=3`; `CLIENT_IP_DEBUG=false` (გამორთულია).
-- ლაივ XFF ჯაჭვი (მფლობელის ინფორმაციით): `<ყალბი>, <კლიენტი>, <Render-ის Cloudflare>, <Render-ის შიდა>` → კლიენტი მარჯვნიდან მე-3 პოზიციაზეა. `resolved` სწორად აჩვენებს კლიენტის IP-ს და ყალბ XFF-ს ანგარიშში არ აგდებს. (მფლობელმა შეამოწმა; აგენტს ლაივზე არაფერი გაუშვია.)
-- შესრულებულია Deploy plan-ის ნაბიჯები: 1 (`CLIENT_IP_DEBUG`), 2 (merge + deploy), 3 (hops-ის შემოწმება), 4 (debug გამორთვა).
-
-### ⏳ დარჩენილი
-5. deploy-ის შემდეგ ხელით შემოწმება:
-   - ✅ (მფლობელი) login, ფოტოს ატვირთვა, საჯარო შეკვეთა (201), ბოტი, admin.
-   - ⏳ **ღია (მფლობელის თქმით ერთადერთი): მარაგის შემოწმება** — საჯარო შეკვეთის შექმნა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს; `processing → cancelled` აბრუნებს. (სადაც 409 არასაკმარის მარაგზე და `new/processing`-ის წაშლა → 409 — ეს ორი მფლობელს ცალკე არ დაუდასტურებია.)
-   - ℹ️ საწყისი სიის დანარჩენი პუნქტები, რომლებზეც ცალკე დადასტურება არ მიმიღია (მფლობელმა ისინი ღიად არ დატოვა, ამიტომ აქ მხოლოდ ინფორმაციისთვის): `GET /status` → `env=production`; IG connect დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე; `select count(*) from public.orders;` (T20-ის სათადარიგო პირობა).
-6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
-7. **key-ების როტაცია:** ✅ `FB_APP_SECRET` — შეცვლილია; ✅ Supabase — legacy key-ები გამორთულია, 401 დადასტურებულია (T23); ✅ `FB_TOKEN_ENCRYPTION_KEY` — შეცვლილია (Render + ლოკალური `.env`), ერთადერთი Facebook/Instagram-მიბმული მაღაზია ხელახლა დაკავშირდა, ბოტი პასუხობს. ⏳ **ღია: Gemini key-ის როტაცია** — როდის, მფლობელი წყვეტს.
-8. ✅ ლოკალურ `.env`-ში `APP_ENV=development` (მფლობელმა დაადასტურა).
-
-### 🔑 Supabase API key-ების გადასვლა (T23) — ზუსტი რიგი
-> key-ების მნიშვნელობებს მფლობელი სვამს. **ძველი service_role გაჟონა → ის ძალაში რჩება, სანამ legacy key-ები არ გამოირთვება (ნაბიჯი K7). არ გააჭიანურო.**
-> ახალი env სახელები: `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`, ძველი: `SUPABASE_ANON_KEY`), `SUPABASE_SECRET_KEY` (`sb_secret_…`, ძველი: `SUPABASE_SERVICE_ROLE_KEY`). ახალი სახელი უპირატესია; ძველი მუშაობს fallback-ად. ცარიელ-მაგრამ-არსებული ახალი ცვლადი ძველს **ფარავს** → rollback-ისას ახალი ცვლადი **წაშალე**, ცარიელზე ნუ დააყენებ.
-> სად ვიღებთ: Supabase Dashboard → Project Settings → API Keys → ახალი tab (Publishable / Secret). Secret key-ს არ ვაჩვენებთ არსად, არ ვაგზავნით.
-
-- **K1. კოდის deploy** ✅ (მფლობელი) (merge `agent-system` → `main` + push). ძველი env ჯერ არ იცვლება — ბოლო ეტაპზე ცვლილება უხილავია (fallback). frontend `config.js`-ში ახლა ველი უკვე `SUPABASE_PUBLISHABLE_KEY`, მნიშვნელობა ჯერ ძველი anon JWT. შემოწმება: საიტი/პანელი/ბოტი ისევ მუშაობს.
-- **K2. Render env:** ✅ დაამატე `SUPABASE_SECRET_KEY=sb_secret_…` და `SUPABASE_PUBLISHABLE_KEY=sb_publishable_…` (ძველებს ჯერ ნუ წაშლი) → Render restart.
-- **K3. შემოწმება backend-ზე ✅ (მფლობელი: ფოტოს ატვირთვა 200, შეკვეთა 201, ლოგში შეცდომა არ არის) ახალი key-ებით** (ეს არის ერთადერთი ადგილი, სადაც `sb_secret_`-ის რეალური მუშაობა დგინდება — offline ვერ დადასტურდა):
-  - პანელში login, მაღაზიების/პროდუქტების სია (publishable + მომხმარებლის JWT, RLS);
-  - ფოტოს ატვირთვა/წაშლა (Storage, secret key);
-  - საჯარო შეკვეთა `order.html`-იდან (service client);
-  - Messenger-ში ბოტი პასუხობს (webhook → service client);
-  - admin პანელი იხსნება (service client);
-  - Render-ის ლოგში `Invalid API key`/`401`/`permission denied` არ არის.
-  თუ რამე ცუდადაა — **rollback:** წაშალე `SUPABASE_SECRET_KEY` და `SUPABASE_PUBLISHABLE_KEY` Render-ზე (ძველი სახელები გააგრძელებს მუშაობას), restart.
-- **K4. ლოკალური `.env`:** ✅ (ახალ სახელებზეა) იგივე ორი ცვლადი ახალი სახელებით (ძველი ორი ხაზი წაშალე); ლოკალური backend-ი production Supabase-ს უკავშირდება — მხოლოდ შენ გაუშვი.
-- **K5. frontend:** ✅ `public/config.js` და `dist/` განახლებულია `sb_publishable_…`-ით (commit agent-system-ზე; push/deploy და ქვემოთ ჩამოთვლილი ხელით შემოწმებები ჯერ მფლობელს ელის) — `frontend/public/config.js`-ში `SUPABASE_PUBLISHABLE_KEY`-ის მნიშვნელობა შეცვალე `sb_publishable_…`-ით (ეს key საჯაროა, git-ში ჩადება ნორმალურია) → `cd frontend && npm run build` → commit `public/config.js` + `dist/` → push. შემოწმება: login/logout, რეგისტრაცია, პაროლის აღდგენა (`reset.html`), `order.html` (მენიუ იტვირთება), admin.html.
-- **K6. Render env-ის გასუფთავება:** ✅ (მფლობელი: ძველი ორი ცვლადი წაშლილია, deploy live, შეკვეთა 201 მხოლოდ ახალ key-ებზე) წაშალე `SUPABASE_SERVICE_ROLE_KEY` და `SUPABASE_ANON_KEY` → restart → K3-ის შემოწმება ხელახლა (დარწმუნდი, რომ ახალი სახელები ნამდვილად მუშაობს და fallback-ზე არ იყავი).
-- **K7. legacy key-ების გამორთვა:** ✅ (მფლობელი: გამორთულია) Supabase Dashboard → Project Settings → API Keys → **Legacy API keys** → გამორთვა („Disable JWT-based API keys" / legacy anon & service_role). ეს ააქტიურებს გაჟონილი service_role-ის გაუქმებას. ეფექტი: ძველი anon/service_role JWT-ები აღარ მუშაობს; მომხმარებლების სესიის JWT-ები Auth-ისაა და არ ირღვევა. უკან დასაბრუნებელია Dashboard-იდან (დროებით, თუ რამე გაფუჭდა).
-- **K8. შემოწმება K7-ის შემდეგ:** ✅ ძველი anon key-ით REST მოთხოვნა → 401 (მფლობელმა დაადასტურა; გაჟონილი service_role-ის ცალკე curl-ზე ინფორმაცია არ მიმიღია, მაგრამ legacy JWT key-ები სრულად გამორთულია) — იგივე სია, რაც K3 + ახალი მომხმარებლის რეგისტრაცია/login + admin. გაჟონილი service_role-ით სცადე ერთი read (curl `apikey: <ძველი>` → 401 უნდა იყოს) — ამით დაადასტურებ, რომ გაუქმდა.
-- **K9. გაჟონვის შემდეგ:** გადახედე Supabase Logs/Auth-ს საეჭვო აქტივობაზე (უცნობი მომხმარებლები, მასობრივი წაკითხვა/წაშლა) იმ პერიოდში, როცა key ძალაში იყო; საჭიროებისას ეს ცალკე task იქნება.
-
-### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
-- `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
-- სუფთა venv-ში CI-ის ნაბიჯები (`requirements.lock.txt` + `requirements-dev.txt` → `pip check` → `compileall` → `ruff check app tests` → `pytest -q`, `.env`-ის გარეშე): ყველა გავიდა, 174 passed. ლოკალური Python-ის ვერსია შეიძლება CI-ის 3.14.3-ისგან განსხვავდებოდეს — GitHub-ზე რეალური CI გაშვება დაუდასტურებელია.
-- Frontend: `npm run build` ახლა `frontend/dist/`-ს არ ცვლის (git status სუფთაა) → dist commit-შია და აქტუალურია.
-- `git status` სუფთაა; secrets repo-ში არ ჩაგდებულა (T19: ტესტები `.env`-ს არ კითხულობენ).
-
-## Stage 11 — Live-მზადყოფნა (შემოთავაზებული, ელოდება მფლობელის დადასტურებას)
-> წყარო: გარე აუდიტი (2026-10-09, 27 პუნქტი), ყოველი პუნქტი გადამოწმდა ახლანდელ კოდში (`agent-system`, 502b74c).
-> დადასტურების შემდეგ: Stage 10-ის task-ები გადავა `## Stage 10 — Done`-ში, Run State განულდება.
-
-### Tasks (მხოლოდ დადასტურებული)
-- [ ] **S11-1 — should-fix: შეკვეთის სტატუსი და მარაგი ერთ ტრანზაქციაში** (აუდიტი #2) · `backend/app/api/orders.py` (`update_order_status`), მიგრაცია `0021`
-  - ახლა: სტატუსი `auth.client`-ით ახლდება, მარაგი ცალკე RPC-ით (`_take_stock` წინ, `_apply_stock_delta(+1)` შემდეგ). `processing/done → cancelled`-ზე, თუ სტატუსი შეიცვალა და მარაგის დაბრუნება ჩავარდა → შეკვეთა გაუქმებულია, მარაგი არ დაბრუნდა, პასუხი 500 (კომპენსაცია მხოლოდ აღების მხარეს არსებობს).
-  - Fix: ერთი Postgres ფუნქცია (`change_order_status(order_id, expected_old, new)`) — სტატუსის ოპტიმისტური ჩაკეტვა + მარაგის აღება/დაბრუნება ერთ ტრანზაქციაში; იძახება service client-ით მხოლოდ `auth.client`-ით ownership-ის შემოწმების შემდეგ; `REVOKE EXECUTE … FROM public, anon, authenticated`. Python-ის კომპენსაციის ლოგიკა ქრება.
-  - Verify: offline ტესტები (RPC-ის შეცდომის კოდები → 409/400), SQL verification query; მიგრაციას მფლობელი უშვებს.
-- [ ] **S11-2 — should-fix: Facebook OAuth ავტომატურად `pages[0]`-ს იღებს** (აუდიტი #8) · `backend/app/api/facebook.py` (connect callback)
-  - რამდენიმე Page-ზე წვდომის მიცემისას შემთხვევითი პირველი მიება მაღაზიას → ბოტი არასწორ გვერდზე პასუხობს.
-  - ❓ გადაწყვეტილება: (ა, რეკომენდებული) >1 გვერდი → უარი მკაფიო შეტყობინებით („Facebook-ის ფანჯარაში მონიშნე მხოლოდ ერთი გვერდი") — backend + ერთი reason frontend-ში; (ბ) გვერდის არჩევის UI popup-ში — მეტი კოდი და state.
-  - Verify: ტესტი 0/1/2+ გვერდზე.
-- [ ] **S11-3 — should-fix: Gemini-ს გამოძახებას timeout არ აქვს** (აუდიტი #21) · `backend/app/services/bot.py` (`get_bot_reply`)
-  - `genai.Client` `http_options` timeout-ის გარეშეა; ჩამოკიდებული გამოძახება webhook-ის threadpool worker-ს უსასრულოდ იკავებს (4 მცდელობაც დამატებით), კლიენტი პასუხს ვერ იღებს.
-  - Fix: `HttpOptions(timeout=…)` (მაგ. 25 წმ) + მთლიანი ბიუჯეტი retry-ებით ≤ ~45 წმ; timeout → არსებული fallback პასუხი.
-  - Verify: ტესტი — timeout-ის exception → fallback; retry-ების ბიუჯეტი.
-
+### Stage 10 — აუდიტის გადამოწმების ისტორია (Stage 11-ის წყარო)
 ### აუდიტის გადამოწმების შედეგი (27 პუნქტი)
 - **(ა) უკვე გასწორებულია:** #7 `/test-chat` fail-open → T3 (`APP_ENV` default `production`); #10 XFF-ის ნდობა → T17 + T22 (მარჯვენა hop, `CLIENT_IP_TRUSTED_HOPS=3`, peer აღარ გამოიყენება); #26 `admin_email` → F-08 (კონფიგში აღარ არსებობს; `ADMIN_USER_IDS`, ცარიელი = fail-closed).
 - **(ბ) რეალურია:** #2, #8, #21 → S11-1..3 (should-fix). nit-ები → Backlog: #15, #17, #24, #27, #1-ის ნარჩენი. #23 უკვე Backlog-შია.
 - **(გ) არ შეესაბამება / ზედმეტია:** #1, #3, #4, #5, #6, #9, #11, #12, #13, #14, #16, #18, #19, #20, #22, #25 → PROJECT.md `Accepted Risks` (მიზეზებით).
-
-## Backlog (needs user decision)
-- **T12 (გადადებულია 2026-10-08) — Gemini მოდელი / AI provider-ის შეფასება.** მომავალი ეტაპი: AI provider-ის შეფასება — gemini-2.5-flash, gemini-3.5-flash (შეზღუდული thinking-ით) და Claude Haiku 4.5; შედარება ხარისხით, სიჩქარით და ფასით (თითო პასუხზე).
-  - შედარების სკრიპტი არსებობს: `backend/scripts/compare_gemini_models.py` (პირველი შედეგი — Decision Log 2026-10). multimodal (ფოტოს გაგება) და `[[HANDOFF]]` ჯერ მხოლოდ ტექსტზეა შემოწმებული.
-  - ⏰ დედლაინი: gemini-2.5-flash ითიშება 2026-10-16 — საგანგებო ნაბიჯი Deploy plan-შია.
-- **T13 (გადატანილია Backlog-ში 2026-10-08) — ORIGIN_SECRET Render-ზე (მფლობელის ქმედება, კოდი არ სჭირდება)** · `backend/app/main.py:124-168`
-  - წინაპირობა: Cloudflare ნამდვილად პროქსირებს `chatassist.ge`-ს (ნარინჯისფერი ღრუბელი). ინსტრუქცია — იხ. ჩატის ახსნა; ჩემგან Render-ზე არაფერი კეთდება.
-  - Verify (მფლობელი): `curl -i https://<render-url>.onrender.com/status` → 403; `https://chatassist.ge/status` → 200; Messenger-ში ბოტი პასუხობს.
-- [x] **T15 — წამკითხველი SQL: 0014–0016 გაშვებულია თუ არა ლაივ ბაზაზე** · `supabase/checks/check_0014_0016.sql`
-  - მხოლოდ SELECT (არაფერს ცვლის); აგრეგირებს 0014/0015/0016 ფაილებში არსებულ verification query-ებს ერთ ფაილში,
-    თითო შედეგი — ერთი მკაფიო სტრიქონი (migration, ok true/false, რა აკლია). **გაშვება — მფლობელი** (SQL Editor).
-  - Verify: ფაილში არც ერთი DDL/DML (grep), query-ები ემთხვევა მიგრაციების ფაილებს.
-- [x] **T16 — product-images ბილიკების სტრუქტურა და T5 cleanup-ის გასწორება** · `backend/app/api/products.py`, `backend/app/api/admin.py`
-  - კოდიდან დადგინდეს, რა ბილიკებით ინახება ფოტო (`{shop_id}/...` ბრტყელი თუ ქვესაქაღალდეები); თუ ქვესაქაღალდეებია — `admin._remove_shop_images` რეკურსიულად წაშალოს.
-  - Verify: ტესტი ქვესაქაღალდიანი fake-ით (თუ ბრტყელია — დადასტურება მოკლედ, ტესტი ბრტყელზე).
-  - ✅ შედეგი: ბილიკი ყოველთვის ბრტყელია `{shop_id}/{uuid}.{ext}` (`products.py:179`, ერთადერთი upload) → cleanup-ის გასწორება არ სჭირდება. ისტორიული ხელით ატვირთული nested ობიექტები offline ვერ შემოწმდა.
-- [x] **T14 — T2-ის შედეგი: ტექსტების გასწორება (frontend + delete_order)** · `frontend/src/**`, `backend/app/api/orders.py`
-  - გამყიდველის პანელი / `order.html` შეიძლება ამბობდეს „მარაგი დაჯავშნილია / გაუქმებისას დაბრუნდება" — გადასამოწმებელია.
-  - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
-  - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
-  - მიზეზი: Cloudflare ახლა არ გამოიყენება; ნაცვლად — T17. დაბრუნდება Cloudflare-ის მომავალ ჩართვასთან ერთად.
-### Stage 11-ის აუდიტიდან (nit, 2026-10-09)
-- **#15** საუბრის ისტორიის race: Messenger-ში ორი სწრაფი შეტყობინება პარალელურად მუშავდება, ორივე ძველ history-ს კითხულობს → ბოტის მეხსიერებიდან ერთი turn იკარგება (`webhook.py` `_save_turn`). კლიენტს ორივე პასუხი მიდის. Fix: append RPC.
-- **#17** admin revenue `new` + `processing` + `done`-ს ერთად ითვლის (`admin.py` overview); B-1-ის შემდეგ `new` დაუდასტურებელია → ცალკე „დასრულებული" (done) და „მოლოდინში" მაჩვენებელი.
-- **#24** stale `dist/`-ის რისკი: CI-ში `npm ci && npm run build && git diff --exit-code frontend/dist` (იაფია და დავიწყებულ build-ს იჭერს).
-- **#27** `PAYMENT_IBAN`/`PAYMENT_CONTACT` default-ად placeholder ტექსტია (`config.py`) → გამყიდველი placeholder-ს ნახავს, თუ Render-ზე არ არის დაყენებული. მფლობელის შესამოწმებელი + production startup warning.
-- **#1-ის ნარჩენი** Send API-ს ჩავარდნისას (მაგ. ვადაგასული token) კლიენტი პასუხს ვერ იღებს და ეს მხოლოდ ლოგში ჩანს (`webhook.py`) → საუბარი `needs_attention`-ად მოინიშნოს, რომ გამყიდველმა დაინახოს.
-### Finish-check nits (2026-10-08, standard-reviewer)
-- 0018-ის header-ის დასაბუთება ზუსტი არ არის: გამყიდველს PostgREST-ით `status`-ის პირდაპირ შეცვლა მაინც შეუძლია (`new → processing` დაკლების გარეშე, მერე API-ით `→ cancelled` = მარაგი +N). ზიანი მხოლოდ საკუთარ მარაგზე (`products.quantity`-საც ისედაც ცვლის, 0015). სრულად დახურვა: UPDATE-ის სრული revoke და status-ის ჩაწერა service-ით ownership-ის შემდეგ.
-- `orders.py:410-411`: `_apply_stock_delta(+1)` შეცდომა სტატუსის შეცვლის შემდეგ 500-ს აბრუნებს — try/except + `logger.exception`.
-- `facebook.py`: პარალელური connect-ის race-ზე unique violation `page_taken`-ად მიდის `ig_taken`-ის ნაცვლად; `any(...)` `.neq`-ის შემდეგ ზედმეტია.
-- `admin.py:396-401`: storage cleanup-ის ციკლი — `break`, თუ `paths` არ შეცვლილა.
-- `webhook.py`: `_RATE_PER_SHOP = 30/წთ` ყველა პაკეტისთვის ერთია; 5 spam PSID მაღაზიის ბოტს წუთით აჩერებს.
-- README: 157 („19 მიგრაცია" → 20), 175/201 („მარაგი ავტომატურად კლებულობს" → `processing`-ზე).
-### Nits (აუდიტიდან)
-- **A-9 / B-6** — საიდუმლოები fail-open: ცარიელი `FB_APP_SECRET`-ით HMAC ყალბდება; `"chatassist"` fallback deletion კოდზე;
-  production-ში `FB_TOKEN_ENCRYPTION_KEY`/`FB_APP_SECRET` startup-ზე არ მოწმდება; `encrypt` `subscribe_page`-ის შემდეგაა (`api/facebook.py:253`).
-- **A-6** — `knowledge` PostgREST-ით პირდაპირ ჩაწერადია → free პაკეტი PDF-ცოდნის gate-ს უვლის (`0015_column_privileges.sql:43`).
-- **A-7** — `/admin/recovery` ადმინს recovery ბმულს აბრუნებს + `{e}` შეცდომაში (`admin.py:443-453`).
-- **A-8** — upgrade request-ის resolve `status='pending'`-ს არ ამოწმებს (`admin.py:416-439`).
-- **A-10** — მაღაზიის/პროდუქტის ლიმიტი TOCTOU (პარალელური POST-ით მცირე გადაჭარბება).
-- **B-7** — არა-ASCII შეყვანა `hmac.compare_digest`-ს 500-ით აგდებს (`webhook.py:170`, `services/facebook.py:101,148`, `api/facebook.py:110`).
-- **B-8a** — webhook batch-ში ერთი entry-ს exception დანარჩენებს კარგავს (`webhook.py:201-243`).
-- **B-8b** — `_SEEN_MIDS` threadpool-იდან lock-ის გარეშე იცვლება (`webhook.py:61-77`).
-- **B-10** — გვერდის „დაკავება" სხვის უფასო მაღაზიაზე; ნამდვილ მფლობელს მხოლოდ `page_taken` (`api/facebook.py:269-274`).
-- **B-11** — popup-ის `message` listener origin/source-ს არ ამოწმებს (`frontend/src/panel/fbConnect.js:19-24`).
-- **B-12** — SSRF: DNS rebinding TOCTOU, `is_private` არ ფარავს 100.64/10 → `is_global` + მხოლოდ საკუთარი Storage URL (`services/facebook.py:279-334`).
-- **B-13** — კლიენტის ფოტოები `INLINE_IMAGE_BUDGET`-ს არ ემორჩილება (`webhook.py:313-317`).
-- **B-14** — prompt extraction-ით PDF-ცოდნა ფაქტობრივად საჯაროა → გამყიდველს UI-ში გაფრთხილება (`bot.py:194-197`).
-- Frontend lint (eslint) — არ არის; საჭიროა თუ არა?
-- README მოძველებულია: `ADMIN_EMAIL` → `ADMIN_USER_IDS`, „ტესტები არ არსებობს", React 18 → 19, მიგრაციები 14 → 16.
-
-### მფლობელის შესამოწმებელი (კოდით ვერ დადასტურდა)
-- Render env: `APP_ENV=production`? (`GET https://chatassist.ge/status` → `env`), `ORIGIN_SECRET` დაყენებულია?
-  (თუ არა — `CF-Connecting-IP` ყალბდება და IP-ლიმიტები უქმდება), `CORS_ORIGINS`, `FB_TOKEN_ENCRYPTION_KEY`.
-- `product-images` bucket-ის policy-ები `storage.objects`-ზე (მიგრაციებში არ არის): შეუძლია თუ არა `authenticated`-ს პირდაპირ upload/delete?
-- live DB-ში 0014 / 0015 / 0016 გაშვებულია? (verification query-ები ფაილებშია)
-- Supabase Auth: anonymous sign-ins გამორთულია? email confirmation ჩართულია?
-- ⏰ Gemini 2.5 Flash retires **2026-10-16** — რომელ მოდელზე გადასვლა?
-
-## Run State
-- Finish-check this stage: done
-- Fix rounds this stage: 1/2
-- Failed attempts: —
-
-## Last Session
-- Date: 2026-10-08
-- Done: კოდის/დოკუმენტების შესწავლა; PROJECT.md (Appendix A); CLAUDE.md ბრძანებებით;
-  აუდიტი (standard-reviewer ×2); PROGRESS.md; verify.sh — agent-dashboard-ის 3 ცვლილება (CHECKS ცარიელი).
-- Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
-  pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
-- Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: მფლობელი — Deploy plan-ის ნაბიჯები 5–8 (ხელით შემოწმებები, 2026-10-16 საგანგებო გეგმა, key-ების როტაცია); კოდის task-ები დასრულებულია
