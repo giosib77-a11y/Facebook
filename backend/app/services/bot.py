@@ -12,6 +12,19 @@ from app.config import get_settings
 # დროებითი (გადასატანი) შეცდომების ნიშნები — ასეთებზე ხელახლა ვცდით
 _TRANSIENT = ("503", "UNAVAILABLE", "500", "429", "RESOURCE_EXHAUSTED", "high demand", "overloaded")
 
+# Gemini-ს ზედა ზღვარი (S11-3): ერთი მცდელობის timeout = settings.gemini_timeout_seconds
+# (google-genai-ში HttpOptions.timeout მილიწამებშია), ყველა retry-ს ჯამი ამ ბიუჯეტს არ სცდება.
+GEMINI_TOTAL_BUDGET_SECONDS = 45.0
+GEMINI_MIN_ATTEMPT_SECONDS = 5.0  # ამაზე ნაკლები დარჩენილი დროით ახალ მცდელობას არ ვიწყებთ
+_MAX_ATTEMPTS = 4
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return "timeout" in name or "timeout" in text or "timed out" in text
+
+
 # ოპერატორზე გადართვის ნიშანი — ბოტი პასუხის ბოლოს ამატებს, სისტემა წაშლის
 # კლიენტამდე გაგზავნამდე და საუბარს „ყურადღება სჭირდება"-დ ნიშნავს.
 HANDOFF_TOKEN = "[[HANDOFF]]"
@@ -337,7 +350,12 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
     # ფოტოებსაც ვურთავთ, რომ Gemini-მ ვიზუალურად შეადაროს და კონკრეტული ამოიცნოს.
     product_refs = _fetch_product_images(relevant, images) if images else None
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    per_attempt = float(settings.gemini_timeout_seconds)
+    # HttpOptions.timeout — მილიწამები (google-genai types.HttpOptions docstring)
+    client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options=types.HttpOptions(timeout=int(per_attempt * 1000)),
+    )
     config = types.GenerateContentConfig(
         system_instruction=build_system_prompt(shop, relevant, total=total),
         temperature=0.3,
@@ -345,15 +363,31 @@ def get_bot_reply(shop, products, message: str, history=None, images=None) -> st
     )
     contents = _build_contents(message, history, images, product_refs=product_refs)
 
-    # დროებითი 503/429-ებზე ხელახლა ვცდით მცირე დაყოვნებით
-    for attempt in range(4):
+    # დროებით 503/429-ებზე ხელახლა ვცდით, მაგრამ ჯამური ბიუჯეტის ფარგლებში.
+    # ბოლო შეცდომა ისევ ვაგდებთ — webhook-ის fallback პასუხი ამუშავდება.
+    deadline = time.monotonic() + GEMINI_TOTAL_BUDGET_SECONDS
+    for attempt in range(_MAX_ATTEMPTS):
+        remaining = deadline - time.monotonic()
+        timeout_s = min(per_attempt, remaining)
+        call_config = config.model_copy(
+            update={"http_options": types.HttpOptions(timeout=max(1, int(timeout_s * 1000)))}
+        )
         try:
             response = client.models.generate_content(
-                model=settings.gemini_model, contents=contents, config=config
+                model=settings.gemini_model, contents=contents, config=call_config
             )
             return (response.text or "").strip()
         except Exception as e:
-            if attempt < 3 and any(k in str(e) for k in _TRANSIENT):
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise
+            if attempt >= _MAX_ATTEMPTS - 1:
+                raise
+            timed_out = _is_timeout(e)
+            if not (timed_out or any(k in str(e) for k in _TRANSIENT)):
+                raise
+            delay = 1.5 * (attempt + 1)
+            remaining = deadline - time.monotonic()
+            # timeout-ის შემდეგ ვიმეორებთ მხოლოდ თუ სრული timeout-ფანჯარა კიდევ ეტევა;
+            # სხვა დროებით შეცდომაზე — მინიმალური მცდელობის დრო.
+            needed = delay + (per_attempt if timed_out else GEMINI_MIN_ATTEMPT_SECONDS)
+            if remaining < needed:
+                raise
+            time.sleep(delay)

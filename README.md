@@ -522,6 +522,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `LOG_LEVEL` | | `INFO` | `app` logger-ის დონე (stdout-ზე): `DEBUG` / `INFO` / `WARNING` / `ERROR`; არავალიდური → `INFO` |
 | `GEMINI_API_KEY` | ✅ | — | <https://aistudio.google.com/apikey> |
 | `GEMINI_MODEL` | | `gemini-2.5-flash` | მოდელის შეცვლა კოდის გარეშე |
+| `GEMINI_TIMEOUT_SECONDS` | | `20` | ერთი Gemini მცდელობის timeout (წმ); retry-ების ჯამი ≤45 წმ, მერე webhook fallback პასუხი |
 | `BOT_MEMORY_MESSAGES` | | `20` | 0 = მეხსიერება გამორთული |
 | `BOT_MEMORY_HOURS` | | `24` | |
 | `FB_APP_ID` · `FB_APP_SECRET` | ✅ | — | 🔒 Meta App |

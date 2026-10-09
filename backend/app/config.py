@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # Gemini (ბოტი — ნაბიჯი 4)
     gemini_api_key: str = Field("", repr=False)
     gemini_model: str = "gemini-2.5-flash"
+    gemini_timeout_seconds: float = 20.0  # ერთი Gemini მცდელობის timeout (S11-3)
 
     # ბოტის საუბრის მეხსიერება — ბოლო N შეტყობინება, ბოლო H საათში (0 = გამორთული)
     bot_memory_messages: int = 20
