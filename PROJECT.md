@@ -19,7 +19,7 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 10 — Audit fixes** (იხ. `PROGRESS.md`).
+**Stage 11 — Live-მზადყოფნა** (იხ. `PROGRESS.md`; Stage 10 — Audit fixes დასრულებულია).
 
 ## Scope
 ### In scope (current stage)

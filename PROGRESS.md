@@ -27,6 +27,10 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `genai.Client` `http_options` timeout-ის გარეშეა; ჩამოკიდებული გამოძახება webhook-ის threadpool worker-ს უსასრულოდ იკავებს (4 მცდელობაც დამატებით), კლიენტი პასუხს ვერ იღებს.
   - Fix: `HttpOptions(timeout=…)` (მაგ. 25 წმ) + მთლიანი ბიუჯეტი retry-ებით ≤ ~45 წმ; timeout → არსებული fallback პასუხი.
   - Verify: ტესტი — timeout-ის exception → fallback; retry-ების ბიუჯეტი.
+- [ ] **S11-4 — should-fix (finish-check): 0021-ის მარაგის წესებს DB-ის დონეზე ტესტი არ აქვს** · `supabase/checks/smoke_change_order_status.sql`
+  - მარაგის ბიზნეს-წესები ახლა მხოლოდ plpgsql-შია (0021); offline ტესტები RPC-ს mock-ით ცვლიან და მხოლოდ Python-ის მხარეს ამოწმებენ. წესი (B-1: `new` მარაგს არ ეხება; F-06: cancelled→processing აკლებს; done/processing→cancelled აბრუნებს; წაშლილი პროდუქტი გამოტოვება; INSUFFICIENT_STOCK/STATUS_CHANGED და rollback) რეალურ Postgres-ზე არასდროს გამოცდილა.
+  - Fix: checked-in smoke SQL, რომელსაც მფლობელი უშვებს SQL Editor-ში: ერთი `DO` ბლოკი, რომელიც დროებით ქმნის სატესტო მონაცემს (არსებული auth user + ახალი shop/products/orders), ასრულებს გადასვლებს `change_order_status`-ით, ამოწმებს მარაგს/სტატუსს და **ყოველთვის ბოლოს exception-ს აგდებს** (წარმატებაზე ტექსტი `SMOKE OK`, ჩავარდნაზე `SMOKE FAIL: …`) — exception ტრანზაქციას ბათილს ხდის, ამიტომ ბაზაში არაფერი რჩება.
+  - Verify: SQL-ის ხელით გადაკითხვა სქემასთან (NOT NULL სვეტები, FK, CHECK-ები 0016/0018/ trigger-ები); რეალური გაშვება — მფლობელი.
 
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
@@ -122,6 +126,14 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
   - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
   - მიზეზი: Cloudflare ახლა არ გამოიყენება; ნაცვლად — T17. დაბრუნდება Cloudflare-ის მომავალ ჩართვასთან ერთად.
+### Stage 11 finish-check nits (2026-10-09, standard-reviewer)
+- **❓ გადაწყვეტილება — გვერდების არჩევა (S11-2):** გამყიდველი, რომელსაც FB ანგარიშით 2+ გვერდი მართავს (standard/business — 2 ან ულიმიტო მაღაზია), ხელახალ connect-ზე უარს იღებს, მაშინაც კი, როცა არჩევანი ცალსახაა (მაღაზიას უკვე აქვს `facebook_page_id`, ან მეორე გვერდი ამავე მფლობელის სხვა მაღაზიაზეა მიბმული). მიმდინარე ქცევა — შენი გადაწყვეტილება (ა). შემოთავაზება: კანდიდატებიდან ამოვიღოთ ამავე მფლობელის სხვა მაღაზიებზე მიბმული გვერდები; თუ ამ მაღაზიის არსებული `facebook_page_id` სიაშია — ის; თუ ზუსტად 1 კანდიდატი რჩება — გამოვიყენოთ, სხვა შემთხვევაში `multiple_pages`. ⚠️ დაუდასტურებელია Meta-ს ქცევა: ხელახალ login-ზე გვერდის არჩევის დიალოგი ჩანს თუ არა, და გვერდის მონიშვნის მოხსნა სხვა მაღაზიაზე შენახულ token-ს აუქმებს თუ არა (თუ აუქმებს, ერთი FB ანგარიშით ორ მაღაზიას ორი გვერდით ვერ დააკავშირებ).
+- 0021: დაბრუნების გზაზე `apply_stock_delta` დაუხარისხებელ items-ს იღებს, `decrement_stock` — დახარისხებულს → ორი შეკვეთის პარალელური საპირისპირო რიგით ცვლილებისას deadlock (40P01) შესაძლებელია (შედეგი: ტრანზაქცია უკან ბრუნდება, 400, მონაცემი არ ფუჭდება). Fix: ორივე გზას იგივე დახარისხებული სია.
+- 0018: `authenticated`-ს `UPDATE(status)` ისევ აქვს, backend მას აღარ იყენებს → `revoke update (status) on public.orders from authenticated` (ახლა RPC ერთადერთი ჩამწერია; ზიანი მხოლოდ საკუთარ მარაგზე).
+- 0021: `set search_path` არ არის (Supabase advisor: `function_search_path_mutable`; exploit არ არსებობს, ყველა მიმართვა schema-qualified-ია, INVOKER).
+- `GEMINI_TIMEOUT_SECONDS` არ ვალიდირდება: 0/უარყოფითი → ყოველი მცდელობა 1 ms-ში ჩავარდება, ბოტი ყოველთვის fallback-ს გასცემს (`Field(gt=0, le=45)`).
+- `bot.py`: httpx-ის timeout ფაზაზეა (connect/read/write/pool = 20 წმ), არა მთლიან მოთხოვნაზე → პათოლოგიურ შემთხვევაში ერთი მცდელობა 20 წმ-ს გადააჭარბებს; კომენტარი „ერთი მცდელობის timeout" არაზუსტია. 504 / DEADLINE_EXCEEDED `_TRANSIENT`-ში არ არის (S11-მდეც ასე იყო).
+- 0021-ის header-ის კომენტარი ამბობს „500", რეალურად 400 (`orders.py`, test_s7) — დოკუმენტაცია.
 ### Stage 11-ის აუდიტიდან (nit, 2026-10-09)
 - **#15** საუბრის ისტორიის race: Messenger-ში ორი სწრაფი შეტყობინება პარალელურად მუშავდება, ორივე ძველ history-ს კითხულობს → ბოტის მეხსიერებიდან ერთი turn იკარგება (`webhook.py` `_save_turn`). კლიენტს ორივე პასუხი მიდის. Fix: append RPC.
 - **#17** admin revenue `new` + `processing` + `done`-ს ერთად ითვლის (`admin.py` overview); B-1-ის შემდეგ `new` დაუდასტურებელია → ცალკე „დასრულებული" (done) და „მოლოდინში" მაჩვენებელი.
@@ -162,8 +174,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - ⏰ Gemini 2.5 Flash retires **2026-10-16** — რომელ მოდელზე გადასვლა?
 
 ## Run State
-- Finish-check this stage: not run
-- Fix rounds this stage: 0/2
+- Finish-check this stage: done
+- Fix rounds this stage: 1/2
 - Failed attempts: —
 
 ## Last Session
