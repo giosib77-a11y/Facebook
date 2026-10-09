@@ -24,6 +24,7 @@ from app.core.tiers import (
     owner_shop_limit,
 )
 from app.models.shop import ShopCreate, ShopOut
+from app.services.bot_limits import enforce_bot_limit
 from app.services.pdf_extract import extract_pdf_text
 
 router = APIRouter(prefix="/shops", tags=["shops"])
@@ -234,28 +235,17 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     shop_ids = [s["id"] for s in res.data]
     _cancel_pending_requests(shop_ids)
 
-    # უფასო პაკეტის მაღაზიების ჭერი (free → 1). None = ულიმიტო (ამ გზაზე არ ხდება).
+    # ბოტის ჭერი უფასო პაკეტზე (free → 1): ყველაზე ძველი ჩართული რჩება, დანარჩენი ითიშება.
+    # შეცდომას არ ვყლაპავთ: tier უკვე უფასოა, ზედმეტი ბოტი კი მუშაობს → 500, გამეორება იდემპოტენტურია.
+    try:
+        disabled = [d["name"] or d["id"] for d in enforce_bot_limit(get_service_client(), auth.user_id)]
+    except Exception:
+        logger.exception("downgrade: ბოტის გათიშვა ვერ მოხერხდა (owner=%s)", auth.user_id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "პაკეტი შეიცვალა, მაგრამ ბოტების გათიშვა ვერ მოხერხდა — სცადე ხელახლა.",
+        )
     limit = TIER_LIMITS["free"]["shops"]
-    disabled: list[str] = []
-    if limit is not None and len(res.data) > limit:
-        # ყველაზე ძველი `limit` მაღაზია რჩება; დანარჩენებზე ბოტი ითიშება
-        ordered = sorted(res.data, key=lambda r: str(r.get("created_at") or ""))
-        excess = [r for r in ordered[limit:] if r.get("bot_enabled")]
-        if excess:
-            try:
-                (
-                    get_service_client().table("shops")
-                    .update({"bot_enabled": False})
-                    .eq("owner_id", auth.user_id)
-                    .in_("id", [r["id"] for r in excess])
-                    .execute()
-                )
-                disabled = [r.get("name") or r["id"] for r in excess]
-                logger.info(
-                    "downgrade: ბოტი გაითიშა %d მაღაზიაზე (owner=%s)", len(excess), auth.user_id
-                )
-            except Exception:
-                logger.exception("downgrade: ბოტის გათიშვა ვერ მოხერხდა (owner=%s)", auth.user_id)
 
     msg = "უფასო პაკეტზე დაბრუნდი."
     if disabled:

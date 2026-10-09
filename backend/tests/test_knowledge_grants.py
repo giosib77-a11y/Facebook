@@ -39,6 +39,7 @@ def test_upload_owner_writes_via_service_client(client, user_db, service_db):
     updates = service_db.calls_for("shops", "update")
     assert len(updates) == 1
     assert updates[0].payload == {"knowledge": "extracted", "knowledge_filename": "k.pdf"}
+    assert ("eq", "id", SHOP_ID) in updates[0].filters  # service write is pinned to this shop
     assert user_db.calls_for("shops", "update") == []
 
 
@@ -71,4 +72,5 @@ def test_clear_owner_free_tier_writes_via_service_client(client, user_db, servic
     updates = service_db.calls_for("shops", "update")
     assert len(updates) == 1
     assert updates[0].payload == {"knowledge": None, "knowledge_filename": None}
+    assert ("eq", "id", SHOP_ID) in updates[0].filters  # service write is pinned to this shop
     assert user_db.calls_for("shops", "update") == []

@@ -21,6 +21,7 @@ from app.core.tiers import (
     limits_for,
     normalize_tier,
 )
+from app.services.bot_limits import enforce_bot_limit
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
 
@@ -134,6 +135,23 @@ def _restore_bots(sc, owner_id: str, tier: str) -> int:
         "id", [r["id"] for r in candidates]
     ).execute()
     return len(candidates)
+
+
+def _apply_bot_limit(sc, owner_id: str, tier: str) -> None:
+    """პაკეტის შეცვლის შემდეგ ბოტებს ახალ ჭერს ვუთანხმებთ: ზედმეტი ითიშება, ადგილი თუ გაჩნდა — ბრუნდება.
+
+    enforce ჯერ (downgrade), restore მერე (upgrade): ორივე იდემპოტენტურია, ერთმანეთს არ ეწინააღმდეგება.
+    შეცდომა → 500: tier უკვე შეცვლილია, ადმინმა იგივე მოქმედება უნდა გაიმეოროს.
+    """
+    try:
+        enforce_bot_limit(sc, owner_id)
+        _restore_bots(sc, owner_id, tier)
+    except Exception:
+        logger.exception("ბოტების ჭერის გამოყენება ვერ მოხერხდა (owner=%s)", owner_id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "პაკეტი შეიცვალა, მაგრამ ბოტების ჭერის გამოყენება ვერ მოხერხდა — გაიმეორე მოქმედება.",
+        )
 
 
 @router.get("/check")
@@ -362,10 +380,7 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
         q = sc.table("shops").update({"subscription_tier": payload.subscription_tier})
         (q.eq("owner_id", owner_id) if owner_id else q.eq("id", shop_id)).execute()
         if owner_id:
-            try:
-                _restore_bots(sc, owner_id, payload.subscription_tier)
-            except Exception:
-                logger.warning("ბოტების დაბრუნება ვერ მოხერხდა (owner=%s)", owner_id, exc_info=True)
+            _apply_bot_limit(sc, owner_id, payload.subscription_tier)
 
     res = sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
     row = dict(res[0]) if res else {}
@@ -446,10 +461,7 @@ def resolve_upgrade_request(
             oid = owner[0]["owner_id"]
             sc.table("shops").update({"subscription_tier": tier}).eq("owner_id", oid).execute()
             # გადახდა დადასტურდა → downgrade-ით გათიშული ბოტები ბრუნდება (P1-6)
-            try:
-                _restore_bots(sc, oid, tier)
-            except Exception:
-                logger.warning("ბოტების დაბრუნება ვერ მოხერხდა (owner=%s)", oid, exc_info=True)
+            _apply_bot_limit(sc, oid, tier)
         else:
             sc.table("shops").update({"subscription_tier": tier}).eq("id", r["shop_id"]).execute()
         sc.table("upgrade_requests").update({"status": "approved", "resolved_at": now_iso}).eq("id", req_id).execute()

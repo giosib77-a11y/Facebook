@@ -86,6 +86,9 @@ def test_downgrade_filters_every_shop_update_by_owner(client, service_db):
         {"id": SHOP_ID, "name": "A", "bot_enabled": True, "created_at": "2026-01-01"},
         {"id": OTHER_SHOP_ID, "name": "B", "bot_enabled": True, "created_at": "2026-02-01"},
     ]
+    service_db.responses[("shops", "select")] = [
+        {**r, "subscription_tier": "free"} for r in service_db.responses[("shops", "update")]
+    ]
 
     resp = client.post(f"/shops/{SHOP_ID}/downgrade-free")
 
