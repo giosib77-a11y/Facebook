@@ -487,11 +487,15 @@ App Review-ს ტექსტები: [APP_REVIEW_TEXTS.md](APP_REVIEW_TEXTS.
 
 ## 11. Production deploy
 
-**Render:** auto-deploy `main`-ზე push-ისას.
+**Render:** auto-deploy `main`-ზე push-ისას. Dashboard-ის პარამეტრები:
 
 ```
-Build:  pip install -r requirements.lock.txt   # Render Root Directory = backend
-Start:  uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
+Root Directory:    backend
+Build:             pip install -r requirements.lock.txt
+Start:             uvicorn app.main:app --host 0.0.0.0 --port $PORT
+Instances:         1  (rate limit და webhook dedup მეხსიერებაშია — >1 instance-ზე უქმდება)
+Health Check Path: (ცარიელი)
+Build Filter:      backend/**  frontend/dist/**
 ```
 
 **აუცილებელი production-პარამეტრები:**
