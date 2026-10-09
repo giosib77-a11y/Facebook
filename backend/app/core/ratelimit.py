@@ -48,7 +48,7 @@ def _client_ip(request: Request) -> str:
     peer = request.client.host if request.client else "unknown"  # untrusted (იხ. docstring)
     raw = request.headers.get("x-forwarded-for") or ""
     entries = [e.strip() for e in raw.split(",") if e.strip()]
-    hops = max(settings.client_ip_trusted_hops, 1)
+    hops = max(settings.client_ip_trusted_hops or 1, 1)
 
     if len(entries) >= hops:
         chosen = entries[-hops]

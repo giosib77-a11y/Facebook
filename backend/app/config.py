@@ -37,7 +37,9 @@ class Settings(BaseSettings):
 
     # კლიენტის IP = X-Forwarded-For-ის მარჯვნიდან N-ური ჩანაწერი (1 = ბოლო). Render ამატებს
     # ჩანაწერებს მარჯვნივ; მარცხენა ჩანაწერები კლიენტის კონტროლშია. CF-Connecting-IP იგნორირდება.
-    client_ip_trusted_hops: int = 1
+    # production-ში ცხადად უნდა იყოს დაყენებული (None = არ არის) — იხ. missing_required_secrets;
+    # dev/test-ში None = 1. Render-ზე ამჟამად 3.
+    client_ip_trusted_hops: int | None = None
     # დროებითი diagnostic: true → ლოგში XFF/peer/არჩეული IP (მაქს. 10 წმ-ში ერთხელ).
     client_ip_debug: bool = False
 
@@ -112,6 +114,12 @@ class Settings(BaseSettings):
                 Fernet(self.fb_token_encryption_key.encode())  # როგორც crypto._fernet()
             except Exception:
                 missing.append("FB_TOKEN_ENCRYPTION_KEY (invalid format)")
+        # არასწორი hop-ების რაოდენობა IP-ლიმიტებს ჩუმად აფუჭებს (ყველა მყიდველი ერთ bucket-ში
+        # ან გაყალბებადი IP), ამიტომ default-ს არ ვენდობით: აუცილებელია ცხადი მნიშვნელობა.
+        if self.client_ip_trusted_hops is None:
+            missing.append("CLIENT_IP_TRUSTED_HOPS")
+        elif self.client_ip_trusted_hops < 1:
+            missing.append("CLIENT_IP_TRUSTED_HOPS (must be >= 1)")
         return missing
 
     @property

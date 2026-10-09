@@ -18,7 +18,7 @@ BODY = json.dumps({"object": "page", "entry": [{"id": "1", "messaging": []}]}).e
 
 ALL_NAMES = [
     "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "GEMINI_API_KEY",
-    "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_TOKEN_ENCRYPTION_KEY",
+    "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_TOKEN_ENCRYPTION_KEY", "CLIENT_IP_TRUSTED_HOPS",
 ]
 
 
@@ -31,6 +31,7 @@ def _full(**over) -> dict:
         supabase_url="https://x.supabase.co", supabase_publishable_key="pk",
         supabase_secret_key="sk", gemini_api_key="g", fb_app_secret="s",
         fb_verify_token="v", fb_token_encryption_key=Fernet.generate_key().decode(),
+        client_ip_trusted_hops=3,
     )
     vals.update(over)
     return vals
@@ -129,3 +130,16 @@ def test_startup_check_raises_in_production_with_names_only():
 def test_startup_check_passes_when_complete_and_in_development():
     check_required_settings(_prod(**_full()))
     check_required_settings(Settings(_env_file=None, app_env="development"))  # blank secrets OK
+
+
+def test_trusted_hops_must_be_set_explicitly_in_production():
+    vals = _full()
+    del vals["client_ip_trusted_hops"]
+    assert _prod(**vals).missing_required_secrets() == ["CLIENT_IP_TRUSTED_HOPS"]
+    assert _prod(**_full(client_ip_trusted_hops=0)).missing_required_secrets() == [
+        "CLIENT_IP_TRUSTED_HOPS (must be >= 1)"]
+
+
+def test_trusted_hops_not_required_outside_production():
+    s = Settings(_env_file=None, app_env="development")
+    assert s.client_ip_trusted_hops is None  # ratelimit falls back to 1
