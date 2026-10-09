@@ -114,3 +114,38 @@ def test_c6_ig_check_failure_aborts_without_saving(client, service_db):
     res = _callback(client)
     assert '"reason": "save_failed"' in res.text
     assert service_db.calls_for("shops", "update") == []
+
+
+def _page(n):
+    return {"id": f"page-{n}", "access_token": f"page-token-{n}", "name": f"Page {n}"}
+
+
+def test_p0_no_pages_returns_no_pages_without_changes(client, service_db, monkeypatch):
+    monkeypatch.setattr(fb_api.fb, "get_user_pages", lambda t: [])
+    res = _callback(client)
+    assert '"fb": "no_pages"' in res.text
+    assert service_db.calls_for("shops", "update") == []
+
+
+def test_p1_single_page_connects(client, service_db):
+    text, saved = _connect(client, service_db, [{"id": SHOP_ID, "subscription_tier": "free", "bot_enabled": False}])
+    assert saved["facebook_page_id"] == "page-1"
+    assert '"fb": "connected"' in text
+
+
+@pytest.mark.parametrize("count", [2, 3])
+def test_p2_multiple_pages_refused_without_side_effects(client, service_db, monkeypatch, count):
+    fb = fb_api.fb
+    monkeypatch.setattr(fb, "get_user_pages", lambda t: [_page(i) for i in range(count)])
+    subscribed, encrypted = [], []
+    monkeypatch.setattr(fb, "subscribe_page", lambda page_id, token: subscribed.append(page_id))
+    monkeypatch.setattr(fb_api, "encrypt", lambda v: encrypted.append(v) or "enc:" + v)
+    res = _callback(client)
+    assert res.status_code == 200
+    assert '"reason": "multiple_pages"' in res.text
+    assert "page-token" not in res.text and "Page 0" not in res.text
+    assert subscribed == []
+    assert encrypted == []
+    assert service_db.calls_for("shops", "update") == []
+    assert service_db.calls_for("shops", "insert") == []
+    assert service_db.calls_for("shops", "select") == []

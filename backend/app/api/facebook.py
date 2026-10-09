@@ -208,7 +208,13 @@ def _connect_callback(
     if not pages:
         return _finish("no_pages")
 
-    page = pages[0]  # პირველი გვერდი (მომავალში — არჩევანი)
+    # S11-2: ერთზე მეტ გვერდზე წვდომისას შემთხვევით პირველს არ ვირჩევთ — უარი, არაფერი
+    # ინახება (არც subscribe, არც token-ის დაშიფვრა). გვერდების სახელებს/token-ებს არ ვლოგავთ.
+    if len(pages) > 1:
+        logger.warning("Facebook-მა %d გვერდი დააბრუნა — დაკავშირება უარყოფილია (shop=%s)", len(pages), data.get("shop_id"))
+        return _finish("error", reason="multiple_pages")
+
+    page = pages[0]
     page_id, page_token, page_name = page["id"], page["access_token"], page.get("name", "")
 
     try:
