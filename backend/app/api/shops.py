@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.core.db import run
+from app.core.ratelimit import rate_limit
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.core.tiers import (
@@ -51,27 +52,22 @@ class ShopSettingsUpdate(BaseModel):
 
 
 def _cancel_pending_requests(shop_ids: list[str]) -> None:
-    """ამ მაღაზიების pending upgrade-მოთხოვნების გაუქმება.
+    """ამ მაღაზიების pending upgrade-მოთხოვნების გაუქმება (service_role).
 
-    ⚠️ რევიუ P2-7: ადრე ეს მომხმარებლის `auth.client`-ით კეთდებოდა, მაგრამ
-    `upgrade_requests`-ს **UPDATE პოლისი არ აქვს** (0005-ში მხოლოდ insert/select-ია),
-    ამიტომ RLS-ის ქვეშ 0 მწკრივი იცვლებოდა და `try/except: pass` ამას მალავდა.
-    შედეგი: ერთ მაღაზიაზე რამდენიმე pending რჩებოდა და ადმინს არასწორი
-    (ძველი, იაფი) მოთხოვნის დადასტურება შეეძლო. მფლობელობა ზემოთ უკვე
-    დადასტურებულია RLS-ით, ამიტომ აქ service_role უსაფრთხოა.
+    `upgrade_requests`-ს გამყიდველისთვის UPDATE პოლისი არ აქვს, ამიტომ გაუქმება
+    service client-ით ხდება; მფლობელობა გამომძახებელს უკვე RLS-ით აქვს შემოწმებული.
+    შეცდომას არ ვყლაპავთ (S12-3): ჩუმი ჩავარდნისას ერთ მფლობელს რამდენიმე pending
+    დარჩებოდა და ადმინს ძველი/იაფი მოთხოვნის დადასტურება შეეძლებოდა.
     """
     if not shop_ids:
         return
-    try:
-        (
-            get_service_client().table("upgrade_requests")
-            .update({"status": "cancelled"})
-            .in_("shop_id", [str(i) for i in shop_ids])
-            .eq("status", "pending")
-            .execute()
-        )
-    except Exception:
-        logger.warning("pending მოთხოვნების გაუქმება ვერ მოხერხდა (shops=%s)", shop_ids, exc_info=True)
+    (
+        get_service_client().table("upgrade_requests")
+        .update({"status": "cancelled"})
+        .in_("shop_id", [str(i) for i in shop_ids])
+        .eq("status", "pending")
+        .execute()
+    )
 
 
 @router.post("", response_model=ShopOut, status_code=status.HTTP_201_CREATED)
@@ -182,26 +178,40 @@ def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
     }
 
 
-@router.post("/{shop_id}/upgrade-request")
+@router.post(
+    "/{shop_id}/upgrade-request",
+    dependencies=[Depends(rate_limit("upgrade_request", 10, 3600))],
+)
 def request_upgrade(
     shop_id: uuid.UUID,
     payload: UpgradeRequestIn,
     auth: CurrentAuth = Depends(get_current_auth),
 ):
-    """გამყიდველი ითხოვს პაკეტს — ადმინი ხელით დაადასტურებს (გადახდის შემდეგ)."""
+    """გამყიდველი ითხოვს პაკეტს — ადმინი ხელით დაადასტურებს (გადახდის შემდეგ).
+
+    გამოწერა per-account-ია, ამიტომ pending მოთხოვნა მფლობელზე ერთია: ახალი მოთხოვნა
+    მისი ყველა მაღაზიის ძველ pending-ს აუქმებს. ჩაწერა service client-ით (0024:
+    authenticated-ს INSERT აღარ აქვს) მას შემდეგ, რაც მფლობელობა RLS-ით დადასტურდა.
+    """
     if payload.tier not in TIER_LABELS or payload.tier == "free":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი პაკეტი")
-    # მფლობელობის დადასტურება RLS-ით (გაუქმება service_role-ით ხდება)
-    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
-    if not owns.data:
+    # RLS: auth.client მხოლოდ მფლობელის საკუთარ მაღაზიებს ხედავს
+    owned = run(auth.client.table("shops").select("id"))
+    owned_ids = [str(r["id"]) for r in owned.data or []]
+    if str(shop_id) not in owned_ids:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    # ძველი pending მოთხოვნები ამ მაღაზიისთვის — ვხურავთ (მხოლოდ ბოლო რჩება)
-    _cancel_pending_requests([str(shop_id)])
-    run(
-        auth.client.table("upgrade_requests").insert(
-            {"shop_id": str(shop_id), "requested_tier": payload.tier, "status": "pending"}
+    try:
+        _cancel_pending_requests(owned_ids)
+        run(
+            get_service_client().table("upgrade_requests").insert(
+                {"shop_id": str(shop_id), "requested_tier": payload.tier, "status": "pending"}
+            )
         )
-    )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("upgrade request ვერ შეინახა (owner=%s)", auth.user_id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "მოთხოვნა ვერ შეინახა — სცადე ხელახლა.")
     return {"ok": True}
 
 
@@ -233,7 +243,14 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
 
     shop_ids = [s["id"] for s in res.data]
-    _cancel_pending_requests(shop_ids)
+    try:
+        _cancel_pending_requests(shop_ids)
+    except Exception:
+        logger.exception("downgrade: pending მოთხოვნების გაუქმება ვერ მოხერხდა (owner=%s)", auth.user_id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "პაკეტი შეიცვალა, მაგრამ მოთხოვნების გაუქმება ვერ მოხერხდა — სცადე ხელახლა.",
+        )
 
     # ბოტის ჭერი უფასო პაკეტზე (free → 1): ყველაზე ძველი ჩართული რჩება, დანარჩენი ითიშება.
     # შეცდომას არ ვყლაპავთ: tier უკვე უფასოა, ზედმეტი ბოტი კი მუშაობს → 500, გამეორება იდემპოტენტურია.
