@@ -1,5 +1,11 @@
-# Vite-ის build გამოსავალი — git-ის ხაზის დაბოლოების ნორმალიზაცია გამორთულია.
-# მიზეზი: build ყოველთვის LF-ს წერს, git კი CRLF-ს აბრუნებდა checkout-ზე —
-# შედეგად ყოველი build 800+ ხაზის უაზრო diff-ს აჩენდა და რეალური ცვლილება
-# (bundle-ის ახალი hash) ხმაურში იკარგებოდა.
-frontend/dist/** -text
+# Single line-ending policy: LF in the repo AND in the working tree (all platforms).
+# Why: frontend/dist/ is committed and CI checks `git diff --exit-code -- dist` after a
+# fresh build. Vite copies frontend/*.html and public/* into dist byte-for-byte, so a CRLF
+# working tree (Windows autocrlf) produced CRLF dist files that differed from CI's LF build.
+* text=auto eol=lf
+*.xlsx binary
+*.html text eol=lf
+*.svg text eol=lf
+*.csv text eol=lf
+*.js text eol=lf
+*.css text eol=lf
