@@ -23,7 +23,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - რამდენიმე Page-ზე წვდომის მიცემისას შემთხვევითი პირველი მიება მაღაზიას → ბოტი არასწორ გვერდზე პასუხობს.
   - ✅ გადაწყვეტილება (მფლობელი, 2026-10-09): ვარიანტი (ა) — >1 გვერდზე უარი, შეტყობინებით: „თავიდან მიაბით და Facebook-ის ფანჯარაში მონიშნეთ მხოლოდ ის გვერდი, რომელზეც ბოტი გინდათ". backend + ახალი reason frontend-ში (`fbConnect.js`) + `npm run build`.
   - Verify: ტესტი 0/1/2+ გვერდზე.
-- [ ] **S11-3 — should-fix: Gemini-ს გამოძახებას timeout არ აქვს** (აუდიტი #21) · `backend/app/services/bot.py` (`get_bot_reply`)
+- [x] **S11-3 — should-fix: Gemini-ს გამოძახებას timeout არ აქვს** (აუდიტი #21) · `backend/app/services/bot.py` (`get_bot_reply`)
   - `genai.Client` `http_options` timeout-ის გარეშეა; ჩამოკიდებული გამოძახება webhook-ის threadpool worker-ს უსასრულოდ იკავებს (4 მცდელობაც დამატებით), კლიენტი პასუხს ვერ იღებს.
   - Fix: `HttpOptions(timeout=…)` (მაგ. 25 წმ) + მთლიანი ბიუჯეტი retry-ებით ≤ ~45 წმ; timeout → არსებული fallback პასუხი.
   - Verify: ტესტი — timeout-ის exception → fallback; retry-ების ბიუჯეტი.
@@ -81,6 +81,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   3. Verification: `select p.proname, p.prosecdef as security_definer, coalesce(array_to_string(p.proacl, E'
 '),'(PUBLIC-საც აქვს!)') as acl from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace where ns.nspname='public' and p.proname='change_order_status';` → 1 მწკრივი, `security_definer=false`, acl-ში `service_role=X/…` და **არა** `=X/…`, `anon=X/…`, `authenticated=X/…`.
   4. Deploy-ის შემდეგ ხელით: `new → processing` (quantity მცირდება), `processing → cancelled` (ბრუნდება), `new → cancelled` (მარაგი არ იცვლება), მეორე ბრაუზერის ტაბიდან მოძველებული სტატუსით → 409.
+- **S11-3:** ახალი არჩევითი env `GEMINI_TIMEOUT_SECONDS` (default 20 წმ; ბიუჯეტი ყველა retry-ზე ჯამში 45 წმ). დამატებითი ნაბიჯი არ სჭირდება, ერთ deploy-ში მიჰყვება. შემოწმება: ბოტი ჩვეულებრივად პასუხობს; timeout-ის ქცევა (fallback პასუხი) ლაივზე რეალურად არ გამოცდილა.
 - **S11-2:** დამატებითი ნაბიჯი არ სჭირდება (backend + `dist/` ერთ deploy-ში). შემოწმება: ორი გვერდის წვდომით connect → ფანჯარაში შეტყობინება „თავიდან მიაბით…"; ერთი გვერდით → ჩვეულებრივად.
 
 ### 🚦 Live-მდე აუცილებელი (მფლობელის სია, 2026-10-09)
