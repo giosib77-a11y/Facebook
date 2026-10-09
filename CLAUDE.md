@@ -18,7 +18,7 @@
 - typecheck: **არ არის** (Python type hints უმოწმებელია; frontend JS-ია)
 - compile check (CI-ში): `cd backend && .venv/Scripts/python.exe -m compileall -q app`
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (114 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
+  (262 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
 - CI: `.github/workflows/ci.yml` — `pip check`, `compileall`, `pytest` (push/PR `main`-ზე)
@@ -33,7 +33,7 @@
   `get_service_client()` მხოლოდ იქ, სადაც სესია არ არის (webhook, საჯარო შეკვეთა, storage, admin) —
   და მაშინ ownership ჯერ `auth.client`-ით მოწმდება ან ფილტრი კოდშია ცხადად.
 - ახალი SECURITY DEFINER ფუნქცია → იმავე მიგრაციაში `REVOKE EXECUTE ... FROM public, anon, authenticated`.
-- ახალი მიგრაცია — შემდეგი ნომრით (`0017_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
+- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0025_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
 - Frontend-ის ცვლილება → `npm run build` და `dist/` იმავე commit-ში. 8 `.html` სახელი არ იცვლება (URL-კონტრაქტი).
 - commit-ის სტილი: `fix(scope): ... (ID)` — აუდიტის მიგნების ID ფრჩხილებში.
 - კოდის comments ბევრგან ქართულადაა — შეინარჩუნე ფაილის არსებული სტილი.

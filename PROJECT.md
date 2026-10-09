@@ -51,8 +51,8 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 - Excel/CSV/PDF ატვირთვა — მხოლოდ ფასიან პაკეტებზე.
 
 ## Data
-Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0022`
-(სია: [README.md](README.md) §7, მოძველებულია 0014-ზე).
+Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0024`
+(სია: [README.md](README.md) §7).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`
 - `orders.items` — JSON პოზიციები; ფული — numeric
@@ -64,7 +64,7 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
   [APP_REVIEW_TEXTS.md](APP_REVIEW_TEXTS.md)
 - **Google Gemini** (`gemini-2.5-flash`) — ბოტის პასუხი, multimodal.
 - **Supabase** — DB, Auth, Storage.
-- **Cloudflare** — DNS/proxy, `CF-Connecting-IP`, origin-lock header.
+- **Render** — hosting, TLS; კლიენტის IP `X-Forwarded-For`-ის მარჯვენა hop-იდან (T17). Cloudflare ამჟამად არ გამოიყენება (origin-lock კოდში ოფციაა, `ORIGIN_SECRET` ცარიელია).
 
 ## Stack & Architecture
 - Complexity tier: მცირე SaaS, ერთი backend instance (modular monolith)
@@ -231,6 +231,18 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Open: Gemini key-ის როტაცია (მფლობელი წყვეტს როდის).
 - Note: `FB_TOKEN_ENCRYPTION_KEY`-ის შეცვლა ყველა ამ key-ით დაშიფრულ token-ს აუქმებს — მომავალში მაღაზიების რაოდენობის გაზრდისას ეს ხელახალი connect-ებს მოითხოვდა.
 
+### 2026-10 — ბოტის ლიმიტი ერთ helper-ში; upgrade request მხოლოდ backend-ით, pending per-account (S12-2, S12-3)
+- Decision: `services/bot_limits.enforce_bot_limit` — ჭერი = მფლობელის უმაღლესი პაკეტი; რჩება **ჩართული** ბოტებიდან ყველაზე ძველი `limit`. იძახება seller downgrade-free-ზე, ადმინის tier-ცვლაზე და upgrade-request approve-ზე (შემდეგ `_restore_bots`). შეცდომა → 500 (tier უკვე შეცვლილია, გამეორება იდემპოტენტურია). `upgrade_requests`-ზე `authenticated`-ს INSERT მოხსნილია (0024), ჩაწერა service client-ით RLS-ownership-ის შემდეგ + rate limit 10/სთ/IP. pending **per-account**: ახალი მოთხოვნა მფლობელის ყველა მაღაზიის ძველ pending-ს აუქმებს (გამოწერა per-account-ია; DB-ში მაღაზიაზე ერთი pending — partial unique).
+- Reason: webhook მხოლოდ `bot_enabled`-ს ამოწმებს, ამიტომ `subscription_tier`-ის შეცვლა ჭერს ვერ იცავდა; პირდაპირი PostgREST INSERT ბაზას/ადმინის სიას უსაზღვროდ ავსებდა.
+
+### 2026-10 — სურათის ჩამოტვირთვა: მთლიანი deadline + მხოლოდ საკუთარი Storage (S12-1, B-12)
+- Decision: `download_image` 15 წმ-იანი მთლიანი ზღვარი (`time.monotonic`); ბოტი საცნობარო ფოტოს მხოლოდ `<SUPABASE_URL>/storage/v1/object/public/product-images/` ბილიკიდან იღებს (UI-დან ფოტო მხოლოდ ატვირთვით მოდის; პირდაპირი PostgREST `image_url` გარე URL-ს ბოტი უგულებელყოფს). კლიენტის FB/IG CDN ფოტოები უცვლელია.
+- Reason: httpx timeout ფაზაზეა → slow-drip სერვერი thread-ს წუთობით იკავებდა (threadpool-ის ამოწურვა); გარე URL ამავდროულად SSRF-ის ზედაპირი იყო.
+
+### 2026-10 — `CLIENT_IP_TRUSTED_HOPS` production-ში სავალდებულოა (S12-4)
+- Decision: default აღარ არის (`None`); production-ში ცარიელი/<1 → startup `RuntimeError` (როგორც სხვა secrets). dev/test-ში 1.
+- Reason: დაკარგული env ჩუმად ყველა მყიდველს ერთ IP-bucket-ში აგდებდა.
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 > 2026-10-09 — გარე აუდიტის (27 პუნქტი) პუნქტები, რომლებიც ახლანდელ კოდში არ დადასტურდა ან ამ მასშტაბისთვის ზედმეტია (მფლობელის მითითებით).
@@ -245,13 +257,17 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - **#13 ფული float-ით** — ფასები 2 ათწილადიანია, რაოდენობა მთელი, ჯამი `round(…, 2)`; float-ის შეცდომა ~1e-13-ია და ნახევარ თეთრს ვერ აღწევს, ამიტომ თეთრამდე შედეგი სწორია; DB-ში `numeric`. გადახედვა: ფასდაკლება/პროცენტები/გადასახადი ან ონლაინ გადახდა → Decimal.
 - **#14 bulk import სრულ ტრანზაქციაში არ არის** — import upsert-ია (SKU/სახელით), ამიტომ ნაწილობრივი შედეგის შემდეგ იგივე ფაილის ხელახალი ატვირთვა მდგომარეობას ასწორებს; შეცდომიანი ფაილი საერთოდ არ იწერება.
 - **#16 admin endpoints ყველაფერს მეხსიერებაში კითხულობს** — ათეულობით მაღაზია (Realistic Scale); ROADMAP: admin pagination. გადახედვა: ათასობით შეკვეთა.
-- **#18 subscription ლიმიტები მხოლოდ application layer-ში** — გამყიდველს ლიმიტიან ცხრილებზე DB-ში პირდაპირი ჩაწერა არ შეუძლია (0015: products INSERT, shops-ის tier/bot სვეტები ჩამორთმეულია; 0017–0019), ამიტომ backend ერთადერთი ჩამწერია. ცნობილი გამონაკლისი — `knowledge` (Backlog A-6).
+- **#18 subscription ლიმიტები მხოლოდ application layer-ში** — გამყიდველს ლიმიტიან ცხრილებზე DB-ში პირდაპირი ჩაწერა არ შეუძლია (0015: products INSERT, shops-ის tier/bot სვეტები ჩამორთმეულია; 0017–0019), ამიტომ backend ერთადერთი ჩამწერია (`knowledge` — 0022, `upgrade_requests` — 0024).
 - **#19 PII retention/deletion policy** — არსებობს: privacy.html §6 (ანგარიში — აქტიურობის განმავლობაში, მოთხოვნისას 30 დღეში; საუბრები — ბოლო N შეტყობინება; შეკვეთები — სანამ გამყიდველი/მაღაზია არ წაშლის) და კოდი ემთხვევა (shop-ზე `on delete cascade` ყველა ცხრილზე, admin delete + Storage cleanup, Meta Data Deletion callback + `delete-data.html`). Meta App Review-ს callback ან ინსტრუქციის URL სჭირდება — ორივე არის. გადახედვა: ავტომატური ვადიანი წაშლის საჭიროება ან კანონის ცვლილება.
 - **#20 Gemini prompt-ში user/seller content** — კლიენტის ტექსტი ცალკე `user` turn-შია და არა system instruction-ში; system-ში მხოლოდ გამყიდველის საკუთარი მონაცემია (მხოლოდ საკუთარ ბოტს აზიანებს); ბოტს ქმედებები (tools) არ აქვს — მხოლოდ ტექსტი. PDF-ცოდნის ამოღება — Backlog B-14.
 - **#22 Gemini output structured schema-ს გარეშე** — პასუხი Messenger-ის თავისუფალი ტექსტია; ერთადერთი სტრუქტურა `[[HANDOFF]]` ნიშანია და `parse_reply` მას ამოწმებს; ცარიელ პასუხზე fallback + handoff (FA-12).
 - **#25 CSP header** — ROADMAP-შია (out of scope); frontend React-ია (escape-ით), user HTML არ რენდერდება. გადახედვა: მესამე მხარის script-ების დამატებისას.
 
+> 2026-10-09 — მესამე აუდიტი (Stage 12), მფლობელის გადაწყვეტილებით.
+- **admin kill-switch-ს გამყიდველი FB-ის ხელახალი connect-ით აუქმებს** (`api/facebook.py` — `bot_enabled = bot_allowed` მხოლოდ პაკეტის ლიმიტს ამოწმებს; `_restore_bots`-იც იგივეს აკეთებს). ახლა ათეულობით გამყიდველია, ბოროტმოსარგებლეს ადმინი მაღაზიის წაშლითაც აჩერებს. გადახედვა: **პირველ რეალურ abuse-ზე** (მაშინ სვეტი `admin_blocked` + შემოწმება connect/webhook/restore-ში).
+- **`SHOP_ORDERS_PER_HOUR=30` მაღაზიაზე საერთოა** (`orders.py`): ორი IP-დან (10/წთ, 20/დღე თითოზე) ~3 წუთში 30 ყალბი შეკვეთა მაღაზიის ფორმას საათით ბლოკავს. შეგნებული trade-off: მაღაზიის შეკვეთების spam-დან დაცვა (F-03B) უფრო მნიშვნელოვანია, ვიდრე ერთი საათის დაბლოკვა; გამყიდველი არსებულ შეკვეთებს ხედავს. გადახედვა: პირველ საჩივარზე.
+- **`get_current_auth` ყოველ მოთხოვნაზე ახალ Supabase client-ს ქმნის** (დახურვის გარეშე): ამ მასშტაბზე (ერთი instance, ათეულობით გამყიდველი) პრობლემა არ ჩანს. გადახედვა: Render-ის მეხსიერების გრაფიკის ზრდა ან მოთხოვნების რაოდენობის ზრდა.
+
 ## Open Questions
-- README §2/§6/§12/§14 მოძველებულია (ADMIN_EMAIL → ADMIN_USER_IDS, „ტესტები არ არსებობს",
-  React 18 → 19, მიგრაციები 14 → 16) — განახლდეს?
+- README §6/§12 მოძველებულია (React 18 → 19). ADMIN_EMAIL, „ტესტები არ არის“ და მიგრაციების სია გასწორდა S12-5-ში — დარჩენილი განახლდეს?
 - Gemini 2.5 Flash retires 2026-10-16 — გადაწყვეტილება გადადებულია (Backlog T12, Decision Log 2026-10); საგანგებო გეგმა Deploy plan-შია.

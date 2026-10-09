@@ -127,7 +127,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │       │   ├── chat.py          /test-chat (მხოლოდ dev)
 │       │   ├── webhook.py       Meta webhook — ბოტის მთავარი შესასვლელი
 │       │   ├── facebook.py      OAuth connect/disconnect · data deletion
-│       │   └── admin.py         მფლობელის პანელი (მხოლოდ ADMIN_EMAIL)
+│       │   └── admin.py         მფლობელის პანელი (მხოლოდ ADMIN_USER_IDS)
 │       ├── core/
 │       │   ├── security.py      Supabase JWT → CurrentAuth (RLS-იანი კლიენტი)
 │       │   ├── supabase_client.py  anon (publishable key) / service (secret key) კლიენტები
@@ -328,13 +328,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `products` | სახელი, ფასი, მარაგი, აღწერა, SKU, ფოტო, აქტიურობა |
 | `orders` | კლიენტის შეკვეთა, პოზიციები (JSON), ჯამი, სტატუსი |
 | `upgrade_requests` | პაკეტის მოთხოვნები (manual billing) |
-| `bot_customers` | უნიკალური კლიენტი თვეში (ლიმიტის მრიცხველი) + handoff-ის ნიშანი |
-| `bot_conversations` | საუბრის მეხსიერება (ბოლო შეტყობინებები) |
+| `bot_customers` | უნიკალური კლიენტი თვეში (ლიმიტის მრიცხველი) |
+| `bot_conversations` | საუბრის მეხსიერება (ბოლო შეტყობინებები) + handoff-ის ნიშანი (`needs_attention`, 0010) |
 
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (22)
+### მიგრაციები (24)
 
 | # | რა |
 |---|---|
@@ -361,6 +361,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0021` | `change_order_status()` — შეკვეთის სტატუსი + მარაგი ერთ ტრანზაქციაში (გაუშვი backend-ის deploy-მდე) |
 | `0022` | 🔒 `orders`: UPDATE სრულად მოხსნილია `authenticated`-დან; `shops.knowledge*`-ზე UPDATE მოხსნილია (ჩაწერა მხოლოდ backend-ით). გაუშვი backend-ის deploy-ის **შემდეგ** |
 | `0023` | `products.price` / `orders.total`: CHECK `< 'Infinity'` — Postgres-ში NaN `>= 0`-ს აკმაყოფილებს, ამიტომ NaN/Infinity ბაზაში ჩაწერა შეიძლებოდა. PRE-CHECK ფაილის თავშია |
+| `0024` | 🔒 `upgrade_requests`: INSERT/UPDATE/DELETE მოხსნილია `authenticated`-დან, პოლისი `ur_owner_insert` იშლება; partial UNIQUE — მაქს. ერთი pending მაღაზიაზე. გაუშვი backend-ის deploy-ის **შემდეგ** |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
 
@@ -523,7 +524,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `APP_ENV` | | `production` | `production` (default, fail-closed) → HSTS, დამალული შეცდომები, `/test-chat` off. ლოკალურად `.env`-ში `APP_ENV=development` |
 | `APP_HOST` · `APP_PORT` | | `0.0.0.0` · `8000` | |
 | `CORS_ORIGINS` | | `*` | production-ში კონკრეტული დომენი |
-| `CLIENT_IP_TRUSTED_HOPS` | | `1` | კლიენტის IP = `X-Forwarded-For`-ის მარჯვნიდან N-ური ჩანაწერი (Render-ზე სწორი N დაადგინე `CLIENT_IP_DEBUG`-ით). `CF-Connecting-IP` იგნორირდება |
+| `CLIENT_IP_TRUSTED_HOPS` | ✅ | — (Render: `3`) | production-ში სავალდებულოა (≥1), სხვაგვარად სერვერი არ ადგება. კლიენტის IP = `X-Forwarded-For`-ის მარჯვნიდან N-ური ჩანაწერი (Render-ზე სწორი N დაადგინე `CLIENT_IP_DEBUG`-ით). `CF-Connecting-IP` იგნორირდება |
 | `CLIENT_IP_DEBUG` | | `false` | დროებით `true` → ერთი INFO ხაზი ლოგში: სრული XFF (≤1000 სიმბ.), entries, peer (არასანდო), hops, resolved IP (10 წმ-ში ერთხელ); შემდეგ გამორთე. production-ში XFF-ის ნაკლებობისას resolved = `unknown` (საერთო key, `peer` არ გამოიყენება — გაყალბებადია) |
 | `LOG_LEVEL` | | `INFO` | `app` logger-ის დონე (stdout-ზე): `DEBUG` / `INFO` / `WARNING` / `ERROR`; არავალიდური → `INFO` |
 | `GEMINI_API_KEY` | ✅ | — | <https://aistudio.google.com/apikey> |
