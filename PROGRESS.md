@@ -79,13 +79,14 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - **K9. გაჟონვის შემდეგ:** გადახედე Supabase Logs/Auth-ს საეჭვო აქტივობაზე (უცნობი მომხმარებლები, მასობრივი წაკითხვა/წაშლა) იმ პერიოდში, როცა key ძალაში იყო; საჭიროებისას ეს ცალკე task იქნება.
 
 ### Stage 11 — Deploy plan
+- ✅ **Stage 11 deploy დასრულდა (მფლობელი): `0d7a129` live** (`main` = `agent-system` = `0d7a129`; S11-1…S11-4, ბრენჩის წესი CLAUDE.md-ში). მიგრაცია 0021 ლაივ ბაზაზე უკვე გაშვებული იყო.
 - **S11-1 (მიგრაცია `0021_change_order_status.sql`) ✅ ლაივ ბაზაზე გაშვებულია და შემოწმებულია (მფლობელი): 1 ფუნქცია, `security_definer=false`, EXECUTE მხოლოდ `postgres` და `service_role`. დარჩა: backend deploy + ქვემოთ ნაბიჯი 4 (ხელით შემოწმება). (ორიგინალი რიგი/პროცედურა:** რიგი — **ჯერ 0021, მერე backend deploy** (ძველი backend 0021-თან მუშაობს; ახალი backend 0021-ის გარეშე სტატუსის შეცვლა სუფთად 400-ს აბრუნებს, მონაცემები უცვლელია.)
   1. PRE-CHECK: `select proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname in ('decrement_stock','apply_stock_delta');` → 2 მწკრივი.
   2. გაუშვი `0021_change_order_status.sql` (იდემპოტენტურია).
   3. Verification: `select p.proname, p.prosecdef as security_definer, coalesce(array_to_string(p.proacl, E'
 '),'(PUBLIC-საც აქვს!)') as acl from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace where ns.nspname='public' and p.proname='change_order_status';` → 1 მწკრივი, `security_definer=false`, acl-ში `service_role=X/…` და **არა** `=X/…`, `anon=X/…`, `authenticated=X/…`.
-  3b. **Smoke-ტესტი (S11-4, გაუშვი deploy-მდე, 0021 უკვე ლაივზეა):** SQL Editor-ში ჩასვი მთელი `supabase/checks/smoke_change_order_status.sql` → RUN. რედაქტორი აჩვენებს „შეცდომას" — ეს ნორმალურია: `SMOKE OK — rolled back` = 12-ვე შემოწმება გავიდა და ბაზაში არაფერი დარჩა (ტრანზაქცია ბათილდება); `SMOKE FAIL: …` = ტექსტი დააკოპირე და deploy გააჩერე; `SMOKE SKIP: no auth.users row` = უნდა არსებობდეს ერთი მომხმარებელი; სხვა შეცდომა (not-null/check/function does not exist) = სქემა/0021 განსხვავდება, ესეც rollback-დება. არჩევითი შემოწმება: `select count(*) from public.shops where name like '\_\_SMOKE\_\_%';` → 0. ⚠️ ფაილი არასდროს გაშვებულა — პირველი გაშვება შენთან.
-  4. Deploy-ის შემდეგ ხელით: `new → processing` (quantity მცირდება), `processing → cancelled` (ბრუნდება), `new → cancelled` (მარაგი არ იცვლება), მეორე ბრაუზერის ტაბიდან მოძველებული სტატუსით → 409.
+  3b. ✅ **გაშვებულია ლაივზე (მფლობელი): `SMOKE OK — rolled back`, სატესტო მონაცემი 0.** **Smoke-ტესტი (S11-4, გაუშვი deploy-მდე, 0021 უკვე ლაივზეა):** SQL Editor-ში ჩასვი მთელი `supabase/checks/smoke_change_order_status.sql` → RUN. რედაქტორი აჩვენებს „შეცდომას" — ეს ნორმალურია: `SMOKE OK — rolled back` = 12-ვე შემოწმება გავიდა და ბაზაში არაფერი დარჩა (ტრანზაქცია ბათილდება); `SMOKE FAIL: …` = ტექსტი დააკოპირე და deploy გააჩერე; `SMOKE SKIP: no auth.users row` = უნდა არსებობდეს ერთი მომხმარებელი; სხვა შეცდომა (not-null/check/function does not exist) = სქემა/0021 განსხვავდება, ესეც rollback-დება. არჩევითი შემოწმება: `select count(*) from public.shops where name like '\_\_SMOKE\_\_%';` → 0. ⚠️ ფაილი არასდროს გაშვებულა — პირველი გაშვება შენთან.
+  4. ✅ (მფლობელი, ლაივზე) პანელში მარაგი: 102 → `processing` 100 → `cancelled` 102. დარჩა არადადასტურებული: `new → cancelled` (მარაგი უცვლელი) და მოძველებული სტატუსით 409. Deploy-ის შემდეგ ხელით: `new → processing` (quantity მცირდება), `processing → cancelled` (ბრუნდება), `new → cancelled` (მარაგი არ იცვლება), მეორე ბრაუზერის ტაბიდან მოძველებული სტატუსით → 409.
 - **S11-3:** ახალი არჩევითი env `GEMINI_TIMEOUT_SECONDS` (default 20 წმ; ბიუჯეტი ყველა retry-ზე ჯამში 45 წმ). დამატებითი ნაბიჯი არ სჭირდება, ერთ deploy-ში მიჰყვება. შემოწმება: ბოტი ჩვეულებრივად პასუხობს; timeout-ის ქცევა (fallback პასუხი) ლაივზე რეალურად არ გამოცდილა.
 - **S11-2:** დამატებითი ნაბიჯი არ სჭირდება (backend + `dist/` ერთ deploy-ში). შემოწმება: ორი გვერდის წვდომით connect → ფანჯარაში შეტყობინება „თავიდან მიაბით…"; ერთი გვერდით → ჩვეულებრივად.
 
@@ -96,8 +97,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 3. **`CORS_ORIGINS=https://chatassist.ge`** Render-ზე (Accepted Risks #11).
 4. **Gemini billing ჩართული** (free tier = 5 მოთხოვნა/წთ; ტრაფიკზე ბოტი 429-ს დააბრუნებს — `PROJECT.md` Constraints) + **Gemini key-ის როტაცია** (ღიაა, იხ. ზემოთ ნაბიჯი 7).
 5. **Gemini მოდელი** — `gemini-2.5-flash` 2026-10-16-ს ითიშება: გადაწყვეტილება/საგანგებო ნაბიჯი 6 (Backlog T12).
-6. **Stage 11-ის deploy:** S11-1 (0021 ✅ გაშვებულია → backend deploy), S11-2, S11-3 + მათი ხელით შემოწმებები.
-7. **ნაბიჯი 5-ის დარჩენილი ხელით შემოწმებები** (მარაგი processing/cancelled-ზე; `/status` → `env=production`; CI GitHub-ზე; `select count(*) from public.orders;`).
+6. ✅ **Stage 11-ის deploy** (`0d7a129` live). ხელით შემოწმებული: მარაგი processing/cancelled-ზე (102 → 100 → 102) და smoke SQL (`SMOKE OK`). დაუდასტურებელი: S11-2 (ორი გვერდით connect-ის უარი ბრაუზერში), S11-3 (timeout-ის ქცევა რეალურად), `new → cancelled`, 409 მოძველებულ სტატუსზე.
+7. **ნაბიჯი 5-ის დარჩენილი ხელით შემოწმებები** (✅ მარაგი processing/cancelled-ზე; დარჩა: `/status` → `env=production`; CI GitHub-ზე; `select count(*) from public.orders;`).
 8. **K9:** Supabase Logs/Auth-ის გადახედვა გაჟონვის პერიოდისთვის.
 9. **Meta (README §2):** Business Verification ⏳ → App Review ⬜ → Development → Live ⬜. Review-ისთვის: Privacy/Terms/Data Deletion URL-ები და callback არსებობს (Accepted Risks #19).
 
@@ -186,7 +187,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: მფლობელი — Deploy plan-ის ნაბიჯები 5–8 (ხელით შემოწმებები, 2026-10-16 საგანგებო გეგმა, key-ების როტაცია); კოდის task-ები დასრულებულია
+- Next: Stage 11 დასრულებულია და deploy-ნია; მფლობელი — „Live-მდე აუცილებელი" სია (PAYMENT_*, CORS_ORIGINS, Gemini billing/key/მოდელი 2026-10-16, Render Starter, K9, Meta Live)
 
 ## Stage 10 — Done
 - [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS: ruff + pytest დამატებულია, hook-ით შემოწმებული)
