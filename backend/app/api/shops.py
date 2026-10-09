@@ -436,8 +436,10 @@ def upload_knowledge(
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
+    # ჩაწერა service client-ით (0022: authenticated-ს knowledge* სვეტებზე UPDATE აღარ აქვს);
+    # მფლობელობა ზემოთ auth.client-ის RLS select-ით უკვე დადასტურდა.
     res = run(
-        auth.client.table("shops")
+        get_service_client().table("shops")
         .update({"knowledge": text, "knowledge_filename": (file.filename or "")[:255]})
         .eq("id", str(shop_id))
     )
@@ -449,8 +451,13 @@ def upload_knowledge(
 @router.delete("/{shop_id}/knowledge", response_model=ShopOut)
 def clear_knowledge(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
     """შლის მაღაზიის ცოდნას (PDF-ინფოს)."""
+    # მფლობელობა RLS-ით (auth.client); ჩაწერა service client-ით (0022: authenticated-ს
+    # knowledge* სვეტებზე UPDATE აღარ აქვს), ამიტომ ფილტრი `id` კოდში ცხადია.
+    owned = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owned.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     res = run(
-        auth.client.table("shops")
+        get_service_client().table("shops")
         .update({"knowledge": None, "knowledge_filename": None})
         .eq("id", str(shop_id))
     )
