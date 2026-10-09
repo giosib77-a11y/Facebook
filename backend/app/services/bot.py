@@ -234,7 +234,7 @@ def _fetch_product_images(products, customer_images=None, max_images: int = 12):
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from app.services.facebook import download_image
+    from app.services.facebook import download_image, is_own_storage_image_url
 
     remaining = INLINE_IMAGE_BUDGET - sum(len(data) for data, _ in customer_images or [])
     if remaining <= 0:
@@ -243,7 +243,8 @@ def _fetch_product_images(products, customer_images=None, max_images: int = 12):
     # კანდიდატები — მხოლოდ ფოტოიანი, max_images-მდე
     candidates = []
     for p in products or []:
-        if (p.get("image_url") or "").strip():
+        # მხოლოდ საკუთარი Storage-ის ფოტო (B-12): გარე URL-ზე სერვერი არ გადის
+        if is_own_storage_image_url((p.get("image_url") or "").strip()):
             candidates.append(p)
         if len(candidates) >= max_images:
             break

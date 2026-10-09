@@ -320,6 +320,29 @@ def _is_public_http_url(url: str) -> bool:
     return True
 
 
+PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
+
+
+def is_own_storage_image_url(url: str | None) -> bool:
+    """True — URL ამ პროექტის Supabase Storage-ის `product-images` საჯარო ბილიკზეა.
+
+    გამყიდველს `products.image_url`-ის პირდაპირი ჩაწერა PostgREST-ით შეუძლია (0015),
+    ამიტომ ბოტი საცნობარო ფოტოს მხოლოდ საკუთარი Storage-იდან იღებს (UI-დან
+    ფოტო ყოველთვის ატვირთვით მოდის). გარე URL-ზე სერვერი საერთოდ არ გადის.
+    """
+    base = (get_settings().supabase_url or "").rstrip("/")
+    if not base or not url:
+        return False
+    prefix = f"{base}/storage/v1/object/public/{PRODUCT_IMAGES_BUCKET}/"
+    return url.startswith(prefix) and ".." not in url
+
+
+# მთლიანი ჩამოტვირთვის ზღვარი (წმ). httpx-ის timeout ფაზაზეა (connect/read/…), ამიტომ
+# slow-drip სერვერი (1 ბაიტი რამდენიმე წამში) ნაკადს განუსაზღვრელად გააჭიანურებდა და
+# threadpool-ის თრედს დაიკავებდა.
+_DOWNLOAD_DEADLINE_SECONDS = 15.0
+
+
 def download_image(
     url: str, max_bytes: int = 8 * 1024 * 1024, timeout: float = 20
 ) -> tuple[bytes, str] | None:
@@ -335,7 +358,11 @@ def download_image(
          მთლიანად ჩამოტვირთავდა და მერე ამოწმებდა ზომას).
     """
     current = url
+    deadline = time.monotonic() + _DOWNLOAD_DEADLINE_SECONDS
     for _ in range(_MAX_REDIRECTS + 1):
+        if time.monotonic() >= deadline:
+            logger.warning("სურათის ჩამოტვირთვა: დრო ამოიწურა")
+            return None
         if not _is_public_http_url(current):
             logger.warning("სურათის ჩამოტვირთვა დაიბლოკა (არასაჯარო მისამართი): %.120s", current)
             return None
@@ -357,6 +384,9 @@ def download_image(
             buf = bytearray()
             for chunk in r.iter_bytes():
                 buf.extend(chunk)
+                if time.monotonic() >= deadline:
+                    logger.warning("სურათის ჩამოტვირთვა: დრო ამოიწურა (%d ბაიტი)", len(buf))
+                    return None
                 if len(buf) > max_bytes:
                     logger.warning("სურათი ჭერს გადააჭარბა (%d ბაიტი) — შეწყდა", len(buf))
                     return None

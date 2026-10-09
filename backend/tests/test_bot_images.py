@@ -21,6 +21,8 @@ def fake_download(monkeypatch):
         return b"x" * sizes[url], "image/jpeg"
 
     monkeypatch.setattr(app.services.facebook, "download_image", fake)
+    # these tests are about the byte budget, not URL origin (see test_image_download.py)
+    monkeypatch.setattr(app.services.facebook, "is_own_storage_image_url", lambda url: True)
     return sizes, calls
 
 
