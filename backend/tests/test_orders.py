@@ -213,6 +213,7 @@ def test_o14_21st_request_same_ip_shop_blocked_and_400s_count(client, service_db
 
 
 # ---------- B-1/F-06: stock is taken atomically on entering processing/done ----------
+import pytest  # noqa: E402
 from postgrest.exceptions import APIError  # noqa: E402
 
 ORDER_ID = "55555555-5555-5555-5555-555555555555"
@@ -232,37 +233,58 @@ def _order_row(status):
     }
 
 
-def _setup_status_change(user_db, service_db, old_status, new_status, update_matches=True):
-    user_db.responses[("orders", "select")] = [
-        {"status": old_status, "items": ORDER_ITEMS, "shop_id": SHOP_ID}
-    ]
-    if update_matches:
-        user_db.responses[("orders", "update")] = [_order_row(new_status)]
-    service_db.responses[("products", "select")] = [{"id": PRODUCT_ID}]
+def _setup_status_change(user_db, service_db, old_status, new_status):
+    """Ownership read goes through user_db (RLS); the transactional RPC through service_db."""
+    user_db.responses[("orders", "select")] = [{"status": old_status, "shop_id": SHOP_ID}]
+    service_db.rpc_responses["change_order_status"] = _order_row(new_status)
 
 
 def _rpcs(db, fn):
     return [c for c in db.rpc_calls if c.fn == fn]
 
 
-def _take_params():
-    return {"p_shop_id": SHOP_ID, "p_items": [{"product_id": PRODUCT_ID, "quantity": 2}]}
+def _expected_params(old, new):
+    return {
+        "p_order_id": ORDER_ID,
+        "p_shop_id": SHOP_ID,
+        "p_expected_old": old,
+        "p_new": new,
+    }
 
 
-def test_s1_new_to_processing_decrements_atomically(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "new", "processing")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+def _assert_only_rpc(user_db, service_db, old, new):
+    """Status+stock are ONE RPC; the backend does no separate stock/status writes."""
+    calls = _rpcs(service_db, "change_order_status")
+    assert len(calls) == 1
+    assert calls[0].params == _expected_params(old, new)
+    assert len(service_db.rpc_calls) == 1  # no decrement_stock / apply_stock_delta from Python
+    assert user_db.calls_for("orders", "update") == []
+    assert user_db.rpc_calls == []
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("new", "processing"),
+        ("processing", "cancelled"),
+        ("new", "cancelled"),
+        ("done", "cancelled"),
+        ("processing", "done"),
+        ("cancelled", "processing"),
+        ("processing", "new"),
+    ],
+)
+def test_s1_status_change_is_single_rpc(client, user_db, service_db, old, new):
+    _setup_status_change(user_db, service_db, old, new)
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": new})
     assert res.status_code == 200, res.text
-    dec = _rpcs(service_db, "decrement_stock")
-    assert len(dec) == 1
-    assert dec[0].params == _take_params()
-    assert len(user_db.calls_for("orders", "update")) == 1
-    assert _rpcs(service_db, "apply_stock_delta") == []
+    assert res.json()["status"] == new
+    _assert_only_rpc(user_db, service_db, old, new)
 
 
-def test_s2_processing_with_insufficient_stock_is_409(client, user_db, service_db):
+def test_s2_insufficient_stock_is_409(client, user_db, service_db):
     _setup_status_change(user_db, service_db, "new", "processing")
-    service_db.rpc_errors["decrement_stock"] = APIError(
+    service_db.rpc_errors["change_order_status"] = APIError(
         {"message": "INSUFFICIENT_STOCK|Test Product|1", "code": "P0001"}
     )
     res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
@@ -271,70 +293,85 @@ def test_s2_processing_with_insufficient_stock_is_409(client, user_db, service_d
         "შეკვეთის დადასტურება შეუძლებელია — მარაგი არასაკმარისია: Test Product"
     )
     assert user_db.calls_for("orders", "update") == []
-    assert _rpcs(service_db, "apply_stock_delta") == []
 
 
-def test_s3_status_conflict_returns_taken_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "new", "processing", update_matches=False)
+def test_s3_status_changed_is_409(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
+    service_db.rpc_errors["change_order_status"] = APIError(
+        {"message": "STATUS_CHANGED", "code": "P0001"}
+    )
     res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
     assert res.status_code == 409, res.text
     assert "სტატუსი ამასობაში შეიცვალა" in res.json()["detail"]
-    assert len(_rpcs(service_db, "decrement_stock")) == 1
-    comp = _rpcs(service_db, "apply_stock_delta")
-    assert len(comp) == 1
-    assert comp[0].params == {**_take_params(), "p_sign": 1}
 
 
-def test_s4_cancel_from_new_does_not_touch_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "new", "cancelled")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
-    assert res.status_code == 200, res.text
+def test_s4_product_not_found_is_409(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
+    service_db.rpc_errors["change_order_status"] = APIError(
+        {"message": "PRODUCT_NOT_FOUND", "code": "P0001"}
+    )
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 409, res.text
+    assert "პროდუქტები ამასობაში შეიცვალა" in res.json()["detail"]
+
+
+def test_s5_order_deleted_meanwhile_is_404(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
+    service_db.rpc_errors["change_order_status"] = APIError(
+        {"message": "ORDER_NOT_FOUND", "code": "P0001"}
+    )
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 404, res.text
+
+
+def test_s6_unknown_rpc_error_is_400(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
+    service_db.rpc_errors["change_order_status"] = APIError(
+        {"message": "boom", "code": "XX000"}
+    )
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 400, res.text
+
+
+def test_s7_missing_rpc_fails_cleanly(client, user_db, service_db):
+    """0021 not applied yet: PostgREST says the function is missing -> clean 400, no crash."""
+    _setup_status_change(user_db, service_db, "new", "processing")
+    service_db.rpc_errors["change_order_status"] = APIError(
+        {"message": "Could not find the function public.change_order_status", "code": "PGRST202"}
+    )
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 400, res.text
+
+
+def test_s8_connection_failure_is_500_not_partial(client, user_db, service_db):
+    _setup_status_change(user_db, service_db, "new", "processing")
+    service_db.rpc_errors["change_order_status"] = ConnectionError("down")
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 500, res.text
+    assert user_db.calls_for("orders", "update") == []
+
+
+def test_s9_foreign_order_is_404_and_rpc_never_called(client, user_db, service_db):
+    user_db.responses[("orders", "select")] = []  # RLS hides another seller's order
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
+    assert res.status_code == 404, res.text
     assert service_db.rpc_calls == []
+    assert user_db.rpc_calls == []
 
 
-def test_s5_cancel_from_processing_returns_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "processing", "cancelled")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
-    assert res.status_code == 200, res.text
-    assert _rpcs(service_db, "decrement_stock") == []
-    delta = _rpcs(service_db, "apply_stock_delta")
-    assert len(delta) == 1
-    assert delta[0].params == {**_take_params(), "p_sign": 1}
-
-
-def test_s6_cancel_from_done_returns_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "done", "cancelled")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "cancelled"})
-    assert res.status_code == 200, res.text
-    assert len(_rpcs(service_db, "apply_stock_delta")) == 1
-
-
-def test_s7_processing_to_done_leaves_stock_alone(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "processing", "done")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "done"})
-    assert res.status_code == 200, res.text
-    assert service_db.rpc_calls == []
-
-
-def test_s8_reopen_cancelled_to_new_takes_no_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "cancelled", "new")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
-    assert res.status_code == 200, res.text
-    assert service_db.rpc_calls == []
-
-
-def test_s9_reopen_cancelled_to_processing_takes_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "cancelled", "processing")
+def test_s10_shop_id_comes_from_rls_verified_row(client, user_db, service_db):
+    other = "99999999-9999-9999-9999-999999999999"
+    user_db.responses[("orders", "select")] = [{"status": "new", "shop_id": other}]
+    service_db.rpc_responses["change_order_status"] = _order_row("processing")
     res = client.patch(f"/orders/{ORDER_ID}", json={"status": "processing"})
     assert res.status_code == 200, res.text
-    assert len(_rpcs(service_db, "decrement_stock")) == 1
+    assert _rpcs(service_db, "change_order_status")[0].params["p_shop_id"] == other
 
 
-def test_s10_processing_back_to_new_returns_stock(client, user_db, service_db):
-    _setup_status_change(user_db, service_db, "processing", "new")
-    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "new"})
-    assert res.status_code == 200, res.text
-    assert len(_rpcs(service_db, "apply_stock_delta")) == 1
+def test_s11_invalid_status_rejected_before_any_db_call(client, user_db, service_db):
+    res = client.patch(f"/orders/{ORDER_ID}", json={"status": "bogus"})
+    assert res.status_code == 422, res.text
+    assert service_db.rpc_calls == []
 
 
 # ---------- F-07: only terminal orders can be deleted (stock stays reserved) ----------

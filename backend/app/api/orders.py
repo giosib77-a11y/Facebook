@@ -36,7 +36,7 @@ register_window(_ORDER_DAY_BUCKET, _ORDER_DAY_WINDOW)  # sweep-მა დღი�
 
 # მარაგი იკლებს მხოლოდ `new → processing` (ან სხვა „დაკავებულ“ სტატუსზე) გადასვლისას (B-1):
 # „new“ შეკვეთა მარაგს არ ეხება, ამიტომ ყალბი საჯარო შეკვეთით მარაგს ვერავინ განულებს.
-STOCK_HELD_STATUSES = ("processing", "done")
+# წესი DB-შია (change_order_status, migration 0021): დაკავებული სტატუსებია processing/done.
 
 # წაშლა მხოლოდ დასრულებულ სტატუსებზე (F-07): new/processing აქტიურია. processing-ის მარაგი
 # დაკლებულია (გაუქმებისას ბრუნდება); new-ის მარაგს არ ეხება, გაუქმებისას არაფერი ბრუნდება.
@@ -49,119 +49,6 @@ def _valid_phone(phone: str | None) -> bool:
     if not p or not _PHONE_CHARS.fullmatch(p):
         return False
     return 9 <= sum(c.isdigit() for c in p) <= 15
-
-
-def _apply_stock_delta(sc, shop_id: str, items: list, sign: int) -> None:
-    """მარაგის კორექცია: sign=-1 (შეკვეთა, გამოკლება) ან +1 (გაუქმება, დაბრუნება).
-
-    ⚠️ რევიუ P1-5: ჯერ ატომურ RPC-ს ვცდით (migration 0013). თუ ის ჯერ არ გაშვებულა,
-    ძველ „წაიკითხე → ჩაწერე" გზაზე ვბრუნდებით — ე.ი. deploy მიგრაციამდეც უსაფრთხოა
-    (იგივე შაბლონი, რაც `_decrement_stock_atomic`-ს აქვს 0009-ისთვის).
-    """
-    agg: dict[str, int] = {}
-    for it in items:
-        pid = it.get("product_id")
-        if pid:
-            agg[pid] = agg.get(pid, 0) + int(it.get("quantity", 0))
-    if not agg:
-        return
-
-    # --- ატომური გზა (სასურველი) ---
-    try:
-        sc.rpc(
-            "apply_stock_delta",
-            {
-                "p_shop_id": str(shop_id),
-                "p_items": [{"product_id": k, "quantity": v} for k, v in agg.items()],
-                "p_sign": int(sign),
-            },
-        ).execute()
-        return
-    except APIError as e:
-        msg = getattr(e, "message", None) or str(e)
-        code = getattr(e, "code", None)
-        if not (code in ("42883", "PGRST202") or "does not exist" in msg or "Could not find" in msg):
-            logger.warning("apply_stock_delta RPC ჩავარდა (shop=%s): %s", shop_id, msg)
-            raise
-        # ფუნქცია ჯერ არ არსებობს → legacy გზა ქვემოთ
-    except Exception:
-        logger.warning("apply_stock_delta RPC მიუწვდომელია (shop=%s)", shop_id, exc_info=True)
-        raise
-
-    # --- legacy გზა (არა-ატომური; მხოლოდ 0013-ის გაშვებამდე) ---
-    rows = (
-        sc.table("products")
-        .select("id,quantity")
-        .eq("shop_id", str(shop_id))
-        .in_("id", list(agg.keys()))
-        .execute()
-        .data
-    )
-    for r in rows:
-        new_q = int(r["quantity"]) + sign * agg[r["id"]]
-        if new_q < 0:
-            new_q = 0
-        sc.table("products").update({"quantity": new_q}).eq("id", r["id"]).execute()
-
-
-def _take_stock(sc, shop_id: str, items: list) -> list:
-    """მარაგის დაკავება შეკვეთის დადასტურებისას (new → processing, ასევე F-06 reopen):
-    ატომური აღება decrement_stock-ით (ყველაფერი ან არაფერი) — apply_stock_delta(-1)-ის greatest(0, …) აღარ მალავს დეფიციტს.
-
-    წაშლილ პროდუქტს ვტოვებთ (როგორც ძველ გზაზე). აბრუნებს რეალურად დაკლებულ
-    ჩანაწერებს — კომპენსაციისთვის. არასაკმარის მარაგზე → 409, მარაგი უცვლელი.
-    """
-    agg: dict[str, int] = {}
-    for it in items:
-        pid = it.get("product_id")
-        qty = int(it.get("quantity", 0))
-        if pid and qty > 0:
-            agg[pid] = agg.get(pid, 0) + qty
-    if not agg:
-        return []
-    existing = {
-        r["id"]
-        for r in sc.table("products")
-        .select("id")
-        .eq("shop_id", str(shop_id))
-        .in_("id", list(agg.keys()))
-        .execute()
-        .data
-    }
-    req_items = [{"product_id": k, "quantity": v} for k, v in agg.items() if k in existing]
-    if not req_items:
-        return []
-    try:
-        sc.rpc("decrement_stock", {"p_shop_id": str(shop_id), "p_items": req_items}).execute()
-    except APIError as e:
-        msg = getattr(e, "message", None) or str(e)
-        m = re.search(r"INSUFFICIENT_STOCK\|(.*?)\|(\d+)", msg)
-        if m:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                f"შეკვეთის დადასტურება შეუძლებელია — მარაგი არასაკმარისია: {m.group(1)}",
-            )
-        if "PRODUCT_NOT_FOUND" in msg:
-            # პროდუქტი წაიშალა შემოწმებასა და დაკლებას შორის
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "შეკვეთის პროდუქტები ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
-            )
-        logger.warning("decrement_stock (status change) ჩავარდა (shop=%s): %s", shop_id, msg)
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მარაგის განახლება ვერ მოხერხდა")
-    return req_items
-
-
-def _return_taken_stock(shop_id: str, taken: list) -> None:
-    """დაკავებული მარაგის დაბრუნება, თუ სტატუსი ვერ განახლდა."""
-    try:
-        _apply_stock_delta(get_service_client(), shop_id, taken, +1)
-    except Exception:
-        logger.exception(
-            "მარაგის კომპენსაცია ჩავარდა შეკვეთის აღდგენის ჩავარდნის შემდეგ "
-            "(shop=%s) — მარაგი ხელით უნდა გასწორდეს: %s",
-            shop_id, taken,
-        )
 
 
 # ---------- საჯარო (კლიენტი, ავტორიზაციის გარეშე) ----------
@@ -367,57 +254,60 @@ def update_order_status(
     მარაგი იკლებს, როცა შეკვეთა `new/cancelled`-დან `processing/done`-ზე გადადის
     (ატომურად; არასაკმარის მარაგზე 409); `processing/done`-დან გასვლისას (მაგ. გაუქმება)
     უკან ბრუნდება. `new` შეკვეთა მარაგს არ ეხება."""
-    # მიმდინარე მდგომარეობა (RLS ადასტურებს მფლობელობას)
+    # მიმდინარე მდგომარეობა (RLS ადასტურებს მფლობელობას) — ეს ყოველთვის პირველია.
     cur = run(
         auth.client.table("orders")
-        .select("status,items,shop_id")
+        .select("status,shop_id")
         .eq("id", str(order_id))
         .limit(1)
     )
     if not cur.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი")
     old_status = cur.data[0]["status"]
-    items = cur.data[0].get("items") or []
-    shop_id = cur.data[0]["shop_id"]
-    new_status = payload.status
+    shop_id = cur.data[0]["shop_id"]  # RLS-ით დადასტურებული მაღაზია
 
-    # მარაგის დაკავება (new → processing; F-06 reopen cancelled → processing): ჯერ
-    # ატომურად ავიღოთ — თუ არ ჰყოფნის, 409 და სტატუსი უცვლელი რჩება.
-    was_held = old_status in STOCK_HELD_STATUSES
-    now_held = new_status in STOCK_HELD_STATUSES
-    taken: list = []
-    if now_held and not was_held:
-        taken = _take_stock(get_service_client(), shop_id, items)
-
-    # ⚠️ ოპტიმისტური ჩაკეტვა (რევიუ P1-4): განახლება მხოლოდ მაშინ გაივლის, თუ
-    # სტატუსი ისევ ის არის, რაც ზემოთ წავიკითხეთ. ამის გარეშე ორი ერთდროული
-    # მოთხოვნა (ორი ტაბი/მოწყობილობა) ორივე გაივლიდა და მარაგი ორჯერ დაბრუნდებოდა.
+    # სტატუსი + მარაგი ერთ DB ტრანზაქციაში (migration 0021): ჩაკეტვა, სტატუსის შემოწმება,
+    # მარაგის აღება/დაბრუნება და განახლება ერთად — ნაწილობრივი შედეგი არ რჩება.
     try:
-        res = run(
-            auth.client.table("orders")
-            .update({"status": new_status})
-            .eq("id", str(order_id))
-            .eq("status", old_status)
+        res = (
+            get_service_client()
+            .rpc(
+                "change_order_status",
+                {
+                    "p_order_id": str(order_id),
+                    "p_shop_id": str(shop_id),
+                    "p_expected_old": old_status,
+                    "p_new": payload.status,
+                },
+            )
+            .execute()
         )
+    except APIError as e:
+        msg = getattr(e, "message", None) or str(e)
+        m = re.search(r"INSUFFICIENT_STOCK\|(.*?)\|(\d+)", msg)
+        if m:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"შეკვეთის დადასტურება შეუძლებელია — მარაგი არასაკმარისია: {m.group(1)}",
+            )
+        if "PRODUCT_NOT_FOUND" in msg:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "შეკვეთის პროდუქტები ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
+            )
+        if "STATUS_CHANGED" in msg:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "შეკვეთის სტატუსი ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
+            )
+        if "ORDER_NOT_FOUND" in msg:  # წაიშალა წაკითხვასა და RPC-ს შორის
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "შეკვეთა ვერ მოიძებნა ან არ არის თქვენი")
+        logger.warning("change_order_status ჩავარდა (shop=%s, order=%s): %s", shop_id, order_id, msg)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "სტატუსის განახლება ვერ მოხერხდა")
     except Exception:
-        if taken:
-            _return_taken_stock(shop_id, taken)
-        raise
-    if not res.data:
-        if taken:
-            _return_taken_stock(shop_id, taken)
-        # ჩანაწერი არსებობს (ზემოთ წავიკითხეთ), ე.ი. სტატუსი სხვამ შეცვალა.
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "შეკვეთის სტატუსი ამასობაში შეიცვალა — განაახლე გვერდი და სცადე ხელახლა.",
-        )
-
-    # დაკავებული მარაგის დაბრუნება (processing/done → cancelled/new). `new`-იდან
-    # გაუქმებისას არაფერი ბრუნდება — მარაგი არ ჩამოგვიწერია.
-    if was_held and not now_held:
-        _apply_stock_delta(get_service_client(), shop_id, items, +1)
-
-    return res.data[0]
+        logger.exception("change_order_status RPC მიუწვდომელია (shop=%s, order=%s)", shop_id, order_id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "სტატუსის განახლება ვერ მოხერხდა")
+    return res.data
 
 
 @router.delete("/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)

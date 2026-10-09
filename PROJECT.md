@@ -51,7 +51,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 - Excel/CSV/PDF ატვირთვა — მხოლოდ ფასიან პაკეტებზე.
 
 ## Data
-Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0020`
+Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0021`
 (სია: [README.md](README.md) §7, მოძველებულია 0014-ზე).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`
@@ -204,6 +204,12 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Live result (2026-10-08, მფლობელი): `CLIENT_IP_TRUSTED_HOPS=3`; Render-ზე XFF ჯაჭვი = `<ყალბი>, <კლიენტი>, <Render-ის Cloudflare>, <Render-ის შიდა>` — კლიენტი მარჯვნიდან მე-3 ჩანაწერია; გაყალბებული ჩანაწერები მარცხნივ რჩება და resolved IP-ზე გავლენას არ ახდენს.
 - Alternatives considered: `--no-proxy-headers`; `--forwarded-allow-ips` კონკრეტული CIDR-ით (მხოლოდ XFF ჯაჭვის რეალური ფორმის გაგების შემდეგ).
 - Why rejected: პირველი — redirect-ის რისკი, მეორე — ჯერ გაუგებარი ჯაჭვი; მიმდინარე გადაწყვეტა ამას გარეშე ხურავს გაყალბებას.
+
+### 2026-10 — შეკვეთის სტატუსი + მარაგი ერთ DB ტრანზაქციაში (S11-1)
+- Context: `update_order_status` სტატუსსა და მარაგს ცალ-ცალკე ცვლიდა; სტატუსის შეცვლის შემდეგ მარაგის დაბრუნების ჩავარდნა (`processing/done → cancelled`) მარაგს კარგავდა და 500-ს აბრუნებდა.
+- Decision: RPC `public.change_order_status(order, shop, expected_old, new)` (migration 0021, SECURITY INVOKER, EXECUTE მხოლოდ service_role) — `FOR UPDATE` + სტატუსის შემოწმება + `decrement_stock`/`apply_stock_delta(+1)` + UPDATE ერთ ტრანზაქციაში. backend ჯერ ownership-ს `auth.client`-ით (RLS) ამოწმებს, RPC-ს service client-ით იძახებს RLS-ით დადასტურებული `shop_id`-თ. მარაგის წესი უცვლელია (იკლებს მხოლოდ new/cancelled → processing/done). შეცდომები: `INSUFFICIENT_STOCK|…`, `PRODUCT_NOT_FOUND`, `STATUS_CHANGED`, `ORDER_NOT_FOUND`.
+- Run order: ჯერ 0021, მერე backend deploy (ძველი backend 0021-თან მუშაობს; ახალი 0021-ის გარეშე სტატუსის შეცვლაზე 500, მონაცემები უცვლელი).
+- Alternatives considered: backend-ში კომპენსაცია/retry. Why rejected: შუალედური მდგომარეობა და ჩავარდნა მაინც რჩება; DB ტრანზაქცია მარტივია.
 
 ### 2026-10-09 — საიდუმლოების როტაცია გაჟონვის შემდეგ
 - Done (მფლობელი, ლაივზე): Supabase → ახალი `sb_publishable_`/`sb_secret_` key-ები, legacy JWT key-ები გამორთულია (ძველი anon-ით REST → 401); `FB_APP_SECRET` შეცვლილია; `FB_TOKEN_ENCRYPTION_KEY` შეცვლილია — ძველით დაშიფრული page token-ები გამოუსადეგარი გახდა და Facebook/Instagram-მიბმული ერთადერთი მაღაზია ხელახლა დაუკავშირდა (ბოტი პასუხობს).

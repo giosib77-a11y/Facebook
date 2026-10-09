@@ -15,11 +15,11 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 -->
 
 ## Tasks
-- [ ] **S11-1 — should-fix: შეკვეთის სტატუსი და მარაგი ერთ ტრანზაქციაში** (აუდიტი #2) · `backend/app/api/orders.py` (`update_order_status`), მიგრაცია `0021`
+- [x] **S11-1 — should-fix: შეკვეთის სტატუსი და მარაგი ერთ ტრანზაქციაში** (აუდიტი #2) · `backend/app/api/orders.py` (`update_order_status`), მიგრაცია `0021`
   - ახლა: სტატუსი `auth.client`-ით ახლდება, მარაგი ცალკე RPC-ით (`_take_stock` წინ, `_apply_stock_delta(+1)` შემდეგ). `processing/done → cancelled`-ზე, თუ სტატუსი შეიცვალა და მარაგის დაბრუნება ჩავარდა → შეკვეთა გაუქმებულია, მარაგი არ დაბრუნდა, პასუხი 500 (კომპენსაცია მხოლოდ აღების მხარეს არსებობს).
   - Fix: ერთი Postgres ფუნქცია (`change_order_status(order_id, expected_old, new)`) — სტატუსის ოპტიმისტური ჩაკეტვა + მარაგის აღება/დაბრუნება ერთ ტრანზაქციაში; იძახება service client-ით მხოლოდ `auth.client`-ით ownership-ის შემოწმების შემდეგ; `REVOKE EXECUTE … FROM public, anon, authenticated`. Python-ის კომპენსაციის ლოგიკა ქრება.
   - Verify: offline ტესტები (RPC-ის შეცდომის კოდები → 409/400), SQL verification query; მიგრაციას მფლობელი უშვებს.
-- [ ] **S11-2 — should-fix: Facebook OAuth ავტომატურად `pages[0]`-ს იღებს** (აუდიტი #8) · `backend/app/api/facebook.py` (connect callback)
+- [x] **S11-2 — should-fix: Facebook OAuth ავტომატურად `pages[0]`-ს იღებს** (აუდიტი #8) · `backend/app/api/facebook.py` (connect callback)
   - რამდენიმე Page-ზე წვდომის მიცემისას შემთხვევითი პირველი მიება მაღაზიას → ბოტი არასწორ გვერდზე პასუხობს.
   - ✅ გადაწყვეტილება (მფლობელი, 2026-10-09): ვარიანტი (ა) — >1 გვერდზე უარი, შეტყობინებით: „თავიდან მიაბით და Facebook-ის ფანჯარაში მონიშნეთ მხოლოდ ის გვერდი, რომელზეც ბოტი გინდათ". backend + ახალი reason frontend-ში (`fbConnect.js`) + `npm run build`.
   - Verify: ტესტი 0/1/2+ გვერდზე.
@@ -73,6 +73,15 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - **K7. legacy key-ების გამორთვა:** ✅ (მფლობელი: გამორთულია) Supabase Dashboard → Project Settings → API Keys → **Legacy API keys** → გამორთვა („Disable JWT-based API keys" / legacy anon & service_role). ეს ააქტიურებს გაჟონილი service_role-ის გაუქმებას. ეფექტი: ძველი anon/service_role JWT-ები აღარ მუშაობს; მომხმარებლების სესიის JWT-ები Auth-ისაა და არ ირღვევა. უკან დასაბრუნებელია Dashboard-იდან (დროებით, თუ რამე გაფუჭდა).
 - **K8. შემოწმება K7-ის შემდეგ:** ✅ ძველი anon key-ით REST მოთხოვნა → 401 (მფლობელმა დაადასტურა; გაჟონილი service_role-ის ცალკე curl-ზე ინფორმაცია არ მიმიღია, მაგრამ legacy JWT key-ები სრულად გამორთულია) — იგივე სია, რაც K3 + ახალი მომხმარებლის რეგისტრაცია/login + admin. გაჟონილი service_role-ით სცადე ერთი read (curl `apikey: <ძველი>` → 401 უნდა იყოს) — ამით დაადასტურებ, რომ გაუქმდა.
 - **K9. გაჟონვის შემდეგ:** გადახედე Supabase Logs/Auth-ს საეჭვო აქტივობაზე (უცნობი მომხმარებლები, მასობრივი წაკითხვა/წაშლა) იმ პერიოდში, როცა key ძალაში იყო; საჭიროებისას ეს ცალკე task იქნება.
+
+### Stage 11 — Deploy plan
+- **S11-1 (მიგრაცია `0021_change_order_status.sql`, გაუშვებელი):** რიგი — **ჯერ 0021, მერე backend deploy** (ძველი backend 0021-თან მუშაობს; ახალი backend 0021-ის გარეშე სტატუსის შეცვლა სუფთად 400-ს აბრუნებს, მონაცემები უცვლელია).
+  1. PRE-CHECK: `select proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname in ('decrement_stock','apply_stock_delta');` → 2 მწკრივი.
+  2. გაუშვი `0021_change_order_status.sql` (იდემპოტენტურია).
+  3. Verification: `select p.proname, p.prosecdef as security_definer, coalesce(array_to_string(p.proacl, E'
+'),'(PUBLIC-საც აქვს!)') as acl from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace where ns.nspname='public' and p.proname='change_order_status';` → 1 მწკრივი, `security_definer=false`, acl-ში `service_role=X/…` და **არა** `=X/…`, `anon=X/…`, `authenticated=X/…`.
+  4. Deploy-ის შემდეგ ხელით: `new → processing` (quantity მცირდება), `processing → cancelled` (ბრუნდება), `new → cancelled` (მარაგი არ იცვლება), მეორე ბრაუზერის ტაბიდან მოძველებული სტატუსით → 409.
+- **S11-2:** დამატებითი ნაბიჯი არ სჭირდება (backend + `dist/` ერთ deploy-ში). შემოწმება: ორი გვერდის წვდომით connect → ფანჯარაში შეტყობინება „თავიდან მიაბით…"; ერთი გვერდით → ჩვეულებრივად.
 
 ### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
 - `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
