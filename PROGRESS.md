@@ -32,15 +32,16 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - Accepted Risks-ში ჩაემატა: kill-switch (#3), `SHOP_ORDERS_PER_HOUR`, Supabase client ყოველ მოთხოვნაზე.
 
 ### Stage 12 — Deploy plan (მფლობელი; აგენტი remote-ზე არაფერს უშვებს)
-> ✅ ნაბიჯები 0–4 შესრულებულია (მფლობელი, ლაივზე, 2026-10-09): `e8525f0` live, 0024 გაშვებულია. ⏳ ღია: ნაბიჯი 5 (ბრაუზერში ხელით) და 6 (0023-ის სტატუსი არ დადასტურებულა).
-0. **Deploy-მდე (არჩევითი, SELECT):** `select count(*) from products where image_url is not null and image_url not like '<SUPABASE_URL>/storage/v1/object/public/product-images/%';` — რაც > 0, იმ პროდუქტების ფოტო ბოტს ვიზუალურ შედარებაში აღარ მიიღებს (S12-1).
-✅ 1. **Render env-ის შემოწმება deploy-მდე:** `CLIENT_IP_TRUSTED_HOPS=3` დაყენებულია? (S12-4: გარეშე ახალი ვერსია არ ადგება; Render წინა ვერსიას დატოვებს.) დანარჩენი შვიდი secret უკვე არის. → **შედეგი:** 1 პროდუქტს აქვს ფოტო, Storage-შია (`outside_storage=0`).
-✅ 2. `agent-system` → `main` merge + push → Render auto-deploy. ლოგში: სერვერი ადგა, `/health` 200. → `CLIENT_IP_TRUSTED_HOPS=3`, fail-closed startup გავიდა.
-✅ 3. 0024-ის PRE-CHECK (დუბლიკატი pending-ები; ინფორმაციული), მერე `supabase/migrations/0024_upgrade_requests_backend_only.sql` SQL Editor-ში. → `e8525f0` live.
-✅ 4. 0024-ის verification query → `f, t, f, 0, 1`. → **შედეგი:** 10 მოთხოვნა, pending 0, დუბლიკატი 0; 0024 გაშვებულია.
-✅ 5. ხელით ბრაუზერში: (ა) პანელიდან „პაკეტის მოთხოვნა" → 200, ადმინში pending ჩანს; (ბ) მეორე მოთხოვნა სხვა პაკეტზე → პირველი cancelled; (გ) ადმინი standard→free ორ-ბოტიან ანგარიშზე → ახალი ბოტი ითიშება, ძველი რჩება; (დ) პროდუქტის ფოტო (საკუთარი Storage) ბოტის „რა ღირს ეს?" ფოტო-შეკითხვაზე ისევ მუშაობს. → შედეგი `f, t, f, 0, 1` ✔.
-⏳ 6. `0023` (S11-7) თუ ჯერ არ გაშვებულა — იგი დამოუკიდებელია, ნებისმიერ დროს.
-❓ 
+> რიგი მნიშვნელოვანია: 0024 backend-ის **შემდეგ** (ძველი backend + 0024 = „პაკეტის მოთხოვნა" 403/500).
+> ✅ ნაბიჯები 0–4 შესრულებულია (მფლობელი, ლაივზე, 2026-10-09): `e8525f0` live, 0024 გაშვებულია. ⏳ ღია: ნაბიჯი 5 (ბრაუზერში ხელით); ❓ ნაბიჯი 6 (0023-ის სტატუსი არ დადასტურებულა).
+✅ 0. **Deploy-მდე (არჩევითი, SELECT):** `select count(*) from products where image_url is not null and image_url not like '<SUPABASE_URL>/storage/v1/object/public/product-images/%';` — რაც > 0, იმ პროდუქტების ფოტო ბოტს ვიზუალურ შედარებაში აღარ მიიღებს (S12-1). → **შედეგი:** 1 პროდუქტს აქვს ფოტო, Storage-შია (`outside_storage=0`).
+✅ 1. **Render env-ის შემოწმება deploy-მდე:** `CLIENT_IP_TRUSTED_HOPS=3` დაყენებულია? (S12-4: გარეშე ახალი ვერსია არ ადგება; Render წინა ვერსიას დატოვებს.) დანარჩენი შვიდი secret უკვე არის. → `CLIENT_IP_TRUSTED_HOPS=3`, fail-closed startup გავიდა.
+✅ 2. `agent-system` → `main` merge + push → Render auto-deploy. ლოგში: სერვერი ადგა, `/health` 200. → `e8525f0` live.
+✅ 3. 0024-ის PRE-CHECK (დუბლიკატი pending-ები; ინფორმაციული), მერე `supabase/migrations/0024_upgrade_requests_backend_only.sql` SQL Editor-ში. → **შედეგი:** 10 მოთხოვნა, pending 0, დუბლიკატი 0; 0024 გაშვებულია.
+✅ 4. 0024-ის verification query → `f, t, f, 0, 1`. → შედეგი `f, t, f, 0, 1` ✔.
+⏳ 5. ხელით ბრაუზერში: (ა) პანელიდან „პაკეტის მოთხოვნა" → 200, ადმინში pending ჩანს; (ბ) მეორე მოთხოვნა სხვა პაკეტზე → პირველი cancelled; (გ) ადმინი standard→free ორ-ბოტიან ანგარიშზე → ახალი ბოტი ითიშება, ძველი რჩება; (დ) პროდუქტის ფოტო (საკუთარი Storage) ბოტის „რა ღირს ეს?" ფოტო-შეკითხვაზე ისევ მუშაობს.
+❓ 6. `0023` (S11-7) თუ ჯერ არ გაშვებულა — იგი დამოუკიდებელია, ნებისმიერ დროს.
+
 ## Deploy plan
 > მფლობელის გადაწყვეტილება (2026-10-08): ყველა task-ის შემდეგ ერთი დაგეგმილი deploy. სტატუსი განახლებულია მფლობელის ინფორმაციით.
 
