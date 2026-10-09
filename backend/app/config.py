@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -90,6 +91,28 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() in ("production", "prod")
+
+    def missing_required_secrets(self) -> list[str]:
+        """Production-ში სავალდებულო პარამეტრებიდან ცარიელ/არავალიდურთა ENV სახელები.
+
+        ⚠️ მხოლოდ სახელები — მნიშვნელობები არასდროს ბრუნდება/ილოგება.
+        """
+        required = {
+            "SUPABASE_URL": self.supabase_url,
+            "SUPABASE_PUBLISHABLE_KEY": self.supabase_publishable_key,
+            "SUPABASE_SECRET_KEY": self.supabase_secret_key,
+            "GEMINI_API_KEY": self.gemini_api_key,
+            "FB_APP_SECRET": self.fb_app_secret,
+            "FB_VERIFY_TOKEN": self.fb_verify_token,
+            "FB_TOKEN_ENCRYPTION_KEY": self.fb_token_encryption_key,
+        }
+        missing = [name for name, value in required.items() if not (value or "").strip()]
+        if "FB_TOKEN_ENCRYPTION_KEY" not in missing:
+            try:
+                Fernet(self.fb_token_encryption_key.encode())  # როგორც crypto._fernet()
+            except Exception:
+                missing.append("FB_TOKEN_ENCRYPTION_KEY (invalid format)")
+        return missing
 
     @property
     def cors_origins_list(self) -> list[str]:

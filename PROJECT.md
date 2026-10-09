@@ -51,7 +51,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 - Excel/CSV/PDF ატვირთვა — მხოლოდ ფასიან პაკეტებზე.
 
 ## Data
-Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0021`
+Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0022`
 (სია: [README.md](README.md) §7, მოძველებულია 0014-ზე).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`
@@ -211,10 +211,20 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Run order: ჯერ 0021, მერე backend deploy (ძველი backend 0021-თან მუშაობს; ახალი 0021-ის გარეშე სტატუსის შეცვლაზე 500, მონაცემები უცვლელი).
 - Alternatives considered: backend-ში კომპენსაცია/retry. Why rejected: შუალედური მდგომარეობა და ჩავარდნა მაინც რჩება; DB ტრანზაქცია მარტივია.
 
+### 2026-10 — orders/knowledge UPDATE grants removed; writes only via backend (S11-5)
+- Context: `authenticated`-ს რჩებოდა `orders` UPDATE(status) (0018), რაც RPC `change_order_status`-ს გვერდს უვლიდა (მარაგი), და `shops` UPDATE(knowledge, knowledge_filename) (0015), რაც free-gate-ს უვლიდა გვერდს.
+- Decision: migration 0022 ორივეს აუქმებს; `upload_knowledge`/`clear_knowledge` ამიერიდან წერენ service client-ით `.eq("id", shop_id)`-ით, მფლობელობის `auth.client` (RLS) select-ით შემოწმების შემდეგ.
+- Run order: ჯერ backend deploy, მერე 0022 (პირიქით knowledge upload/clear ჩავარდება).
+
 ### 2026-10 — Gemini timeout + retry ბიუჯეტი (S11-3)
 - Context: `genai.Client` timeout-ის გარეშე იყო; ჩამოკიდებული მოთხოვნა webhook worker-ს იკავებდა და კლიენტი პასუხს ვერ იღებდა.
 - Decision: ერთი მცდელობის timeout `GEMINI_TIMEOUT_SECONDS` (default 20; `HttpOptions.timeout` მილიწამებშია, ვამრავლებთ 1000-ზე), ყველა retry-ს ჯამი `GEMINI_TOTAL_BUDGET_SECONDS`=45 (monotonic deadline; მცდელობის timeout = min(timeout, დარჩენილი)). 503/429-ზე retry თუ დარჩენილი >= sleep + 5 წმ; timeout-ის შემდეგ retry მხოლოდ თუ დარჩენილი >= sleep + სრული timeout-ფანჯარა. ბოლო შეცდომა იგდება → webhook-ის „ბოდიში…" fallback.
 - Alternatives considered: asyncio/thread-level მკაცრი ჭერი. Why rejected: SDK-ის timeout საკმარისია; დამატებითი სირთულე არ სჭირდება.
+
+### 2026-10 — production fail-closed on missing secrets (S11-6)
+- Context: ცარიელი `FB_APP_SECRET`-ით webhook-ის/signed_request-ის/OAuth state-ის HMAC ცარიელი გასაღებით ითვლებოდა (გაყალბებადი), data-deletion კოდი კი ჩაშენებულ `"chatassist"` გასაღებზე ეცემოდა; `FB_TOKEN_ENCRYPTION_KEY` გამოტოვება პირველ connect-ზე ვლინდებოდა.
+- Decision: (1) `Settings.missing_required_secrets()` + `check_required_settings()` (`main.py`): `APP_ENV=production`-ზე ცარიელი/არავალიდური `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (Fernet-ის ფორმატიც) → `RuntimeError` სახელებით (მნიშვნელობების გარეშე), აპი არ ირთვება. (2) ყველა env-ში: `verify_signature` → False, `parse_signed_request` → None, `verify_state` → None, `sign_state`/`_deletion_secret` → RuntimeError (`"chatassist"` fallback წაშლილია); `/facebook/connect/start` და `/facebook/data-deletion` → 503, `verify_deletion_code` → None. Dev/ტესტები უცვლელია.
+- Alternatives considered: მხოლოდ startup შემოწმება. Why rejected: dev/staging-ში ან `get_settings` ჩანაცვლებისას ფუნქცია მაინც ცარიელი გასაღებით მუშაობდა; ორივე დონე იაფია.
 
 ### 2026-10-09 — საიდუმლოების როტაცია გაჟონვის შემდეგ
 - Done (მფლობელი, ლაივზე): Supabase → ახალი `sb_publishable_`/`sb_secret_` key-ები, legacy JWT key-ები გამორთულია (ძველი anon-ით REST → 401); `FB_APP_SECRET` შეცვლილია; `FB_TOKEN_ENCRYPTION_KEY` შეცვლილია — ძველით დაშიფრული page token-ები გამოუსადეგარი გახდა და Facebook/Instagram-მიბმული ერთადერთი მაღაზია ხელახლა დაუკავშირდა (ბოტი პასუხობს).

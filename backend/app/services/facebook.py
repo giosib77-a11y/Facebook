@@ -94,6 +94,8 @@ def _graph(method: str, path: str, **kwargs) -> httpx.Response:
 # ---------------------------------------------------------------------------
 def verify_signature(app_secret: str, raw_body: bytes, signature_header: str | None) -> bool:
     """ამოწმებს, რომ მოთხოვნა მართლა Facebook-იდან მოვიდა (app secret-ით)."""
+    if not app_secret:
+        return False  # ცარიელი გასაღებით HMAC გაყალბებადია — fail closed (S11-6)
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     sent = signature_header.split("=", 1)[1]
@@ -114,6 +116,8 @@ def parse_signed_request(signed_request: str, app_secret: str) -> dict | None:
     payload-ის (base64url სტრიქონის) app_secret-ით. აბრუნებს payload dict-ს
     ან None თუ ფორმატი/ხელმოწერა არასწორია.
     """
+    if not app_secret:
+        return None  # fail closed (S11-6)
     if not signed_request or "." not in signed_request:
         return None
     try:
@@ -132,18 +136,24 @@ def parse_signed_request(signed_request: str, app_secret: str) -> dict | None:
 # OAuth state — ხელმოწერილი (CSRF + shop/user-ის გადატანა)
 # ---------------------------------------------------------------------------
 def sign_state(data: dict) -> str:
-    secret = get_settings().fb_app_secret.encode()
+    app_secret = get_settings().fb_app_secret
+    if not app_secret:
+        raise RuntimeError("FB_APP_SECRET is not configured")  # S11-6
+    secret = app_secret.encode()
     raw = base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
     sig = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()
     return f"{raw}.{sig}"
 
 
 def verify_state(state: str, max_age_seconds: int = 600) -> dict | None:
+    app_secret = get_settings().fb_app_secret
+    if not app_secret:
+        return None  # fail closed (S11-6)
     try:
         raw, sig = state.rsplit(".", 1)
     except ValueError:
         return None
-    secret = get_settings().fb_app_secret.encode()
+    secret = app_secret.encode()
     expected = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, sig):
         return None

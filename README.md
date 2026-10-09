@@ -334,7 +334,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (21)
+### მიგრაციები (22)
 
 | # | რა |
 |---|---|
@@ -359,6 +359,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0019` | 🔒 `upgrade_requests`: INSERT პოლისი მოითხოვს `pending` + tier-ის სიას; status/tier CHECK |
 | `0020` | 🔒 `shops.instagram_account_id` — partial UNIQUE ინდექსი (IG შეტყობინება სხვა tenant-ს ვეღარ მიეწერება) |
 | `0021` | `change_order_status()` — შეკვეთის სტატუსი + მარაგი ერთ ტრანზაქციაში (გაუშვი backend-ის deploy-მდე) |
+| `0022` | 🔒 `orders`: UPDATE სრულად მოხსნილია `authenticated`-დან; `shops.knowledge*`-ზე UPDATE მოხსნილია (ჩაწერა მხოლოდ backend-ით). გაუშვი backend-ის deploy-ის **შემდეგ** |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
 
@@ -537,6 +538,10 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `PAYMENT_IBAN` · `PAYMENT_CONTACT` | | placeholder | გადახდის რეკვიზიტები |
 
 🔒 = საიდუმლო. **`.env` არასდროს ჩააქოს git-ში.**
+
+**Fail-closed (S11-6):** `APP_ENV=production`-ზე აპი **არ ირთვება** (`RuntimeError: Missing required production settings: ...`, მხოლოდ სახელები), თუ ცარიელია რომელიმე:
+`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key; არავალიდური → `FB_TOKEN_ENCRYPTION_KEY (invalid format)`).
+`development`-ში შემოწმება არ მუშაობს, თუმცა ცარიელი `FB_APP_SECRET`-ით webhook/signed_request/OAuth state/data-deletion კოდი ყოველთვის უარყოფილია.
 
 Fernet key-ის დაგენერირება:
 ```bash

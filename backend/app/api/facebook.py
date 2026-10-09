@@ -89,7 +89,10 @@ _DELETION_CODE_TTL = 400 * 24 * 3600  # ~13 თვე — Meta-ს შემო�
 
 
 def _deletion_secret() -> bytes:
-    return (get_settings().fb_app_secret or "chatassist").encode()
+    secret = get_settings().fb_app_secret
+    if not secret:
+        raise RuntimeError("FB_APP_SECRET is not configured")  # S11-6: guessable fallback removed
+    return secret.encode()
 
 
 def make_deletion_code(user_id: str) -> str:
@@ -104,9 +107,10 @@ def verify_deletion_code(code: str) -> dict | None:
     """აბრუნებს {"requested_at": ISO} თუ კოდი ნამდვილია, სხვა შემთხვევაში None."""
     try:
         raw, sig = (code or "").rsplit(".", 1)
-    except ValueError:
-        return None
-    expected = hmac.new(_deletion_secret(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+        secret = _deletion_secret()
+    except (ValueError, RuntimeError):
+        return None  # არავალიდური ფორმატი ან secret არ არის → კოდი არ მოწმდება
+    expected = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()[:16]
     if not hmac.compare_digest(expected, sig):
         return None
     try:
@@ -137,9 +141,12 @@ def connect_start(
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
     nonce = secrets.token_urlsafe(16)
-    state = fb.sign_state(
-        {"shop_id": str(shop_id), "user_id": auth.user_id, "ts": time.time(), "n": nonce}
-    )
+    try:
+        state = fb.sign_state(
+            {"shop_id": str(shop_id), "user_id": auth.user_id, "ts": time.time(), "n": nonce}
+        )
+    except RuntimeError:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Facebook integration not configured") from None
     response.set_cookie(
         _NONCE_COOKIE,
         nonce,
@@ -329,6 +336,9 @@ def data_deletion_callback(signed_request: str = Form(...)):
     და ვაბრუნებთ Meta-ს მოთხოვნილ JSON-ს: {url, confirmation_code}.
     """
     s = get_settings()
+    if not s.fb_app_secret:
+        # secret-ის გარეშე ვერც ვერიფიკაცია მოხერხდება, ვერც კოდი გაიცემა (S11-6)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "service not configured")
     data = fb.parse_signed_request(signed_request, s.fb_app_secret)
     if not data or not data.get("user_id"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid signed_request")

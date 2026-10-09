@@ -24,6 +24,19 @@ from app.core.logging import setup_logging
 settings = get_settings()
 setup_logging(settings.log_level)
 
+
+def check_required_settings(s) -> None:
+    """S11-6: production-ში სავალდებულო საიდუმლოების გარეშე აპი არ ირთვება (fail closed).
+    შეცდომა მხოლოდ ENV სახელებს შეიცავს, მნიშვნელობებს — არასდროს."""
+    if not s.is_production:
+        return
+    missing = s.missing_required_secrets()
+    if missing:
+        raise RuntimeError("Missing required production settings: " + ", ".join(missing))
+
+
+check_required_settings(settings)
+
 app = FastAPI(
     title="ქართული მაღაზიების AI ბოტი — API",
     description="Multi-tenant SaaS: Facebook Messenger AI ბოტი ქართული მაღაზიებისთვის",
