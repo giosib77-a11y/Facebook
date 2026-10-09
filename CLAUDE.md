@@ -26,6 +26,7 @@
 ## Conventions
 - **აკრძალულია** (მფლობელის თანხმობის გარეშე): `git push`, `main`-ში merge, deploy, remote Supabase-ზე
   migration/query, Meta/Facebook Graph API-ს გამოძახება, Gemini-ს გამოძახება რეალური key-ით, `.env`-ის წაკითხვა/შეცვლა.
+- **ბრენჩი:** სამუშაო ბრენჩი მხოლოდ `agent-system`-ია. **ყოველ commit-მდე** გაუშვი `git branch --show-current`; თუ პასუხი `agent-system` არ არის (მაგ. `main` — მფლობელმა merge/push-ის შემდეგ ბრენჩი შეცვალა) — **გაჩერდი და მკითხე**, არ დააკომიტო. სესიის დასაწყისშიც შეამოწმე.
 - ტესტები offline: ახალი ტესტი იყენებს `tests/conftest.py`-ის `client` / `user_db` / `service_db` fixture-ებს;
   Graph — `httpx.MockTransport` ან monkeypatch; Gemini — monkeypatch `get_bot_reply`. გარე სერვისი სჭირდება → ჯერ კითხვა.
 - Tenant isolation: seller-ის endpoint-ები DB-ს `auth.client`-ით (მომხმარებლის JWT, RLS) მიმართავენ.
