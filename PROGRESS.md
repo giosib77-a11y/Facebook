@@ -51,7 +51,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 5. deploy-ის შემდეგ ხელით შემოწმება:
    - ✅ (მფლობელი) login, ფოტოს ატვირთვა, საჯარო შეკვეთა (201), ბოტი, admin.
    - ⏳ **ღია (მფლობელის თქმით ერთადერთი): მარაგის შემოწმება** — საჯარო შეკვეთის შექმნა მარაგს არ ცვლის; პანელში `new → processing` მარაგს აკლებს; `processing → cancelled` აბრუნებს. (სადაც 409 არასაკმარის მარაგზე და `new/processing`-ის წაშლა → 409 — ეს ორი მფლობელს ცალკე არ დაუდასტურებია.)
-   - ℹ️ საწყისი სიის დანარჩენი პუნქტები, რომლებზეც ცალკე დადასტურება არ მიმიღია (მფლობელმა ისინი ღიად არ დატოვა, ამიტომ აქ მხოლოდ ინფორმაციისთვის): `GET /status` → `env=production`; IG connect დაკავებულ ანგარიშზე → `ig_taken`; CI მწვანეა GitHub-ზე; `select count(*) from public.orders;` (T20-ის სათადარიგო პირობა).
+   - ✅ (მფლობელი, 2026-10-09) დამატებით დადასტურებულია: `new → cancelled` და მოძველებული სტატუსი (409/`STATUS_CHANGED`) — smoke SQL-ის შემოწმებები 4 და 8 ლაივ ბაზაზე; `/status` → `env=production` (შემოწმდა 2026-10-08); GitHub CI მწვანეა; T20-ის სათადარიგო პირობა დახურულია (deploy-მდე `orders` ცარიელი იყო).
+   - ⏳ შეუმოწმებელი (მფლობელის გადაწყვეტილებით რჩება): **S11-2** (ორი გვერდის წვდომით connect-ის უარი ბრაუზერში), **S11-3** (Gemini timeout-ის ქცევა ლაივზე); `new/processing`-ის წაშლა → 409 და `ig_taken` ბრაუზერში ცალკე დადასტურებული არ არის.
 6. **საგანგებო (2026-10-16):** თუ `gemini-2.5-flash` გაითიშა, Render-ზე `GEMINI_MODEL=gemini-3.5-flash` + restart. ⚠️ 3.5-ზე thinking-ის გამო პასუხები იჭრება `max_output_tokens=800`-ზე (ტესტზე 4/10) — ბოლო გამოსავალია (Backlog T12).
 7. **key-ების როტაცია:** ✅ `FB_APP_SECRET` — შეცვლილია; ✅ Supabase — legacy key-ები გამორთულია, 401 დადასტურებულია (T23); ✅ `FB_TOKEN_ENCRYPTION_KEY` — შეცვლილია (Render + ლოკალური `.env`), ერთადერთი Facebook/Instagram-მიბმული მაღაზია ხელახლა დაკავშირდა, ბოტი პასუხობს. ⏳ **ღია: Gemini key-ის როტაცია** — როდის, მფლობელი წყვეტს.
 8. ✅ ლოკალურ `.env`-ში `APP_ENV=development` (მფლობელმა დაადასტურა).
@@ -86,7 +87,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   3. Verification: `select p.proname, p.prosecdef as security_definer, coalesce(array_to_string(p.proacl, E'
 '),'(PUBLIC-საც აქვს!)') as acl from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace where ns.nspname='public' and p.proname='change_order_status';` → 1 მწკრივი, `security_definer=false`, acl-ში `service_role=X/…` და **არა** `=X/…`, `anon=X/…`, `authenticated=X/…`.
   3b. ✅ **გაშვებულია ლაივზე (მფლობელი): `SMOKE OK — rolled back`, სატესტო მონაცემი 0.** **Smoke-ტესტი (S11-4, გაუშვი deploy-მდე, 0021 უკვე ლაივზეა):** SQL Editor-ში ჩასვი მთელი `supabase/checks/smoke_change_order_status.sql` → RUN. რედაქტორი აჩვენებს „შეცდომას" — ეს ნორმალურია: `SMOKE OK — rolled back` = 12-ვე შემოწმება გავიდა და ბაზაში არაფერი დარჩა (ტრანზაქცია ბათილდება); `SMOKE FAIL: …` = ტექსტი დააკოპირე და deploy გააჩერე; `SMOKE SKIP: no auth.users row` = უნდა არსებობდეს ერთი მომხმარებელი; სხვა შეცდომა (not-null/check/function does not exist) = სქემა/0021 განსხვავდება, ესეც rollback-დება. არჩევითი შემოწმება: `select count(*) from public.shops where name like '\_\_SMOKE\_\_%';` → 0. ⚠️ ფაილი არასდროს გაშვებულა — პირველი გაშვება შენთან.
-  4. ✅ (მფლობელი, ლაივზე) პანელში მარაგი: 102 → `processing` 100 → `cancelled` 102. დარჩა არადადასტურებული: `new → cancelled` (მარაგი უცვლელი) და მოძველებული სტატუსით 409. Deploy-ის შემდეგ ხელით: `new → processing` (quantity მცირდება), `processing → cancelled` (ბრუნდება), `new → cancelled` (მარაგი არ იცვლება), მეორე ბრაუზერის ტაბიდან მოძველებული სტატუსით → 409.
+  4. ✅ (მფლობელი, ლაივზე) პანელში მარაგი: 102 → `processing` 100 → `cancelled` 102; ✅ `new → cancelled` (მარაგი უცვლელი) და მოძველებული სტატუსი → `STATUS_CHANGED` — smoke SQL-ის შემოწმებები 4 და 8.
 - **S11-3:** ახალი არჩევითი env `GEMINI_TIMEOUT_SECONDS` (default 20 წმ; ბიუჯეტი ყველა retry-ზე ჯამში 45 წმ). დამატებითი ნაბიჯი არ სჭირდება, ერთ deploy-ში მიჰყვება. შემოწმება: ბოტი ჩვეულებრივად პასუხობს; timeout-ის ქცევა (fallback პასუხი) ლაივზე რეალურად არ გამოცდილა.
 - **S11-2:** დამატებითი ნაბიჯი არ სჭირდება (backend + `dist/` ერთ deploy-ში). შემოწმება: ორი გვერდის წვდომით connect → ფანჯარაში შეტყობინება „თავიდან მიაბით…"; ერთი გვერდით → ჩვეულებრივად.
 
@@ -97,14 +98,15 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 3. **`CORS_ORIGINS=https://chatassist.ge`** Render-ზე (Accepted Risks #11).
 4. **Gemini billing ჩართული** (free tier = 5 მოთხოვნა/წთ; ტრაფიკზე ბოტი 429-ს დააბრუნებს — `PROJECT.md` Constraints) + **Gemini key-ის როტაცია** (ღიაა, იხ. ზემოთ ნაბიჯი 7).
 5. **Gemini მოდელი** — `gemini-2.5-flash` 2026-10-16-ს ითიშება: გადაწყვეტილება/საგანგებო ნაბიჯი 6 (Backlog T12).
-6. ✅ **Stage 11-ის deploy** (`0d7a129` live). ხელით შემოწმებული: მარაგი processing/cancelled-ზე (102 → 100 → 102) და smoke SQL (`SMOKE OK`). დაუდასტურებელი: S11-2 (ორი გვერდით connect-ის უარი ბრაუზერში), S11-3 (timeout-ის ქცევა რეალურად), `new → cancelled`, 409 მოძველებულ სტატუსზე.
-7. **ნაბიჯი 5-ის დარჩენილი ხელით შემოწმებები** (✅ მარაგი processing/cancelled-ზე; დარჩა: `/status` → `env=production`; CI GitHub-ზე; `select count(*) from public.orders;`).
+6. ✅ **Stage 11-ის deploy** (`0d7a129` live). ხელით/ლაივზე დადასტურებული: მარაგი processing/cancelled-ზე (102 → 100 → 102), smoke SQL (`SMOKE OK`, შემოწმებები 4 და 8 ჩათვლით). შეუმოწმებელი (მფლობელის გადაწყვეტილებით): S11-2 ბრაუზერში, S11-3 ლაივზე.
+7. ✅ **ნაბიჯი 5-ის ხელით შემოწმებები** — `/status` → `env=production` (2026-10-08), GitHub CI მწვანეა, `orders` ცარიელი იყო deploy-მდე (T20-ის სათადარიგო პირობა დახურულია).
 8. **K9:** Supabase Logs/Auth-ის გადახედვა გაჟონვის პერიოდისთვის.
 9. **Meta (README §2):** Business Verification ⏳ → App Review ⬜ → Development → Live ⬜. Review-ისთვის: Privacy/Terms/Data Deletion URL-ები და callback არსებობს (Accepted Risks #19).
+10. **Supabase Pro (Free გეგმაზე backup-ები საერთოდ არ არის — Dashboard-ში დადასტურდა, მფლობელი).** Live-მდე გადადი Pro-ზე, რომ DB-ს ავტომატური ყოველდღიური backup ჰქონდეს; ახლა შეკვეთების, მარაგისა და გამყიდველების მონაცემის დაკარგვის შემთხვევაში აღდგენა შეუძლებელია. გადასვლის შემდეგ Dashboard → Database → Backups-ში შეამოწმე, რომ backup-ები ჩანს, და ერთხელ გადაამოწმე აღდგენის გზა (Pro-ზე PITR ცალკე add-on-ია, ვადა დამოკიდებულია გეგმაზე — დააზუსტე Dashboard-ში). ხარჯი ბიუჯეტში (~35₾/თვე, `DEPLOYMENT.md`) არ არის გათვალისწინებული — განაახლე `DEPLOYMENT.md`-ის ხარჯების ცხრილი.
 
 ### Branch `agent-system` → `main`: მზადყოფნა (შემოწმდა 2026-10-08)
 - `main` არ წასულა წინ (0 commit-ი `agent-system`-ის გარეშე) → merge fast-forward-ია; `git merge-tree` კონფლიქტს არ აჩვენებს. 27 commit, 42 ფაილი.
-- სუფთა venv-ში CI-ის ნაბიჯები (`requirements.lock.txt` + `requirements-dev.txt` → `pip check` → `compileall` → `ruff check app tests` → `pytest -q`, `.env`-ის გარეშე): ყველა გავიდა, 174 passed. ლოკალური Python-ის ვერსია შეიძლება CI-ის 3.14.3-ისგან განსხვავდებოდეს — GitHub-ზე რეალური CI გაშვება დაუდასტურებელია.
+- სუფთა venv-ში CI-ის ნაბიჯები (`requirements.lock.txt` + `requirements-dev.txt` → `pip check` → `compileall` → `ruff check app tests` → `pytest -q`, `.env`-ის გარეშე): ყველა გავიდა, 174 passed. ლოკალური Python-ის ვერსია შეიძლება CI-ის 3.14.3-ისგან განსხვავდებოდეს — GitHub-ზე რეალური CI გაშვება: ✅ მწვანეა (მფლობელმა დაადასტურა 2026-10-09).
 - Frontend: `npm run build` ახლა `frontend/dist/`-ს არ ცვლის (git status სუფთაა) → dist commit-შია და აქტუალურია.
 - `git status` სუფთაა; secrets repo-ში არ ჩაგდებულა (T19: ტესტები `.env`-ს არ კითხულობენ).
 
@@ -187,7 +189,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Verification: `pytest -q` → 114 passed (offline, ყველა secret env ცარიელი); verify.sh — `bash -n` + scratchpad-ში
   pass/fail/empty სიმულაცია (exit 0/2/0, Verify event სწორად იწერება). აუდიტის მთავარი მტკიცებები ხელით გადამოწმდა კოდში.
 - Known issues / blockers: Cloudflare არ გამოიყენება (T17 ცვლის IP-ის წყაროს); მიგრაციების (T5 = 0017 დაწერილია, გაუშვებელი; T6, T8, T9) გაშვება — მფლობელი.
-- Next: Stage 11 დასრულებულია და deploy-ნია; მფლობელი — „Live-მდე აუცილებელი" სია (PAYMENT_*, CORS_ORIGINS, Gemini billing/key/მოდელი 2026-10-16, Render Starter, K9, Meta Live)
+- Next: Stage 11 დასრულებულია და deploy-ნია; მფლობელი — „Live-მდე აუცილებელი" სია (PAYMENT_*, CORS_ORIGINS, Gemini billing/key/მოდელი 2026-10-16, Render Starter, **Supabase Pro**, K9, Meta Live)
 
 ## Stage 10 — Done
 - [x] **T1 — Minimal lint setup (backend)** · infra (verify.sh CHECKS: ruff + pytest დამატებულია, hook-ით შემოწმებული)
