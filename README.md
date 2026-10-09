@@ -494,7 +494,7 @@ Root Directory:    backend
 Build:             pip install -r requirements.lock.txt
 Start:             uvicorn app.main:app --host 0.0.0.0 --port $PORT
 Instances:         1  (rate limit და webhook dedup მეხსიერებაშია — >1 instance-ზე უქმდება)
-Health Check Path: (ცარიელი)
+Health Check Path: /health
 Build Filter:      backend/**  frontend/dist/**
 ```
 
