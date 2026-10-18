@@ -1,7 +1,8 @@
 """Excel (.xlsx) / CSV ფაილიდან პროდუქტების წაკითხვა და ვალიდაცია.
 
 parse_products_file(content, filename) -> (products, errors)
-  products: list[dict] — ვალიდური პროდუქტები (shop_id-ის გარეშე)
+  products: list[dict] — ვალიდური პროდუქტები (shop_id-ის გარეშე);
+            price / quantity / sku = None, თუ სვეტი არ არის მითითებული ან უჯრა ცარიელია
   errors:   list[{row, message}] — მწკრივების შეცდომები
 სტრუქტურულ პრობლემაზე (ფაილის ტიპი, აკლია სვეტი) აგდებს ValueError-ს.
 """
@@ -188,7 +189,10 @@ def parse_products_file(
             errors.append({"row": line, "message": "სახელი ცარიელია"})
             continue
 
-        price = 0.0
+        # A-001: მიუთითებელი / ცარიელი ფასი, მარაგი, SKU = None („არ ვიცი"), არა 0 —
+        # განახლებისას None ველი არსებულს არ ეხება; ახალი პროდუქტის default-ებს
+        # (ფასი/მარაგი 0) ჩამწერი კოდი ავსებს.
+        price = None
         price_raw = _norm(cell("price"))
         if price_raw:
             try:
@@ -203,7 +207,7 @@ def parse_products_file(
                 errors.append({"row": line, "message": "ფასი უარყოფითია"})
                 continue
 
-        qty = 0
+        qty = None
         qty_raw = _norm(cell("quantity"))
         if qty_raw:
             try:

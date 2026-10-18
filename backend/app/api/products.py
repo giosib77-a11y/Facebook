@@ -319,12 +319,13 @@ def import_products(
 
     # განახლება (is_active-ს არ ვცვლით — გამყიდვლის ხელით არჩევანი შენარჩუნდეს)
     for match_id, p in to_update:
-        upd = {
-            "name": p["name"],
-            "price": p["price"],
-            "quantity": p["quantity"],
-            "sku": p["sku"],
-        }
+        upd = {"name": p["name"]}
+        # A-001: price / quantity / sku ვანახლებთ მხოლოდ თუ ფაილში მნიშვნელობა არის
+        # (None = სვეტი მიუთითებელია ან უჯრა ცარიელი) — სხვაგვარად „სახელი+მარაგი"
+        # ფაილი ყველა ფასს და SKU-ს განულებდა
+        for field in ("price", "quantity", "sku"):
+            if p.get(field) is not None:
+                upd[field] = p[field]
         # აღწერას ვანახლებთ მხოლოდ თუ ფაილში რამე წერია —
         # ცარიელით არ ვშლით არსებულს (ხელით გამდიდრებული / წინა extra შენარჩუნდეს)
         if p.get("description"):
@@ -335,6 +336,11 @@ def import_products(
     if to_insert:
         for p in to_insert:
             p["shop_id"] = str(shop_id)
+            # ახალ პროდუქტს მიუთითებელი ფასი/მარაგი 0-ით ეწყება (A-001: parser-ი None-ს აბრუნებს)
+            if p.get("price") is None:
+                p["price"] = 0.0
+            if p.get("quantity") is None:
+                p["quantity"] = 0
         res = run(get_service_client().table("products").insert(to_insert))
         added = len(res.data or [])
 
