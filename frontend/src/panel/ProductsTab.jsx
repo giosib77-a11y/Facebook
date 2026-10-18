@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { uploadProductImage } from "./images.js";
 import { IMPORT_FIELDS, previewImport, confirmImport, buildMapping } from "./importApi.js";
+import { changedProductFields } from "./productDiff.js";
 import { useShopData } from "./ShopData.jsx";
 import { Skeleton, useToast } from "./ui.jsx";
 
@@ -15,6 +16,7 @@ export default function ProductsTab() {
   const { shopId, products, loadProducts, loadingProducts, usage } = useShopData();
 
   const [form, setForm] = useState(EMPTY);
+  const [snapshot, setSnapshot] = useState(null); // რედაქტირების დაწყებისას პროდუქტის მდგომარეობა
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(""); // ლოკალური objectURL ან არსებული URL
   const [busy, setBusy] = useState(false);
@@ -28,12 +30,14 @@ export default function ProductsTab() {
 
   function reset() {
     setForm(EMPTY);
+    setSnapshot(null);
     setFile(null);
     setPreview("");
     if (fileRef.current) fileRef.current.value = "";
   }
 
   function startEdit(p) {
+    setSnapshot(p);
     setForm({
       id: p.id, name: p.name, price: String(p.price), quantity: String(p.quantity),
       sku: p.sku || "", description: p.description || "", is_active: p.is_active,
@@ -77,8 +81,14 @@ export default function ProductsTab() {
         image_url: imageUrl,
       };
       if (form.id) {
-        await api("/products/" + form.id, "PUT", payload);
-        toast("პროდუქტი განახლდა");
+        // A-002: მხოლოდ შეცვლილი ველები — ძველი snapshot-ის მარაგი სერვერისას არ გადაწერს
+        const diff = changedProductFields(snapshot, payload);
+        if (Object.keys(diff).length === 0) {
+          toast("ცვლილება არ არის");
+        } else {
+          await api("/products/" + form.id, "PUT", diff);
+          toast("პროდუქტი განახლდა");
+        }
       } else {
         await api("/products", "POST", { ...payload, shop_id: shopId });
         toast("პროდუქტი დაემატა");

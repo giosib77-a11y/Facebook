@@ -22,7 +22,7 @@ export default function OrdersTab() {
   // ⚠️ რევიუ P3-17: ძველ app.js-ში ღილაკი იბლოკებოდა მოთხოვნის დროს
   // (`delBtn.disabled = true`) — მიგრაციისას ეს დაკარგა. ვაბრუნებთ.
   const [busyId, setBusyId] = useState(null);
-  const { shopId, orders, orderFilter, changeOrderFilter, loadOrders, loadingOrders } = useShopData();
+  const { shopId, orders, orderFilter, changeOrderFilter, loadOrders, loadProducts, loadingOrders } = useShopData();
   const link = orderLink(shopId);
 
   async function copy() {
@@ -42,6 +42,7 @@ export default function OrdersTab() {
       await api("/orders/" + o.id, "PATCH", { status });
       toast("სტატუსი განახლდა");
       loadOrders(); // მარაგი შეიძლება შეიცვალა (გაუქმება/ხელახლა გახსნა)
+      loadProducts(); // A-002: პროდუქტების სია არ დარჩეს მოძველებული მარაგით
     } catch (err) {
       toast(err.message, true);
       loadOrders();
