@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Stop hook: Claude-ის მიერ პასუხის დასრულებისას უშვებს შემოწმებებს.
-# თუ რომელიმე ჩავარდა, Claude-ს უბრუნებს შეცდომას და აიძულებს გააგრძელოს მუშაობა.
-
-# ---- შეავსე ამ პროექტის ბრძანებებით (ცარიელი სია = hook არაფერს აკეთებს) ----
+# Stop / SubagentStop hook: Claude-ის ან executor-ის დასრულებისას უშვებს სწრაფ შემოწმებებს.
+# თუ რომელიმე ჩავარდა, exit 2 შეცდომას Claude-ს უბრუნებს და აიძულებს გააგრძელოს მუშაობა.
+#
+# ბრძანებებს ავტომატურად პოულობს: package.json-ის scripts (lint, typecheck, test)
+# ან Python-ის პროექტი (ruff, pytest; uv-ით, თუ uv.lock არსებობს).
+# საკუთარი სიის მისათითებლად შეავსე CHECKS — მაშინ ავტომატური ძებნა გამოირთვება.
+# ეს ფაილი მხოლოდ შენ (მომხმარებელი) შეცვალე; Claude-ს მისი რედაქტირება აკრძალული აქვს.
 CHECKS=(
-  "cd backend && .venv/Scripts/python.exe -m ruff check app tests"
-  "cd backend && .venv/Scripts/python.exe -m pytest -q"
+  # "pnpm lint"
+  # "uv run pytest -q"
 )
-# ------------------------------------------------------------------------------
 
 INPUT=$(cat)
 
@@ -16,40 +18,60 @@ if echo "$INPUT" | grep -q '"stop_hook_active"[[:space:]]*:[[:space:]]*true'; th
   exit 0
 fi
 
-[ ${#CHECKS[@]} -eq 0 ] && exit 0
-
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
+# გზის შეცდომისას ჩუმად არ გავიდეთ: შეტყობინება ჩანს, მაგრამ მუშაობას არ ბლოკავს.
+if ! cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null; then
+  echo "verify.sh: პროექტის საქაღალდეში გადასვლა ვერ მოხერხდა ('${CLAUDE_PROJECT_DIR}'). შემოწმებები არ გაშვებულა." >&2
+  exit 1
+fi
 
 # თუ git-ში ცვლილება არ არის (მაგ. მხოლოდ საუბარი იყო), შემოწმება არ გაეშვება.
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   [ -z "$(git status --porcelain)" ] && exit 0
 fi
 
+# ---- ავტომატური ძებნა, თუ CHECKS ცარიელია ----
+if [ ${#CHECKS[@]} -eq 0 ]; then
+  if [ -f package.json ] && command -v node >/dev/null 2>&1; then
+    PM="npm"
+    [ -f pnpm-lock.yaml ] && command -v pnpm >/dev/null 2>&1 && PM="pnpm"
+    SCRIPTS=$(node -e "try{const s=require('./package.json').scripts||{};console.log(Object.keys(s).join(' '))}catch(e){}")
+    for s in lint typecheck test; do
+      [[ " $SCRIPTS " == *" $s "* ]] && CHECKS+=("$PM run $s")
+    done
+  fi
+  if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+    RUN=""
+    [ -f uv.lock ] && command -v uv >/dev/null 2>&1 && RUN="uv run "
+    if grep -qs "ruff" pyproject.toml requirements*.txt 2>/dev/null; then
+      CHECKS+=("${RUN}ruff check .")
+    fi
+    if [ -d tests ] || ls test_*.py >/dev/null 2>&1; then
+      CHECKS+=("${RUN}python -m pytest -q")
+    fi
+  fi
+fi
+
+[ ${#CHECKS[@]} -eq 0 ] && exit 0
+
+# dependency-ები ჯერ დაყენებული არ არის → ცრუ ჩავარდნის ნაცვლად გაფრთხილება.
+if [ -f package.json ] && [ ! -d node_modules ]; then
+  echo "verify.sh: node_modules არ არის (გაუშვი install). Node-ის შემოწმებები გამოტოვებულია." >&2
+  exit 1
+fi
+
+# test runner-ები (vitest, jest) ერთჯერადად ეშვება და არა watch რეჟიმში.
+export CI=true
+
 FAILED=0
-SUMMARY=""
 for cmd in "${CHECKS[@]}"; do
   OUTPUT=$(bash -c "$cmd" 2>&1)
-  RC=$?
-  # agent-dashboard: remember pytest's summary line ("2 failed, 162 passed in 3.1s") if any
-  LINE=$(echo "$OUTPUT" | grep -E '[0-9]+ (passed|failed).* in [0-9.]+s' | tail -1)
-  [ -n "$LINE" ] && SUMMARY=$LINE
-  if [ $RC -ne 0 ]; then
+  if [ $? -ne 0 ]; then
     FAILED=1
     echo "Verification failed: $cmd" >&2
     echo "$OUTPUT" | tail -40 >&2
     echo "" >&2
   fi
 done
-
-# agent-dashboard: record the result as one event, only if the events dir already exists.
-if [ -d .claude/agent-dashboard ]; then
-  TS=$(date +%s.%3N 2>/dev/null); case "$TS" in ""|*[!0-9.]*) TS=$(date +%s) ;; esac
-  OK=true; [ $FAILED -ne 0 ] && OK=false
-  NP=$(echo " $SUMMARY" | sed -nE 's/.* ([0-9]+) passed.*/,"passed":\1/p')
-  NF=$(echo " $SUMMARY" | sed -nE 's/.* ([0-9]+) failed.*/,"failed":\1/p')
-  { printf '{"ts":%s,"event":"Verify","ok":%s%s%s}\n' "$TS" "$OK" "$NP" "$NF" \
-      >> .claude/agent-dashboard/events.jsonl; } 2>/dev/null || true
-fi
 
 if [ $FAILED -ne 0 ]; then
   echo "Fix the failures above before finishing. If a failure is unrelated to your change, explain it to the user instead." >&2
