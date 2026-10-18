@@ -11,7 +11,7 @@
   - `npm audit --omit=dev` ✅ 0 vulnerabilities (dev-ში 1 high — იხ. A-014)
   - `pip-audit` — ლოკალურად **არ გაეშვა** (venv-ში არ არის დაყენებული; CI-ში ეშვება)
   - typecheck, frontend lint და frontend ტესტები პროექტში არ არის
-- **რაოდენობა:** critical 2 · should-fix 0 · nit 12
+- **რაოდენობა:** critical 2 (ორივე fixed) · should-fix 0 · nit 14 (12 აუდიტიდან + 2 /fix-ის გადამოწმებიდან)
 
 Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უკვე ჩაწერილი პუნქტები აქ აღარ მეორდება.
 
@@ -26,7 +26,7 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **შედეგი:** ყველა დამთხვეული პროდუქტის ფასი ხდება 0 და SKU იშლება. საჯარო შეკვეთის ჯამს სერვერი DB-იდან ითვლის, ამიტომ შეკვეთა 0 ₾-ზე იქმნება, ბოტი კი „ფასი დასაზუსტებელია“-ს ამბობს. სარკისებური შემთხვევა: ფაილი „სახელი, ფასი“ სვეტებით მარაგს ანულებს, პროდუქტი „არ არის მარაგში“ ხდება. ერთი ცარიელი უჯრა მითითებულ სვეტში ამ პროდუქტზე იგივე ეფექტს იძლევა. გაფრთხილება არ ჩანს.
 - **გამოსწორება:** parser-მა მიუთითებელ/ცარიელ ველზე დააბრუნოს `None` (ან მითითებული ველების სია); update-ში ჩაიწეროს მხოლოდ მითითებული და არაცარიელი ველები (როგორც `description`-ზეა); ახალი პროდუქტის insert-ზე default 0 რჩება. ტესტები: ნაწილობრივი mapping (სახელი+მარაგი; სახელი+ფასი) და ცარიელი უჯრა არსებულ price/quantity/sku-ს ინარჩუნებს; import-ის update გზას ამჟამად ტესტი საერთოდ არ აქვს.
 - **owner:** backend-dev
-- **status:** open
+- **status:** fixed (verified) — commit `6a80cb9`. `backend/tests/test_import_update.py` (8 ტესტი): ძველ კოდზე 6 failed / 2 passed (insert default-ები და ცხადი მნიშვნელობები ძველზეც სწორი იყო), ახალზე 8/8; სრული `pytest -q` 271 passed. ქცევის შენიშვნა: ცარიელი უჯრით ფასის/SKU-ს გასუფთავება import-ით აღარ ხდება (როგორც `description`-ზე) — ეს ხელით რედაქტირებით კეთდება. code-reviewer-ის ხელახალი შემოწმება: fixed.
 
 ### A-002 — პროდუქტის რედაქტირება მოძველებულ მარაგს წერს და `processing`-ის დაკლებას აუქმებს (lost update)
 - **severity:** critical (მარაგი არასწორად → overselling)
@@ -35,7 +35,7 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **შედეგი:** DB-ში მარაგი ისევ 5 ხდება. შეკვეთის შემდგომი გაუქმება +2-ს ამატებს, სულ 7 გამოდის. 2 ცალი ზედმეტად გაიყიდება და შეცდომა არსად ჩანს.
 - **გამოსწორება:** (ა) PUT-ში გაიგზავნოს მხოლოდ შეცვლილი ველები (diff `startEdit`-ის snapshot-თან). backend უკვე `exclude_unset`-ს იყენებს (`products.py:368`), ამიტომ backend-ის ცვლილება არ სჭირდება. (ბ) `setStatus`-ის წარმატებაზე გამოიძახოს `loadProducts()`-იც. `npm run build` და `dist/` იმავე commit-ში.
 - **owner:** frontend-dev
-- **status:** open
+- **status:** fixed (reviewed) — commit `69290f0`. diff-ის ლოგიკა `frontend/src/panel/productDiff.js`-შია და ტესტით მოწმდება (`node --test frontend/src/panel/productDiff.test.js` → 7/7; „სრული payload“ ვერსიაზე 0/7). ის, რომ `ProductsTab` PUT-ში `diff`-ს აგზავნის და `OrdersTab` `loadProducts()`-ს იძახებს, დადასტურებულია მხოლოდ კოდის კითხვით (frontend-ზე UI ტესტები არ არის, ბრაუზერში არ შემოწმებულა). ხელით შესამოწმებლად: DevTools → Network, მხოლოდ ფასის შეცვლისას PUT body = `{"price": …}`. code-reviewer-ის ხელახალი შემოწმება: fixed.
 
 ---
 
@@ -154,6 +154,32 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **გამოსწორება:** lock-ის განახლება შემდეგ dependency bump-თან ერთად.
 - **owner:** frontend-dev
 - **status:** open
+
+### A-015 — რედაქტირების ფორმა მარაგს ფორმის გახსნის მომენტით აჩვენებს (A-002-ის ნარჩენი)
+- **severity:** nit
+- **file:** `frontend/src/panel/ProductsTab.jsx:39-45`
+- **სცენარი:** გამყიდველი რედაქტირებას ხსნის (მარაგი 5); ამასობაში შეკვეთის დადასტურება მარაგს 3-მდე აკლებს. გამყიდველს 10-ის დამატება უნდა და წერს 15-ს.
+- **შედეგი:** ჩაიწერება აბსოლუტური 15, ანუ დაკლებული 2 იკარგება. ეს ცხადი ხელით ჩანაწერია, ჩუმი overwrite აღარ არის (A-002 დაიხურა). პანელს polling არ აქვს.
+- **გამოსწორება:** `startEdit`-ში პროდუქტის თავიდან წამოღება (`GET`), ან მინიშნება ველთან („მარაგი შეიძლება შეიცვალა — განაახლე“).
+- **owner:** frontend-dev
+- **status:** open
+
+### A-016 — frontend-ის ტესტი CI-ში არ ეშვება
+- **severity:** nit
+- **file:** `frontend/package.json`, `.github/workflows/ci.yml`
+- **სცენარი:** `productDiff.test.js` მხოლოდ ხელით ეშვება (`node --test`); `test` script და CI-ის ნაბიჯი არ არის.
+- **შედეგი:** A-002-ის diff ლოგიკის რეგრესია CI-ს გაივლის.
+- **გამოსწორება:** `"test": "node --test src/panel/"` და CI-ის frontend job-ში `npm test`.
+- **owner:** frontend-dev
+- **status:** open
+
+---
+
+## /fix — 2026-10-18 (A-001, A-002)
+
+- ბრენჩი: `agent-system` (მფლობელის არჩევანი; `fix/` ბრენჩი არ შექმნილა). commit-ები: `69290f0` (A-002), `6a80cb9` (A-001).
+- მიზნობრივი გადამოწმება (code-reviewer, მხოლოდ შეცვლილი ფაილები): ორივე — fixed; ახალი critical/should-fix არ არის; ახალი nit-ები: A-015, A-016.
+- საბოლოო შემოწმება vs baseline: pip check ✅, compileall ✅, ruff ✅, pytest **271 passed** (263 → +8), 0 failed, warnings იგივე 2; `node --test` productDiff 7/7 (ახალი); `npm run build` ✅, `dist` აქტუალური; `npm audit --omit=dev` 0. pip-audit — არ გაეშვა (იგივე მიზეზით).
 
 ---
 
