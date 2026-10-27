@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "./api.js";
 import { getToken } from "./supabase.js";
 import { startConnect } from "./fbConnect.js";
