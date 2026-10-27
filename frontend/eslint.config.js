@@ -1,7 +1,8 @@
 /**
  * ESLint flat config for the ChatAssist frontend.
  *
- * What it does: lints the frontend with the recommended JS rules plus the React
+ * What it does: lints the frontend with the recommended core JS rules (spread into `rules`,
+ * not into the config object, or they get overwritten) plus the React
  * and react-hooks rules (a missing useEffect dependency is a real bug).
  * Where it fits: `npm run lint`, and the frontend CI job.
  * Notes: eslint-plugin-react-hooks is pinned to 5.x on purpose — 7.x adds
@@ -19,7 +20,6 @@ export default [
 
   {
     files: ["**/*.{js,jsx}"],
-    ...js.configs.recommended,
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -33,6 +33,9 @@ export default [
       "react-refresh": reactRefresh,
     },
     rules: {
+      // core recommended წესები აქ უნდა იყოს: `...js.configs.recommended` ობიექტის
+      // დონეზე გავრცელება მათ `rules`-ის გასაღებით ანაცვლებდა (no-undef და სხვა გამორთული იყო)
+      ...js.configs.recommended.rules,
       ...react.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
       // ახალი JSX transform — React-ის იმპორტი აღარ სჭირდება

@@ -16,7 +16,7 @@ function cell(v) {
 export function toCSV(headers, rows) {
   const lines = [headers.map(cell).join(",")];
   rows.forEach((r) => lines.push(r.map(cell).join(",")));
-  // ﻿ (BOM) — Excel-ში ქართული სწორად გამოჩნდეს. არ მოხსნა.
+  // U+FEFF (BOM) — Excel-ში ქართული სწორად გამოჩნდეს. არ მოხსნა.
   return "﻿" + lines.join("\r\n");
 }
 
