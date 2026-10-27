@@ -15,14 +15,18 @@
   (⚠️ ლოკალური `.env` production Supabase-ს უკავშირდება — აგენტმა backend არ გაუშვას მფლობელის თანხმობის გარეშე)
 - dev frontend: `cd frontend && npm run dev` → http://localhost:5173/panel/
 - lint: `cd backend && .venv/Scripts/python.exe -m ruff check app tests`
-  (E,F; E501 ignored; CI-ში). Frontend-ზე eslint არ არის.
+  (E,F; E501 ignored; CI-ში).
+- lint frontend: `cd frontend && npm run lint`
+  (ESLint 9 flat config, react + react-hooks 5.x + react-refresh; CI-ში; warning-ები exit-ს არ აფუჭებს)
 - typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (ერთჯერადი გაშვება, watch-ის გარეშე; 271 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 271 ტესტი, offline — fake Supabase + mock Graph/Gemini)
+- test frontend: `cd frontend && npm test`
+  (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; ტესტები `src/**/*.test.{js,jsx}` ფაილის გვერდით)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
-- CI: `.github/workflows/ci.yml` — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest` + frontend job (`npm ci`, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)
+- CI: `.github/workflows/ci.yml` — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest` + frontend job (`npm ci`, `npm audit --omit=dev`, lint, test, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)
 
 ## Conventions
 - **აკრძალულია** (მფლობელის თანხმობის გარეშე): `git push`, `main`-ში merge, deploy, remote Supabase-ზე

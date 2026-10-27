@@ -8,6 +8,8 @@
 npm install
 npm run dev      # http://localhost:5173/panel/  (dev-სერვერი)
 npm run build    # → dist/  (ეს ჩადის git-ში, იხ. ქვემოთ)
+npm run lint     # ESLint
+npm test         # Vitest-ის ტესტები
 ```
 
 backend ცალკე უნდა გაუშვა: `../start-backend.ps1` (პორტი 8000).

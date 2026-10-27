@@ -47,6 +47,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install
         run: npm ci
+      - name: Vulnerability audit (prod deps)
+        run: npm audit --omit=dev
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm test
       - name: Build
         run: npm run build
       - name: dist is up to date

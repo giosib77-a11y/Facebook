@@ -420,6 +420,8 @@ cd frontend
 npm install
 npm run dev      # http://localhost:5173/panel/
 npm run build    # → dist/  (ეს ჩადის git-ში!)
+npm run lint     # ESLint
+npm test         # Vitest-ის ტესტები
 ```
 
 `frontend/public/config.js` — გადააკოპირე `config.example.js`-დან და შეავსე
