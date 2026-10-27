@@ -171,7 +171,7 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **შედეგი:** A-002-ის diff ლოგიკის რეგრესია CI-ს გაივლის.
 - **გამოსწორება:** `"test": "node --test src/panel/"` და CI-ის frontend job-ში `npm test`.
 - **owner:** frontend-dev
-- **status:** open
+- **status:** fixed (Stage 13, 2026-10-27: Vitest `npm test` + CI-ის frontend job — S13-2, S13-5)
 
 ---
 

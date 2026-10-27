@@ -250,9 +250,10 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ## Last Session
 - Date: 2026-10-27
-- Done: Stage 13 დაიგეგმა (`/auto plan:`): S13-1…S13-5 — ESLint 9, Vitest + productDiff-ის გადატანა, საბაზისო ტესტები, ESLint error-ების უსაფრთხო გასწორება, CI + docs. კოდი ჯერ არ შეცვლილა.
-- Verification (დაგეგმვისას): `npm audit --omit=dev` → 0 vulnerabilities (CI-ის ახალი ნაბიჯი მწვანე დაიწყება); სრული `npm audit` → 2 high (dev, Backlog).
-- Next: `/auto continue` → S13-1.
+- Done: Stage 13 დასრულდა — S13-1…S13-6 (commit-ები `ebf341e`, `a041fd0`, `783480a`, `2e011a0`, `29070c7`, `1e84ee1`; finish-check `85078d5`, 1 fix round). AUDIT A-016 დაიხურა.
+- Verification (საბოლოო, სუფთა `npm ci`-ის შემდეგ): `npm audit --omit=dev` 0; `npm run lint` 0 error / 5 warning (Backlog); `npm test` 29/29 (4 ფაილი); `npm run build` → `dist` byte-identical (`git diff --exit-code -- frontend/dist` = 0); backend: compileall ✅, ruff ✅, pytest 271 passed.
+- Unverified: GitHub Actions-ში ახალი ნაბიჯების რეალური გაშვება (push-ის შემდეგ); ბრაუზერში ვიზუალური შემოწმება არ ჩატარებულა (Playwright არ არის) — `dist` იდენტურია, ამიტომ production ცვლილება არ არსებობს.
+- Next: მფლობელი — merge/push `main`-ზე და CI-ის მწვანე გაშვების დადასტურება; Backlog-ის Stage 13 nit-ები (+ voltbox-ს იგივე ESLint config ბაგი აქვს).
 - წინა სესია (2026-10-09): Stage 12 (S12-1…S12-5) — `e8525f0` live, 0024 გაშვებულია; დარჩა Deploy plan-ის ნაბიჯი 5-ის ნაწილი და „Live-მდე აუცილებელი“ სია.
 
 ## Stage 12 — Done
