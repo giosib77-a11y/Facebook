@@ -19,7 +19,7 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 11 — Live-მზადყოფნა** (იხ. `PROGRESS.md`; Stage 10 — Audit fixes დასრულებულია).
+**Stage 13 — Frontend-ის ხარისხის შემოწმებები (ESLint + Vitest + CI)** (იხ. `PROGRESS.md`; Stage 10–12 დასრულებულია).
 
 ## Scope
 ### In scope (current stage)
@@ -242,6 +242,13 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 ### 2026-10 — `CLIENT_IP_TRUSTED_HOPS` production-ში სავალდებულოა (S12-4)
 - Decision: default აღარ არის (`None`); production-ში ცარიელი/<1 → startup `RuntimeError` (როგორც სხვა secrets). dev/test-ში 1.
 - Reason: დაკარგული env ჩუმად ყველა მყიდველს ერთ IP-bucket-ში აგდებდა.
+
+### 2026-10-27 — Frontend: ESLint 9 + Vitest, voltbox-ის ნიმუშით (Stage 13)
+- Decision: ESLint 9 flat config (`frontend/eslint.config.js`): `@eslint/js` recommended + `eslint-plugin-react` recommended + `eslint-plugin-react-hooks` **5.x** recommended + `eslint-plugin-react-refresh` (`only-export-components` → warn); `react/react-in-jsx-scope`, `react/jsx-uses-react`, `react/prop-types` → off; `no-unused-vars` `_`-ით და `ignoreRestSiblings`. voltbox-ის `no-console: error` **არ** გადმოგვაქვს (აქ `console.error` ზოგან განზრახაა). Vitest — `vite.config.js`-ის `test` ბლოკში (jsdom, `vitest.setup.js`: jest-dom + cleanup), `include: src/**/*.test.{js,jsx}`; `npm test` = `vitest run`. ვერსიები — voltbox-ის ხაზის თანადროული (eslint 9.39.x, vitest 5.x, jsdom 30.x, @testing-library/react 16.x).
+- Reason: მფლობელის მოთხოვნა (voltbox-ის მსგავსად) + AUDIT A-016 (frontend ტესტი CI-ში არ ეშვებოდა). react-hooks 7.x React Compiler-ის წესებს (`set-state-in-effect`, `refs`, `purity`…) ამატებს — არსებულ კოდზე მათი გასწორება ქცევას ცვლის, რაც ამ stage-ში აკრძალულია; 5.x მხოლოდ `rules-of-hooks` (error) + `exhaustive-deps` (warn)-ია. ცალკე `vitest.config.js`-ის ნაცვლად `test` ბლოკი — ერთი კონფიგი, build-ის გამოსავალს არ ცვლის.
+- ვარაუდი (/auto): ESLint-ის **error**, რომლის გასწორებაც ქცევას შეცვლის, არ სწორდება — ის ხაზი იღებს `// eslint-disable-next-line <rule> -- <მიზეზი>, Backlog S13` კომენტარს და Backlog-ში ცალკე ჩანაწერს. წესის სიმკაცრე config-ში არ მცირდება (ახალ კოდზე სრულად მოქმედებს). `exhaustive-deps`-ის warning-ები არ სწორდება (deps-ის დამატება ქცევის ცვლილებაა) → Backlog.
+- ვარაუდი (/auto): `/auto`-ს ფაზა 1ბ (DESIGN.md + Playwright setup) ამ stage-ში გამოტოვებულია — stage UI-ს/ვიზუალს არ ცვლის, მხოლოდ tooling-ია; ვიზუალის უცვლელობა მოწმდება `npm run build`-ით და `dist/`-ის diff-ის გადახედვით (ESLint-ის გასწორებისას). შეიცვლება: მფლობელს Playwright-ის smoke ტესტი სურს → ცალკე task მომდევნო stage-ში.
+- CI: frontend job — `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm test` → build → `dist` diff. სრული `npm audit` (dev-ის ჩათვლით) CI-ში არ არის (A-014: dev-dependency-ების high-ები production bundle-ში არ ხვდება).
 
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->

@@ -1,10 +1,12 @@
 # Progress
 
 ## Current Stage
-Stage 12 — Live-მზადყოფნა: მესამე სრული აუდიტი (standard-reviewer, 2026-10-09; მფლობელის გადაწყვეტილება)
+Stage 13 — Frontend-ის ხარისხის შემოწმებები: ESLint 9 + Vitest + CI (მფლობელის მოთხოვნა, 2026-10-27; voltbox-ის ნიმუშით)
 
-ID-ები S12-n; commit: `fix(scope): ... (S12-n)`. მიგრაცია `0024` — აგენტი წერს, **გაშვება მფლობელი, ხელით**.
-Stage 11 — დასრულებულია (კოდი + deploy); მისი task-ები: `## Stage 11 — Done`. Stage 10 — `## Stage 10 — Done`.
+ID-ები S13-n; commit: `S13-n: ...`. ბრენჩი — მხოლოდ `agent-system` (ყოველ commit-მდე `git branch --show-current`).
+**ფუნქციონალი და ვიზუალი არ იცვლება.** production კოდს (`frontend/src/**`, ტესტების გარდა) ეხება მხოლოდ S13-4, მხოლოდ ქცევის შემნარჩუნებელი გასწორებით.
+გადაწყვეტილებები და ვარაუდები — `PROJECT.md` Decision Log, 2026-10-27. ხურავს AUDIT.md-ის **A-016**-ს.
+Stage 12 — `## Stage 12 — Done`; Stage 11 — `## Stage 11 — Done`; Stage 10 — `## Stage 10 — Done`.
 
 <!-- Stage 10 header (ისტორია):
 
@@ -15,21 +17,35 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 -->
 
 ## Tasks
-- [x] **S12-1 — should-fix (Live-მდე): image ჩამოტვირთვას მთლიანი deadline + მხოლოდ საკუთარი Storage URL** (აუდიტი #4, B-12-ის ნაწილი) · `services/facebook.py` (`download_image`, `is_own_storage_image_url`), `services/bot.py` (`_fetch_product_images`)
-  - slow-drip `image_url` thread-ს წუთობით იკავებდა → threadpool-ის ამოწურვა. Fix: 15 წმ-იანი `time.monotonic` deadline; ბოტი საცნობარო ფოტოს მხოლოდ `<SUPABASE_URL>/storage/v1/object/public/product-images/` ბილიკიდან იღებს (UI-ში ფოტო მხოლოდ ატვირთვით → გარე URL ლეგიტიმური გზა არ არის; პირდაპირი PostgREST `image_url` გარე URL-ს ბოტი უგულებელყოფს). B-12-ის ნარჩენი (DNS rebinding, 100.64/10) ახლა მხოლოდ კლიენტის FB/IG CDN URL-ებს ეხება → Backlog-ში რჩება.
-  - Verify: ტესტები (fake clock-ით slow-drip წყდება; გარე URL არ იწერება; supabase_url ცარიელი → უარი).
-- [x] **S12-2 — should-fix: `enforce_bot_limit` სამივე downgrade გზაზე + ტესტები** (აუდიტი #1 + #5) · `services/bot_limits.py`, `api/shops.py`, `api/admin.py`
-  - ადმინის tier-ცვლა/approve ზედმეტ ბოტს არ თიშავდა; გამყიდველის downgrade ერთადერთ მომუშავე ბოტს თიშავდა, თუ უფრო ძველი მაღაზიის ბოტი გამორთული იყო. Fix: ერთი helper (რჩება ჩართულებიდან ყველაზე ძველი `limit`); შეცდომა → 500 (აღარ ილექება). knowledge upload/clear ტესტებს `.eq("id")` assert დაემატა.
-  - Verify: 9 ახალი ტესტი სამივე გზაზე (mutation-ით დადასტურდა: helper-ის გარეშე admin ტესტები ვარდება).
-- [x] **S12-3 — should-fix: `upgrade_requests` — authenticated-ს INSERT მოხსნილია (migration 0024)** (აუდიტი #2 + nit `_cancel_pending_requests`) · `supabase/migrations/0024_*.sql`, `api/shops.py`
-  - ბიზნეს-წესი: გამოწერა per-account → pending **per-account**: ახალი მოთხოვნა მფლობელის ყველა მაღაზიის ძველ pending-ს აუქმებს; ჩაწერა service client-ით RLS-ownership-ის შემდეგ; rate limit 10/სთ/IP; `_cancel_pending_requests` შეცდომას აღარ ყლაპავს. 0024: revoke + policy drop + partial unique (მაქს. ერთი pending მაღაზიაზე, დუბლიკატებს cancelled-ზე გადაიყვანს). Decision Log-ში ჩაწერილია.
-  - Verify: 5 ახალი ტესტი; SQL verification query მიგრაციაში (**გაშვება — მფლობელი**).
-- [x] **S12-4 — `CLIENT_IP_TRUSTED_HOPS` production-ში სავალდებულო** · `config.py`, `core/ratelimit.py`, `.env.example`
-  - default (1) ამოღებულია (`None`); production-ში ცარიელი/<1 → startup `RuntimeError`. ⚠️ Render-ზე უკვე `=3` (Stage 10) — deploy-მდე გადაამოწმე, თორემ სერვერი არ ადგება.
-  - Verify: ტესტები (პროდაქშენში აკლია → სახელი სიაში; 0 → invalid; dev-ში არ მოითხოვება).
-- [x] **S12-5 — docs nits ერთად** · `CLAUDE.md`, `PROJECT.md`, `README.md`, `.env.example`
-  - CLAUDE.md: ტესტების რაოდენობა, მიგრაციის შემდეგი ნომერი; PROJECT.md: მიგრაციების დიაპაზონი, Cloudflare → Render, Accepted Risks #18, Open Questions; README: მიგრაციების რაოდენობა + 0024, handoff-ის ცხრილი (`bot_conversations`), `CLIENT_IP_TRUSTED_HOPS`, `ADMIN_USER_IDS`; `.env.example`: `ADMIN_USER_IDS`, `CLIENT_IP_TRUSTED_HOPS`, `CLIENT_IP_DEBUG`, `LOG_LEVEL`, `PAYMENT_*`.
-  - Accepted Risks-ში ჩაემატა: kill-switch (#3), `SHOP_ORDERS_PER_HOUR`, Supabase client ყოველ მოთხოვნაზე.
+> ყველა ბრძანება `frontend/`-იდან. საერთო „done when" ყველა task-ზე: `npm run build` გადის და, თუ `src/` არ შეცვლილა, `git diff --exit-code -- dist` სუფთაა; backend-ს არ ვეხებით (`pytest -q` 271 passed რჩება).
+
+- [ ] **S13-1 — ESLint 9 setup** · owner: task-executor · files: `frontend/package.json` (shared), `frontend/package-lock.json` (shared), `frontend/eslint.config.js` (ახალი) · depends: —
+  - devDependencies: `eslint@^9.39`, `@eslint/js@^9.39`, `globals`, `eslint-plugin-react@^7.37`, `eslint-plugin-react-hooks@^5.2` (**არა 7.x** — Decision Log), `eslint-plugin-react-refresh@^0.5`. script: `"lint": "eslint ."` (`lint:fix` არ ემატება).
+  - config — voltbox-ის (`D:/yvelaperi/saitebi/voltbox/frontend/eslint.config.js`) ნიმუშით: ignores `dist/**`, `node_modules/**`; `**/*.{js,jsx}` — browser globals, JSX, `settings.react.version: "19.2"`; წესები: react recommended + react-hooks recommended + `react-refresh/only-export-components: ["warn", { allowConstantExport: true }]`; off: `react/react-in-jsx-scope`, `react/jsx-uses-react`, `react/prop-types`; `no-unused-vars: ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true }]`. `no-console` **არ** ემატება. Node-ის ფაილებზე (`*.config.js`) node globals; `**/*.test.{js,jsx}` + `vitest.setup.js` — node + vitest globals. `public/config.js` / `config.example.js` (`window.APP_CONFIG`) — browser globals საკმარისია.
+  - არსებულ კოდს **არ** ასწორებს (ეს S13-4-ია).
+  - done when: `npm run lint` ეშვება და config-ის შეცდომის გარეშე ასრულებს (exit 0 ან 1 მხოლოდ `src/`-ის/`public/`-ის მიგნებებით; `eslint.config.js`-ში 0 error); report-ში — error/warning-ების რაოდენობა წესების მიხედვით; `npm run build` → `git diff --exit-code -- dist` სუფთა; `src/` უცვლელი.
+- [ ] **S13-2 — Vitest setup + `productDiff.test.js` Vitest-ზე** · owner: task-executor · files: `frontend/package.json` (shared), `frontend/package-lock.json` (shared), `frontend/vite.config.js`, `frontend/vitest.setup.js` (ახალი), `frontend/src/panel/productDiff.test.js` · depends: S13-1 (იგივე shared ფაილები — თანმიმდევრულად)
+  - devDependencies: `vitest@^5`, `jsdom@^30`, `@testing-library/react@^16`, `@testing-library/jest-dom@^6`, `@testing-library/user-event@^14`. scripts: `"test": "vitest run"`, `"test:watch": "vitest"`.
+  - `vite.config.js`: `test: { environment: "jsdom", globals: true, setupFiles: ["./vitest.setup.js"] (აბსოლუტური გზით, როგორც `page()`), include: ["src/**/*.test.{js,jsx}"], restoreMocks: true }`. `build`/`base`/8 `.html` input უცვლელი.
+  - `vitest.setup.js`: `@testing-library/jest-dom/vitest` + `afterEach(cleanup)`. `window.APP_CONFIG`-ის stub მხოლოდ თუ რომელიმე ტესტს სჭირდება (S13-2-ში — არა).
+  - `productDiff.test.js`: `node:test`/`node:assert` → `vitest` (`test`, `expect`); იგივე შემთხვევები, იგივე რაოდენობა (7), იგივე ქართული სახელები; პირველი კომენტარი („გაშვება: node --test …") → `npm test`.
+  - done when: `npm test` → 7 passed; `npm run lint` — `vite.config.js`, `vitest.setup.js`, `productDiff.test.js`-ში 0 error; `npm run build` → `git diff --exit-code -- dist` სუფთა (test ბლოკი build-ს არ ცვლის).
+- [ ] **S13-3 — საბაზისო კომპონენტის/utility ტესტები** · owner: frontend-dev · files: `frontend/src/panel/ui.test.jsx` (ახალი), `frontend/src/lib/csv.test.js` (ახალი), `frontend/src/admin/constants.test.js` (ახალი) · depends: S13-2
+  - `ui.jsx` (Testing Library): `BusyButton` — `busy` → `disabled` + `is-loading` კლასი, `children` ჩანს, დამატებითი props (`type`, `onClick`) გადაეცემა, default კლასი `btn btn-primary`; `Skeleton` — default 3 `.skel-item`, `n={5}` → 5; `ToastProvider`/`useToast` — `toast("…")` → `#toast`-ში ტექსტი + `toast-ok`, `toast("…", true)` → `toast-err`, `vi.useFakeTimers()`-ით 3500 ms-ის შემდეგ `hidden`.
+  - `csv.js`: `toCSV` — BOM-ით იწყება, `\r\n` გამყოფი, მძიმე/ბრჭყალი/ახალი ხაზი → ციტირება და `""`; formula injection — `=SUM(1)`, `+x`, `@x` → `'`-ით; `-5`, `3.5` უცვლელი; `null`/`undefined` → ცარიელი. `fmtDate` — ცარიელი → `—`.
+  - `constants.js`: `tierLabel("standard")` → „სტანდარტი", უცნობი → იგივე მნიშვნელობა.
+  - production კოდი (`ui.jsx`, `csv.js`, `constants.js`) **არ იცვლება**; ტესტები offline, ქსელის/Supabase-ის გარეშე.
+  - done when: `npm test` → ყველა გადის (7 + ახლები, რაოდენობა report-ში); `npm run lint` ახალ ფაილებში 0 error; `git diff --stat` — მხოლოდ სამი ახალი ფაილი.
+- [ ] **S13-4 — არსებული კოდის ESLint error-ების გასწორება (მხოლოდ ქცევის შემნარჩუნებელი)** · owner: frontend-dev · files: `frontend/src/**/*.{js,jsx}` (მხოლოდ lint-ის მიერ მონიშნული ხაზები; `*.test.*` გარდა), `frontend/public/config.js` / `frontend/config.example.js` (მხოლოდ თუ მონიშნულია), `frontend/dist/**` (rebuild) · depends: S13-3 (თანმიმდევრულად: S13-2/S13-3 `dist`-ის უცვლელობას ამოწმებენ, S13-4 კი მას ცვლის; `eslint.config.js`/`vite.config.js`/`vitest.setup.js`-ის lint-სისუფთავე — S13-1/S13-2-ის პასუხისმგებლობაა)
+  - სწორდება მხოლოდ ის, რაც ქცევას და ვიზუალს არ ცვლის: გამოუყენებელი import/ცვლადი, ცარიელი block, `react/no-unescaped-entities` (`&quot;` და მისთ. — რენდერი იდენტურია), `react/jsx-key` მხოლოდ თუ key სტაბილურია და ახლაც ერთნაირია, და მისთ.
+  - **არ** სწორდება: `react-hooks/exhaustive-deps` (warning; deps-ის შეცვლა ქცევაა), `react-refresh` warning-ები (ფაილის დაყოფა რეფაქტორია), ნებისმიერი error, რომლის გასწორება ქცევას ცვლის → იმ ხაზზე `// eslint-disable-next-line <rule> -- <მიზეზი>, Backlog S13` + report-ში სია (ფაილი:ხაზი, წესი, რატომ), რომ Backlog-ში ჩაიწეროს. config-ში წესი არ რბილდება.
+  - JSX ტექსტი, className-ები, markup-ის სტრუქტურა და ქართული ტექსტები უცვლელია.
+  - done when: `npm run lint` → exit 0 (0 errors); warning-ების რაოდენობა report-ში; `npm run build` გადის და `dist/` იმავე commit-ში; `dist/`-ის diff მხოლოდ JS bundle-ებშია (CSS/HTML უცვლელი — `git diff --stat -- dist`); თითო ცვლილებაზე report-ში მოკლე დასაბუთება „ქცევა უცვლელია".
+- [ ] **S13-5 — CI + დოკუმენტაცია** · owner: task-executor · files: `.github/workflows/ci.yml`, `CLAUDE.md`, `README.md` · depends: S13-2, S13-3, S13-4
+  - `ci.yml` frontend job, რიგით: `npm ci` → `npm audit --omit=dev` (სახელი „Vulnerability audit (prod deps)") → `npm run lint` → `npm test` → `npm run build` → `git diff --exit-code -- dist`. backend job უცვლელი. node 24 რჩება.
+  - `CLAUDE.md` `## Commands`: ხაზი `lint`-ის ქვეშ — frontend: `cd frontend && npm run lint` (ESLint 9; CI-ში); ამოიღე „Frontend-ზე eslint არ არის."; `test`-ის ქვეშ — frontend: `cd frontend && npm test` (Vitest, `vitest run`, jsdom, offline); ამოიღე „frontend ტესტები არ არის"; CI-ის ხაზი — frontend job-ის ახალი ნაბიჯები. `.claude/`-ს არ ეხება.
+  - `README.md` frontend-ის ბრძანებების ორ ბლოკში (~ხაზი 9 და ~421): `npm run lint`, `npm test`.
+  - done when: YAML სწორია (ჩაღრმავება backend job-ის მსგავსი; ხელით გადაკითხვა); CLAUDE.md-ის ბრძანებები ზუსტად ემთხვევა `package.json`-ის scripts-ს; ლოკალურად CI-ის ნაბიჯები ზედიზედ (`npm ci && npm audit --omit=dev && npm run lint && npm test && npm run build && git diff --exit-code -- dist`) გადის. GitHub-ზე რეალური გაშვება — push-ის შემდეგ, მფლობელი (Unverified).
 
 ### Stage 12 — Deploy plan (მფლობელი; აგენტი remote-ზე არაფერს უშვებს)
 > რიგი მნიშვნელოვანია: 0024 backend-ის **შემდეგ** (ძველი backend + 0024 = „პაკეტის მოთხოვნა" 403/500).
@@ -194,7 +210,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - **B-12** — SSRF: DNS rebinding TOCTOU, `is_private` არ ფარავს 100.64/10 → `is_global` + მხოლოდ საკუთარი Storage URL (`services/facebook.py:279-334`).
 - **B-13** — კლიენტის ფოტოები `INLINE_IMAGE_BUDGET`-ს არ ემორჩილება (`webhook.py:313-317`).
 - **B-14** — prompt extraction-ით PDF-ცოდნა ფაქტობრივად საჯაროა → გამყიდველს UI-ში გაფრთხილება (`bot.py:194-197`).
-- Frontend lint (eslint) — არ არის; საჭიროა თუ არა?
+- ~~Frontend lint (eslint) — არ არის; საჭიროა თუ არა?~~ → Stage 13 (S13-1, S13-4).
 - README მოძველებულია: `ADMIN_EMAIL` → `ADMIN_USER_IDS`, „ტესტები არ არსებობს", React 18 → 19, მიგრაციები 14 → 16.
 
 ### მფლობელის შესამოწმებელი (კოდით ვერ დადასტურდა)
@@ -205,20 +221,44 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Supabase Auth: anonymous sign-ins გამორთულია? email confirmation ჩართულია?
 - ⏰ Gemini 2.5 Flash retires **2026-10-16** — რომელ მოდელზე გადასვლა?
 
+### Stage 13 (დაგეგმვისას, 2026-10-27)
+- სრული `npm audit` (dev-ის ჩათვლით) — 2 high dev-dependency-ებში (AUDIT A-014-ის გაგრძელება; production bundle-ში არ ხვდება). CI-ში მხოლოდ `--omit=dev`. Fix: `npm audit fix` / vite-ის განახლება ცალკე, `dist`-ის diff-ის გადახედვით.
+- Playwright smoke (`/auto` ფაზა 1ბ) — ამ stage-ში გამოტოვებულია (Decision Log 2026-10-27); საჭიროების შემთხვევაში ცალკე task.
+
 ## Shared files
+- `frontend/package.json`, `frontend/package-lock.json` — S13-1, S13-2 (თანმიმდევრულად, არა პარალელურად)
 
 ## Blockers
 
 ## Run State
-- Finish-check this stage: done (1 round; nit-ები გასწორდა, 1 Backlog-ში)
+- Stage: Stage 13 — Frontend-ის ხარისხის შემოწმებები
+- Finish-check this stage: not run
 - Fix rounds this stage: 0/2
 - Failed attempts: —
 
 ## Last Session
-- Date: 2026-10-09
-- Done: მესამე სრული აუდიტი (standard-reviewer) → Stage 12: S12-1…S12-5 (კოდი + მიგრაცია 0024 + docs); commit-ები `agent-system`-ზე, push არ გაკეთებულა.
-- Verification: `pytest -q` → 263 passed (offline); `ruff check app tests` სუფთა. ვერ შემოწმდა: 0024 რეალურ Postgres-ზე, `sb_*` key-ები, ბრაუზერში upgrade-request/downgrade, ბოტის ფოტო-ნაკადი ლაივზე (Deploy plan-ის ნაბიჯი 5).
-- Next: Stage 12 deploy ✅ (`e8525f0` live, 0024 გაშვებულია); დარჩა Deploy plan-ის ნაბიჯი 5-ის ნაწილი (მეორე მოთხოვნა, downgrade, ბოტის ფოტო) და „Live-მდე აუცილებელი“ სია.
+- Date: 2026-10-27
+- Done: Stage 13 დაიგეგმა (`/auto plan:`): S13-1…S13-5 — ESLint 9, Vitest + productDiff-ის გადატანა, საბაზისო ტესტები, ESLint error-ების უსაფრთხო გასწორება, CI + docs. კოდი ჯერ არ შეცვლილა.
+- Verification (დაგეგმვისას): `npm audit --omit=dev` → 0 vulnerabilities (CI-ის ახალი ნაბიჯი მწვანე დაიწყება); სრული `npm audit` → 2 high (dev, Backlog).
+- Next: `/auto continue` → S13-1.
+- წინა სესია (2026-10-09): Stage 12 (S12-1…S12-5) — `e8525f0` live, 0024 გაშვებულია; დარჩა Deploy plan-ის ნაბიჯი 5-ის ნაწილი და „Live-მდე აუცილებელი“ სია.
+
+## Stage 12 — Done
+- [x] **S12-1 — should-fix (Live-მდე): image ჩამოტვირთვას მთლიანი deadline + მხოლოდ საკუთარი Storage URL** (აუდიტი #4, B-12-ის ნაწილი) · `services/facebook.py` (`download_image`, `is_own_storage_image_url`), `services/bot.py` (`_fetch_product_images`)
+  - slow-drip `image_url` thread-ს წუთობით იკავებდა → threadpool-ის ამოწურვა. Fix: 15 წმ-იანი `time.monotonic` deadline; ბოტი საცნობარო ფოტოს მხოლოდ `<SUPABASE_URL>/storage/v1/object/public/product-images/` ბილიკიდან იღებს (UI-ში ფოტო მხოლოდ ატვირთვით → გარე URL ლეგიტიმური გზა არ არის; პირდაპირი PostgREST `image_url` გარე URL-ს ბოტი უგულებელყოფს). B-12-ის ნარჩენი (DNS rebinding, 100.64/10) ახლა მხოლოდ კლიენტის FB/IG CDN URL-ებს ეხება → Backlog-ში რჩება.
+  - Verify: ტესტები (fake clock-ით slow-drip წყდება; გარე URL არ იწერება; supabase_url ცარიელი → უარი).
+- [x] **S12-2 — should-fix: `enforce_bot_limit` სამივე downgrade გზაზე + ტესტები** (აუდიტი #1 + #5) · `services/bot_limits.py`, `api/shops.py`, `api/admin.py`
+  - ადმინის tier-ცვლა/approve ზედმეტ ბოტს არ თიშავდა; გამყიდველის downgrade ერთადერთ მომუშავე ბოტს თიშავდა, თუ უფრო ძველი მაღაზიის ბოტი გამორთული იყო. Fix: ერთი helper (რჩება ჩართულებიდან ყველაზე ძველი `limit`); შეცდომა → 500 (აღარ ილექება). knowledge upload/clear ტესტებს `.eq("id")` assert დაემატა.
+  - Verify: 9 ახალი ტესტი სამივე გზაზე (mutation-ით დადასტურდა: helper-ის გარეშე admin ტესტები ვარდება).
+- [x] **S12-3 — should-fix: `upgrade_requests` — authenticated-ს INSERT მოხსნილია (migration 0024)** (აუდიტი #2 + nit `_cancel_pending_requests`) · `supabase/migrations/0024_*.sql`, `api/shops.py`
+  - ბიზნეს-წესი: გამოწერა per-account → pending **per-account**: ახალი მოთხოვნა მფლობელის ყველა მაღაზიის ძველ pending-ს აუქმებს; ჩაწერა service client-ით RLS-ownership-ის შემდეგ; rate limit 10/სთ/IP; `_cancel_pending_requests` შეცდომას აღარ ყლაპავს. 0024: revoke + policy drop + partial unique (მაქს. ერთი pending მაღაზიაზე, დუბლიკატებს cancelled-ზე გადაიყვანს). Decision Log-ში ჩაწერილია.
+  - Verify: 5 ახალი ტესტი; SQL verification query მიგრაციაში (**გაშვება — მფლობელი**).
+- [x] **S12-4 — `CLIENT_IP_TRUSTED_HOPS` production-ში სავალდებულო** · `config.py`, `core/ratelimit.py`, `.env.example`
+  - default (1) ამოღებულია (`None`); production-ში ცარიელი/<1 → startup `RuntimeError`. ⚠️ Render-ზე უკვე `=3` (Stage 10) — deploy-მდე გადაამოწმე, თორემ სერვერი არ ადგება.
+  - Verify: ტესტები (პროდაქშენში აკლია → სახელი სიაში; 0 → invalid; dev-ში არ მოითხოვება).
+- [x] **S12-5 — docs nits ერთად** · `CLAUDE.md`, `PROJECT.md`, `README.md`, `.env.example`
+  - CLAUDE.md: ტესტების რაოდენობა, მიგრაციის შემდეგი ნომერი; PROJECT.md: მიგრაციების დიაპაზონი, Cloudflare → Render, Accepted Risks #18, Open Questions; README: მიგრაციების რაოდენობა + 0024, handoff-ის ცხრილი (`bot_conversations`), `CLIENT_IP_TRUSTED_HOPS`, `ADMIN_USER_IDS`; `.env.example`: `ADMIN_USER_IDS`, `CLIENT_IP_TRUSTED_HOPS`, `CLIENT_IP_DEBUG`, `LOG_LEVEL`, `PAYMENT_*`.
+  - Accepted Risks-ში ჩაემატა: kill-switch (#3), `SHOP_ORDERS_PER_HOUR`, Supabase client ყოველ მოთხოვნაზე.
 
 ## Stage 11 — Done
 - [x] **S11-1 — should-fix: შეკვეთის სტატუსი და მარაგი ერთ ტრანზაქციაში** (აუდიტი #2) · `backend/app/api/orders.py` (`update_order_status`), მიგრაცია `0021`
