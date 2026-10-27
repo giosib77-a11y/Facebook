@@ -24,7 +24,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - config — voltbox-ის (`D:/yvelaperi/saitebi/voltbox/frontend/eslint.config.js`) ნიმუშით: ignores `dist/**`, `node_modules/**`; `**/*.{js,jsx}` — browser globals, JSX, `settings.react.version: "19.2"`; წესები: react recommended + react-hooks recommended + `react-refresh/only-export-components: ["warn", { allowConstantExport: true }]`; off: `react/react-in-jsx-scope`, `react/jsx-uses-react`, `react/prop-types`; `no-unused-vars: ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true }]`. `no-console` **არ** ემატება. Node-ის ფაილებზე (`*.config.js`) node globals; `**/*.test.{js,jsx}` + `vitest.setup.js` — node + vitest globals. `public/config.js` / `config.example.js` (`window.APP_CONFIG`) — browser globals საკმარისია.
   - არსებულ კოდს **არ** ასწორებს (ეს S13-4-ია).
   - done when: `npm run lint` ეშვება და config-ის შეცდომის გარეშე ასრულებს (exit 0 ან 1 მხოლოდ `src/`-ის/`public/`-ის მიგნებებით; `eslint.config.js`-ში 0 error); report-ში — error/warning-ების რაოდენობა წესების მიხედვით; `npm run build` → `git diff --exit-code -- dist` სუფთა; `src/` უცვლელი.
-- [ ] **S13-2 — Vitest setup + `productDiff.test.js` Vitest-ზე** · owner: task-executor · files: `frontend/package.json` (shared), `frontend/package-lock.json` (shared), `frontend/vite.config.js`, `frontend/vitest.setup.js` (ახალი), `frontend/src/panel/productDiff.test.js` · depends: S13-1 (იგივე shared ფაილები — თანმიმდევრულად)
+- [x] **S13-2 — Vitest setup + `productDiff.test.js` Vitest-ზე** ✅ vitest 5.0.5, jsdom 30.1.3, @testing-library/react 16.3.3, jest-dom 6.9.1, user-event 14.6.8 (peer-კონფლიქტი არ ყოფილა; vite 8.2.2 უცვლელი); `npm test` 7/7; mutation-ით დადასტურდა, რომ ტესტი მართლა ეშვება; dist უცვლელი. · owner: task-executor · files: `frontend/package.json` (shared), `frontend/package-lock.json` (shared), `frontend/vite.config.js`, `frontend/vitest.setup.js` (ახალი), `frontend/src/panel/productDiff.test.js` · depends: S13-1 (იგივე shared ფაილები — თანმიმდევრულად)
   - devDependencies: `vitest@^5`, `jsdom@^30`, `@testing-library/react@^16`, `@testing-library/jest-dom@^6`, `@testing-library/user-event@^14`. scripts: `"test": "vitest run"`, `"test:watch": "vitest"`.
   - `vite.config.js`: `test: { environment: "jsdom", globals: true, setupFiles: ["./vitest.setup.js"] (აბსოლუტური გზით, როგორც `page()`), include: ["src/**/*.test.{js,jsx}"], restoreMocks: true }`. `build`/`base`/8 `.html` input უცვლელი.
   - `vitest.setup.js`: `@testing-library/jest-dom/vitest` + `afterEach(cleanup)`. `window.APP_CONFIG`-ის stub მხოლოდ თუ რომელიმე ტესტს სჭირდება (S13-2-ში — არა).
@@ -222,7 +222,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - ⏰ Gemini 2.5 Flash retires **2026-10-16** — რომელ მოდელზე გადასვლა?
 
 ### Stage 13 (დაგეგმვისას, 2026-10-27)
-- სრული `npm audit` (dev-ის ჩათვლით) — 2 high dev-dependency-ებში (AUDIT A-014-ის გაგრძელება; production bundle-ში არ ხვდება). CI-ში მხოლოდ `--omit=dev`. Fix: `npm audit fix` / vite-ის განახლება ცალკე, `dist`-ის diff-ის გადახედვით.
+- სრული `npm audit` (dev-ის ჩათვლით) — 2 high dev-dependency-ებში: vite 8.2.0–8.2.2 (მხოლოდ dev-server) და source-map-js ≤1.2.1 (AUDIT A-014-ის გაგრძელება; production bundle-ში არ ხვდება; Stage 13-მდეც არსებობდა). CI-ში მხოლოდ `--omit=dev`. Fix: `npm audit fix` / vite-ის განახლება ცალკე, `dist`-ის diff-ის გადახედვით.
 - Playwright smoke (`/auto` ფაზა 1ბ) — ამ stage-ში გამოტოვებულია (Decision Log 2026-10-27); საჭიროების შემთხვევაში ცალკე task.
 
 ## Shared files

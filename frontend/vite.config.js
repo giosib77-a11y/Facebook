@@ -13,6 +13,14 @@ export default defineConfig({
   base: "/panel/",
   plugins: [react()],
   server: { port: 5173 },
+  // ტესტები: jsdom (React კომპონენტებისთვის DOM სჭირდება), ტესტები src/-ში ფაილის გვერდით
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: [page("./vitest.setup.js")],
+    include: ["src/**/*.test.{js,jsx}"],
+    restoreMocks: true,
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
