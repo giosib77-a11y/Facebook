@@ -45,7 +45,12 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `ci.yml` frontend job, რიგით: `npm ci` → `npm audit --omit=dev` (სახელი „Vulnerability audit (prod deps)") → `npm run lint` → `npm test` → `npm run build` → `git diff --exit-code -- dist`. backend job უცვლელი. node 24 რჩება.
   - `CLAUDE.md` `## Commands`: ხაზი `lint`-ის ქვეშ — frontend: `cd frontend && npm run lint` (ESLint 9; CI-ში); ამოიღე „Frontend-ზე eslint არ არის."; `test`-ის ქვეშ — frontend: `cd frontend && npm test` (Vitest, `vitest run`, jsdom, offline); ამოიღე „frontend ტესტები არ არის"; CI-ის ხაზი — frontend job-ის ახალი ნაბიჯები. `.claude/`-ს არ ეხება.
   - `README.md` frontend-ის ბრძანებების ორ ბლოკში (~ხაზი 9 და ~421): `npm run lint`, `npm test`.
-  - done when: YAML სწორია (ჩაღრმავება backend job-ის მსგავსი; ხელით გადაკითხვა); CLAUDE.md-ის ბრძანებები ზუსტად ემთხვევა `package.json`-ის scripts-ს; ლოკალურად CI-ის ნაბიჯები ზედიზედ (`npm ci && npm audit --omit=dev && npm run lint && npm test && npm run build && git diff --exit-code -- dist`) გადის. GitHub-ზე რეალური გაშვება — push-ის შემდეგ, მფლობელი (Unverified).
+  - done when (S13-5): YAML სწორია (ჩაღრმავება backend job-ის მსგავსი; ხელით გადაკითხვა); CLAUDE.md-ის ბრძანებები ზუსტად ემთხვევა `package.json`-ის scripts-ს; ლოკალურად CI-ის ნაბიჯები ზედიზედ (`npm ci && npm audit --omit=dev && npm run lint && npm test && npm run build && git diff --exit-code -- dist`) გადის. GitHub-ზე რეალური გაშვება — push-ის შემდეგ, მფლობელი (Unverified).
+- [ ] **S13-6 — should-fix (finish-check, code-reviewer): `js.configs.recommended`-ის წესები გამორთულია** · owner: task-executor · files: `frontend/eslint.config.js`, `frontend/src/**/*.{js,jsx}` (მხოლოდ ახლად მონიშნული ხაზები, ქცევის შენარჩუნებით; ცნობილი: `src/lib/csv.js:19` კომენტარი) · depends: —
+  - მიზეზი (გადამოწმდა `eslint --print-config`-ით): `{ ...js.configs.recommended, rules: {...} }` — იმავე object-ში `rules` recommended-ის `rules`-ს მთლიანად ანაცვლებს → `no-undef`, `no-empty`, `no-dupe-keys`, `no-unreachable`… არ მოქმედებს; globals-ის ბლოკები პრაქტიკულად უქმია. შედეგი: დაბეჭდილი ცვლადის სახელი lint/CI-ს მწვანედ გადის და production-ში `ReferenceError`-ს იძლევა. (voltbox-ს იგივე ბაგი აქვს — ამ რეპოს გარეთაა, მფლობელს ეცნობება.)
+  - Fix: `rules`-ის პირველ ხაზად `...js.configs.recommended.rules`; `...js.configs.recommended` spread ამოიღე. header-ის კომენტარი სიმართლეს უნდა შეესაბამებოდეს.
+  - ახალი error-ები: მხოლოდ ქცევის შემნარჩუნებელი გასწორება (ცნობილი — `csv.js:19` `no-irregular-whitespace`: კომენტარში ნამდვილი BOM სიმბოლო → ტექსტი `U+FEFF`; ხაზი 20-ის string-ს არ ეხები); სხვაგვარად — `eslint-disable-next-line <rule> -- <მიზეზი>, Backlog S13` + report.
+  - done when: `eslint --print-config src/panel/ui.jsx`-ში `no-undef` და `no-dupe-keys` = error; კონტროლი: დროებით ფაილში/ხაზზე გამოუცხადებელი იდენტიფიკატორი → `npm run lint` ვარდება `no-undef`-ით (შემდეგ დაბრუნებულია); `npm run lint` exit 0 (0 error); `npm test` 29/29; `npm run build` → `git diff --stat -- frontend/dist` ცარიელი.
 
 ### Stage 12 — Deploy plan (მფლობელი; აგენტი remote-ზე არაფერს უშვებს)
 > რიგი მნიშვნელოვანია: 0024 backend-ის **შემდეგ** (ძველი backend + 0024 = „პაკეტის მოთხოვნა" 403/500).
@@ -225,6 +230,11 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - სრული `npm audit` (dev-ის ჩათვლით) — 2 high dev-dependency-ებში: vite 8.2.0–8.2.2 (მხოლოდ dev-server) და source-map-js ≤1.2.1 (AUDIT A-014-ის გაგრძელება; production bundle-ში არ ხვდება; Stage 13-მდეც არსებობდა). CI-ში მხოლოდ `--omit=dev`. Fix: `npm audit fix` / vite-ის განახლება ცალკე, `dist`-ის diff-ის გადახედვით.
 - ESLint warning-ები (S13-4-ში განზრახ არ გასწორდა): `AdminPage.jsx:91` `react-hooks/exhaustive-deps` (`load` deps-ში არ არის; დამატება ქცევის ცვლილებაა — `load`-ის `useCallback` ან effect-ში გადატანა, ტესტით); `react-refresh/only-export-components` — `OrdersTab.jsx:6,14`, `ShopData.jsx:6`, `ui.jsx:5` (მხოლოდ dev HMR; fix = კონსტანტების/hook-ის ცალკე ფაილში გატანა).
 - `ui.jsx` `ToastProvider`: `setTimeout` არ სუფთავდება და ახალი toast ძველის timer-ს არ აუქმებს → ორი toast-ის სწრაფად ზედიზედ გამოძახებისას მეორე ადრე ქრება (S13-3-ის მიგნება; fix = timer-ის ref + `clearTimeout`, ქცევის ცვლილებაა → ცალკე task).
+- Finish-check (Stage 13), nit-ები:
+  - `ci.yml:50-51` — `npm audit --omit=dev` lint/test/build-ის წინაა: ახალ advisory-ზე (კოდის ცვლილების გარეშე) job წითლდება და lint/test-ის შედეგი აღარ ჩანს → ნაბიჯი ბოლოში ან ცალკე job; სურვილისამებრ `--audit-level=high`.
+  - `vite.config.js` `globals: true` ზედმეტია (ტესტები ცხადად აიმპორტებენ) და Testing Library-ს auto-cleanup-ს რთავს → `cleanup` ორჯერ ეშვება (უვნებელი). ერთ-ერთი ამოიღე.
+  - `csv.test.js` — `fmtDate` ვალიდური თარიღის ტესტი სუსტია (`"Invalid Date"`-საც გაატარებს) → შეამოწმოს წელი/დღე.
+  - `eslint@9.39.5` registry-ში deprecated-ია (9.x მხარდაჭერა დასრულდა) → ESLint 10-ზე გადასვლა plugin-ების თავსებადობის შემოწმებით (react-hooks 5.x pin რჩება).
 - Playwright smoke (`/auto` ფაზა 1ბ) — ამ stage-ში გამოტოვებულია (Decision Log 2026-10-27); საჭიროების შემთხვევაში ცალკე task.
 
 ## Shared files
@@ -234,8 +244,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ## Run State
 - Stage: Stage 13 — Frontend-ის ხარისხის შემოწმებები
-- Finish-check this stage: not run
-- Fix rounds this stage: 0/2
+- Finish-check this stage: done (code-reviewer: 1 should-fix → S13-6, 3 nit; security-auditor: 0 critical/should-fix, 1 nit)
+- Fix rounds this stage: 1/2
 - Failed attempts: —
 
 ## Last Session
