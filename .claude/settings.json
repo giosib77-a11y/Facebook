@@ -16,21 +16,27 @@
       "Bash(git switch *)",
       "Bash(git rev-parse *)",
       "Bash(git clone --depth 50 *)",
-      "Bash(npm run *)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run test)",
+      "Bash(npm run build)",
+      "Bash(npm run dev)",
+      "Bash(pnpm run lint)",
+      "Bash(pnpm run typecheck)",
+      "Bash(pnpm run test)",
+      "Bash(pnpm run build)",
+      "Bash(pnpm run dev)",
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff *)",
       "Bash(npm test)",
       "Bash(npm test *)",
-      "Bash(npm install)",
-      "Bash(npm install *)",
       "Bash(npm ci)",
       "Bash(taskkill /PID *)",
       "Bash(taskkill /F /PID *)",
       "Bash(npm audit)",
       "Bash(npm audit --json)",
-      "Bash(pnpm run *)",
       "Bash(pnpm test)",
       "Bash(pnpm test *)",
-      "Bash(pnpm install)",
-      "Bash(pnpm install *)",
       "Bash(npx vitest *)",
       "Bash(npx tsc *)",
       "Bash(npx eslint *)",
@@ -44,7 +50,6 @@
       "Bash(node --test *)",
       "Bash(node --check *)",
       "Bash(python -m pytest *)",
-      "Bash(uv run *)",
       "Bash(uv sync)",
       "Bash(ruff *)",
       "Bash(pip-audit)",
@@ -93,7 +98,14 @@
       "Read(**/.env.development)",
       "Read(**/.env.dev)",
       "Read(**/.env.test)",
-      "Read(**/.env.staging)"
+      "Read(**/.env.staging)",
+      "Bash(rm -fr *)",
+      "Bash(rm -r -f *)",
+      "Bash(rm -f -r *)",
+      "Bash(git -C * push)",
+      "Bash(git -C * push *)",
+      "Edit(~/.claude/commands/**)",
+      "Edit(~/.claude/hooks/**)"
     ]
   },
   "hooks": {
@@ -102,7 +114,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify.sh\"",
+            "command": "bash \"$HOME/.claude/hooks/verify.sh\"",
             "timeout": 600
           }
         ]
@@ -110,11 +122,11 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "frontend-dev|backend-dev",
+        "matcher": "frontend-dev|backend-dev|task-executor",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify.sh\"",
+            "command": "bash \"$HOME/.claude/hooks/verify.sh\"",
             "timeout": 600
           }
         ]
