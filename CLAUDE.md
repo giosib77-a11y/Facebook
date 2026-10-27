@@ -14,11 +14,12 @@
 - dev backend: `cd backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
   (⚠️ ლოკალური `.env` production Supabase-ს უკავშირდება — აგენტმა backend არ გაუშვას მფლობელის თანხმობის გარეშე)
 - dev frontend: `cd frontend && npm run dev` → http://localhost:5173/panel/
-- lint (backend): `cd backend && .venv/Scripts/python.exe -m ruff check app tests` (E,F; E501 ignored; CI-ში). Frontend-ზე eslint არ არის.
-- typecheck: **არ არის** (Python type hints უმოწმებელია; frontend JS-ია)
-- compile check (CI-ში): `cd backend && .venv/Scripts/python.exe -m compileall -q app`
+- lint: `cd backend && .venv/Scripts/python.exe -m ruff check app tests`
+  (E,F; E501 ignored; CI-ში). Frontend-ზე eslint არ არის.
+- typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
+  (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (263 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 271 ტესტი, offline — fake Supabase + mock Graph/Gemini; frontend ტესტები არ არის)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
 - CI: `.github/workflows/ci.yml` — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest` + frontend job (`npm ci`, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)

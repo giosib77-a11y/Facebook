@@ -205,6 +205,10 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Supabase Auth: anonymous sign-ins გამორთულია? email confirmation ჩართულია?
 - ⏰ Gemini 2.5 Flash retires **2026-10-16** — რომელ მოდელზე გადასვლა?
 
+## Shared files
+
+## Blockers
+
 ## Run State
 - Finish-check this stage: done (1 round; nit-ები გასწორდა, 1 Backlog-ში)
 - Fix rounds this stage: 0/2
