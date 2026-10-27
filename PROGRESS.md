@@ -30,7 +30,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `vitest.setup.js`: `@testing-library/jest-dom/vitest` + `afterEach(cleanup)`. `window.APP_CONFIG`-ის stub მხოლოდ თუ რომელიმე ტესტს სჭირდება (S13-2-ში — არა).
   - `productDiff.test.js`: `node:test`/`node:assert` → `vitest` (`test`, `expect`); იგივე შემთხვევები, იგივე რაოდენობა (7), იგივე ქართული სახელები; პირველი კომენტარი („გაშვება: node --test …") → `npm test`.
   - done when: `npm test` → 7 passed; `npm run lint` — `vite.config.js`, `vitest.setup.js`, `productDiff.test.js`-ში 0 error; `npm run build` → `git diff --exit-code -- dist` სუფთა (test ბლოკი build-ს არ ცვლის).
-- [ ] **S13-3 — საბაზისო კომპონენტის/utility ტესტები** · owner: frontend-dev · files: `frontend/src/panel/ui.test.jsx` (ახალი), `frontend/src/lib/csv.test.js` (ახალი), `frontend/src/admin/constants.test.js` (ახალი) · depends: S13-2
+- [x] **S13-3 — საბაზისო კომპონენტის/utility ტესტები** ✅ +22 ტესტი (ui 10, csv 8, constants 4) → სულ 29/29; mutation-ით დადასტურდა (თითო ფაილი); production კოდი/dist უცვლელი. · owner: frontend-dev · files: `frontend/src/panel/ui.test.jsx` (ახალი), `frontend/src/lib/csv.test.js` (ახალი), `frontend/src/admin/constants.test.js` (ახალი) · depends: S13-2
   - `ui.jsx` (Testing Library): `BusyButton` — `busy` → `disabled` + `is-loading` კლასი, `children` ჩანს, დამატებითი props (`type`, `onClick`) გადაეცემა, default კლასი `btn btn-primary`; `Skeleton` — default 3 `.skel-item`, `n={5}` → 5; `ToastProvider`/`useToast` — `toast("…")` → `#toast`-ში ტექსტი + `toast-ok`, `toast("…", true)` → `toast-err`, `vi.useFakeTimers()`-ით 3500 ms-ის შემდეგ `hidden`.
   - `csv.js`: `toCSV` — BOM-ით იწყება, `\r\n` გამყოფი, მძიმე/ბრჭყალი/ახალი ხაზი → ციტირება და `""`; formula injection — `=SUM(1)`, `+x`, `@x` → `'`-ით; `-5`, `3.5` უცვლელი; `null`/`undefined` → ცარიელი. `fmtDate` — ცარიელი → `—`.
   - `constants.js`: `tierLabel("standard")` → „სტანდარტი", უცნობი → იგივე მნიშვნელობა.
@@ -223,6 +223,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ### Stage 13 (დაგეგმვისას, 2026-10-27)
 - სრული `npm audit` (dev-ის ჩათვლით) — 2 high dev-dependency-ებში: vite 8.2.0–8.2.2 (მხოლოდ dev-server) და source-map-js ≤1.2.1 (AUDIT A-014-ის გაგრძელება; production bundle-ში არ ხვდება; Stage 13-მდეც არსებობდა). CI-ში მხოლოდ `--omit=dev`. Fix: `npm audit fix` / vite-ის განახლება ცალკე, `dist`-ის diff-ის გადახედვით.
+- `ui.jsx` `ToastProvider`: `setTimeout` არ სუფთავდება და ახალი toast ძველის timer-ს არ აუქმებს → ორი toast-ის სწრაფად ზედიზედ გამოძახებისას მეორე ადრე ქრება (S13-3-ის მიგნება; fix = timer-ის ref + `clearTimeout`, ქცევის ცვლილებაა → ცალკე task).
 - Playwright smoke (`/auto` ფაზა 1ბ) — ამ stage-ში გამოტოვებულია (Decision Log 2026-10-27); საჭიროების შემთხვევაში ცალკე task.
 
 ## Shared files
