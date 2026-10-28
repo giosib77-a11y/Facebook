@@ -217,6 +217,27 @@ def test_claude_is_error_key_absent_when_false():
     assert "is_error" not in block
 
 
+def _one_step(text):
+    return [{"text": text, "calls": [llm.ToolCall("a", "search_products", {"q": 1}, '{"q": 1}')],
+             "results": [{"id": "a", "content": "x", "is_error": False}]}]
+
+
+@pytest.mark.parametrize("text", ["\n\n", "  ", " \t\n", None])
+def test_claude_whitespace_only_step_text_sends_no_text_block(text):
+    # Anthropic rejects whitespace-only text blocks with a 400 -> the tool_use must go alone.
+    msgs = llm.build_claude_request(_prompt(), "m", steps=_one_step(text))["messages"]
+    assert msgs[-2] == {"role": "assistant", "content": [
+        {"type": "tool_use", "id": "a", "name": "search_products", "input": {"q": 1}},
+    ]}
+
+
+@pytest.mark.parametrize("text", ["Let me check.", "\nLet me check.\n", "  hi  "])
+def test_claude_non_empty_step_text_is_sent_unchanged(text):
+    msgs = llm.build_claude_request(_prompt(), "m", steps=_one_step(text))["messages"]
+    assert msgs[-2]["content"][0] == {"type": "text", "text": text}  # no strip: prefix stability
+    assert msgs[-2]["content"][1]["type"] == "tool_use"
+
+
 # ---------------------------------------------------------------------------
 # (3) OpenAI
 # ---------------------------------------------------------------------------
@@ -255,6 +276,22 @@ def test_openai_steps_items_order_fields_and_raw_arguments():
         {"type": "function_call_output", "call_id": "tu_3", "output": "invalid arguments"},
     ]
     assert req["store"] is False
+
+
+@pytest.mark.parametrize("text", ["\n\n", "  ", " \t\n", None])
+def test_openai_whitespace_only_step_text_sends_no_assistant_item(text):
+    items = llm.build_openai_request(_prompt(), "m", "s1", steps=_one_step(text))["input"]
+    assert items[4:] == [
+        {"type": "function_call", "call_id": "a", "name": "search_products", "arguments": '{"q": 1}'},
+        {"type": "function_call_output", "call_id": "a", "output": "x"},
+    ]
+
+
+@pytest.mark.parametrize("text", ["Let me check.", "\nLet me check.\n", "  hi  "])
+def test_openai_non_empty_step_text_is_sent_unchanged(text):
+    items = llm.build_openai_request(_prompt(), "m", "s1", steps=_one_step(text))["input"]
+    assert items[4] == {"role": "assistant", "content": text}  # no strip: prefix stability
+    assert items[5]["type"] == "function_call"
 
 
 # ---------------------------------------------------------------------------

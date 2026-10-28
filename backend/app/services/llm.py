@@ -135,7 +135,9 @@ def build_claude_request(prompt, model: str, *, tools=None, steps=None, force_te
     # In-turn transcript after the final user turn: never a breakpoint.
     for step in steps or []:
         assistant = []
-        if step.get("text"):
+        # Whitespace-only text (e.g. "\n\n" before a tool_use) is a 400 on Anthropic -> skip it;
+        # real text is sent unchanged (no strip) so the prefix stays stable.
+        if (step.get("text") or "").strip():
             assistant.append({"type": "text", "text": step["text"]})
         for call in step.get("calls") or []:
             assistant.append({"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments or {}})
@@ -191,7 +193,7 @@ def build_openai_request(prompt, model: str, shop_id, *, tools=None, steps=None,
     # store=False -> the whole in-turn transcript is re-sent on every call (no previous_response_id);
     # the original `arguments` string goes back untouched. Reasoning items are not re-sent.
     for step in steps or []:
-        if step.get("text"):
+        if (step.get("text") or "").strip():  # same rule as Claude: whitespace-only text is skipped
             items.append({"role": "assistant", "content": step["text"]})
         for call in step.get("calls") or []:
             items.append({
