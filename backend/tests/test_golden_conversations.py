@@ -90,7 +90,7 @@ class Golden:
             return SimpleNamespace(
                 output_text=self.canned,
                 usage=SimpleNamespace(input_tokens=1020, output_tokens=18,
-                                      input_tokens_details=SimpleNamespace(cached_tokens=900)),
+                                      input_tokens_details=SimpleNamespace(cached_tokens=900, cache_write_tokens=0)),
             )
 
         monkeypatch.setattr(

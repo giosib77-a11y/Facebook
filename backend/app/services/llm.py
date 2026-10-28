@@ -176,12 +176,19 @@ def _claude_usage(usage) -> Usage:
 
 
 def _openai_usage(usage) -> Usage:
-    cached = _tok(getattr(usage, "input_tokens_details", None), "cached_tokens")
+    # Responses API: input_tokens is the TOTAL (cached + cache-write + uncached); input_tokens_details
+    # is a breakdown. Uncached = total - cached - cache_write (same semantics as Claude's input_tokens).
+    # Evidence: openai SDK 3.40 usage API docs ("input_tokens ... including cached and cache-write
+    # tokens"; "input_uncached_tokens ... excluding cache-write tokens"). ASSUMPTION for the
+    # Responses `usage` object itself — verify against a real response in Stage 15.
+    details = getattr(usage, "input_tokens_details", None)
+    cached = _tok(details, "cached_tokens")
+    written = _tok(details, "cache_write_tokens")
     return Usage(
-        input_tokens=max(0, _tok(usage, "input_tokens") - cached),
+        input_tokens=max(0, _tok(usage, "input_tokens") - cached - written),
         output_tokens=_tok(usage, "output_tokens"),
         cache_read_tokens=cached,
-        cache_write_tokens=0,
+        cache_write_tokens=written,
     )
 
 

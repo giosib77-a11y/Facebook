@@ -36,6 +36,35 @@ def test_openai_usage_subtracts_cached_from_input():
     assert u == llm.Usage(input_tokens=476, output_tokens=80, cache_read_tokens=1024, cache_write_tokens=0)
 
 
+def test_openai_usage_keeps_cache_write_and_excludes_it_from_uncached_input():
+    # input_tokens is the TOTAL (cached + cache-write + uncached); same "uncached input" semantics as Claude
+    u = llm._openai_usage(SimpleNamespace(
+        input_tokens=2000, output_tokens=80,
+        input_tokens_details=SimpleNamespace(cached_tokens=1024, cache_write_tokens=500),
+    ))
+    assert u == llm.Usage(input_tokens=476, output_tokens=80, cache_read_tokens=1024, cache_write_tokens=500)
+
+
+def test_openai_usage_cache_write_none_or_missing_is_zero():
+    u = llm._openai_usage(SimpleNamespace(
+        input_tokens=100, output_tokens=1,
+        input_tokens_details=SimpleNamespace(cached_tokens=40, cache_write_tokens=None),
+    ))
+    assert u == llm.Usage(60, 1, 40, 0)
+    u = llm._openai_usage(SimpleNamespace(
+        input_tokens=100, output_tokens=1, input_tokens_details=SimpleNamespace(cache_write_tokens=30),
+    ))
+    assert u == llm.Usage(70, 1, 0, 30)
+
+
+def test_openai_usage_cache_write_larger_than_input_never_negative():
+    u = llm._openai_usage(SimpleNamespace(
+        input_tokens=100, output_tokens=1,
+        input_tokens_details=SimpleNamespace(cached_tokens=60, cache_write_tokens=90),
+    ))
+    assert u == llm.Usage(0, 1, 60, 90)
+
+
 def test_openai_usage_none_safe():
     assert llm._openai_usage(None) == llm.Usage(0, 0, 0, 0)
     assert llm._openai_usage(SimpleNamespace(input_tokens=10, output_tokens=2)) == llm.Usage(10, 2, 0, 0)

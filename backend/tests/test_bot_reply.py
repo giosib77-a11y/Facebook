@@ -51,7 +51,7 @@ def _openai_response(text="  Hello!  "):
     return SimpleNamespace(
         output_text=text,
         usage=SimpleNamespace(input_tokens=50, output_tokens=7,
-                              input_tokens_details=SimpleNamespace(cached_tokens=20)),
+                              input_tokens_details=SimpleNamespace(cached_tokens=20, cache_write_tokens=10)),
     )
 
 
@@ -197,7 +197,8 @@ def test_usage_recorded_for_openai(h_openai):
     (row,) = h_openai.usage_db.calls_for("llm_usage", "insert")
     assert row.payload["provider"] == "openai"
     assert row.payload["shop_id"] == SHOP_ID
-    assert (row.payload["input_tokens"], row.payload["cache_read_tokens"]) == (30, 20)
+    assert (row.payload["input_tokens"], row.payload["cache_read_tokens"], row.payload["cache_write_tokens"]) == (
+        20, 20, 10)
 
 
 def test_reply_still_returned_when_usage_write_fails(h, caplog):
