@@ -339,6 +339,13 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ## Last Session
 - Date: 2026-10-28
+- Done: **Stage 15 დასრულდა (offline; სკრიპტი არ გაშვებულა)** — S15-1…S15-6 (plan `dd48156`; `497912c`, `346bf82`, `d35b50f`, `df23279`; finish-check `c82f5bb`; fix round 1 `babde48`, round 2 `733cc26`). `llm.generate(provider=)`; `backend/scripts/compare_providers.py` + 40 შეკითხვა + 8 სინთეტიკური PNG; ბრმა A/B output (provider-ნეიტრალური შეცდომები, `app` logger გაჩუმებული) + `compare_key.json` (gitignored); README §9.
+- Verification (ორკესტრატორი): pip check ✅; ruff/compileall `app tests scripts` ✅; pytest **473 passed**; frontend lint 0 error / 5 warning (ძველი), `npm test` 29/29, build → `dist` უცვლელი.
+- Unverified: სკრიპტის რეალური გაშვება (key-ები არ არის; აგენტებს აკრძალული აქვთ) — მფლობელი, README §9; რეალური SDK-ების შეცდომის/usage-ის ფორმა.
+- Next: Stage 16 (LangGraph გრაფი).
+
+### Stage 14-ის სესია
+- Date: 2026-10-28
 - Done: **Stage 14 დასრულდა (offline)** — S14-1…S14-13 (plan `65ee945`; commit-ები `b31dc63`, `f662e4d`, `336a5d6`, `0b657a0`, `25ec755`, `d91a5d2`, `f8a1b06`, `532db41`, `21fcf70`; finish-check `5da578a`; fix round 1: `5b868d1`, `26dcfcb`, `acebe04`, `95232f6`; re-check `faf268d`). Gemini სრულად ამოღებულია; Claude (default) / OpenAI; სამფენიანი prompt; `llm_usage` (0025); key-ის გარეშე ბოტი გამორთულია.
 - Verification (საბოლოო, tester): pip check ✅; ruff ✅; compileall ✅; pytest **438 passed**; frontend lint 0 error / 5 warning (ძველი, Backlog); `npm test` 29/29; build → `dist` სუფთა; `git status` სუფთა. finish-check: code-reviewer 3 should-fix + security 1 (აწეული) → გასწორდა და მიზნობრივად გადამოწმდა (0 ღია critical/should-fix).
 - Unverified: რეალური Anthropic/OpenAI გამოძახება (cache hit, ქართული ხარისხი, L1 ≥512 ტოკენი, gpt-6-luna-ს პარამეტრები, OpenAI `input_tokens`-ის სემანტიკა) — key-ების შემდეგ (Deploy plan ნაბიჯი 6 / Stage 15); 0025 რეალურ Postgres-ზე; Linux-ზე lock-ის რეზოლუცია (Render deploy); privacy/terms ბრაუზერში (მხოლოდ ტექსტი).
