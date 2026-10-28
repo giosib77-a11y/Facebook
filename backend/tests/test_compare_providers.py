@@ -213,7 +213,9 @@ def test_call_error_does_not_stop(env, tmp_path):
 
 
 # (6b) S15-5: provider-unique error class / llm.py warnings must not reach md or console ---
-def test_error_does_not_fingerprint_provider(env, tmp_path, monkeypatch, capsys):
+def test_error_does_not_fingerprint_provider(env, tmp_path, monkeypatch, capsys, caplog):
+    import logging
+
     import anthropic
     import httpx2
 
@@ -223,10 +225,14 @@ def test_error_does_not_fingerprint_provider(env, tmp_path, monkeypatch, capsys)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)  # retry delay instant
     logger = llm.logger
     handlers_before, propagate_before = list(logger.handlers), logger.propagate
+    caplog.set_level(logging.WARNING)
 
     code, out = run(tmp_path, "--limit", "1")
     captured = capsys.readouterr()
     assert code == 0
+    # conftest makes the "app" logger propagate and main app adds stdout handlers, so capsys alone
+    # is vacuous; caplog (root handler) proves the script's silencing really blocks the records.
+    assert not [r for r in caplog.records if r.name == "app"]
     assert env.claude_calls == 2  # transient -> retried once, so the warning was emitted
     md, key = read_outputs(out)
     qid = "Q01"
