@@ -54,7 +54,15 @@
               │  ├ ლიმიტის შემოწმება │
               │  ├ მარაგი + ცოდნა    │
               │  └ საუბრის მეხსიერება│
+              │    (ბოლო 8 + summary)│
               └──────────┬──────────┘
+                         ▼
+              ┌─────────────────────────┐
+              │ ბოტის გრაფი (LangGraph)  │
+              │ შაბლონი (LLM-ის გარეშე)  │
+              │  → agent ⇄ tools         │
+              │  → გასუფთავება           │
+              └──────────┬──────────────┘
                          ▼
                    ┌───────────────────┐
                    │  Claude / OpenAI  │  ← ქართული / English / Русский
@@ -102,6 +110,7 @@ App Roles-ში დამატებულ ანგარიშებზე (
 | **DB / Auth / Storage** | Supabase — Postgres + Row Level Security + Auth + Storage |
 | **Frontend** | React 18 + Vite (**MPA**, არა SPA) — 8 გვერდი |
 | **AI** | Anthropic Claude (`claude-haiku-5-5`, default) ან OpenAI (`gpt-6-luna`) — `LLM_PROVIDER`-ით; მოდელები `CLAUDE_MODEL` / `OPENAI_MODEL`-ით იცვლება |
+| **ბოტის გრაფი** | LangGraph (`langgraph>=1.2`) — **მხოლოდ wiring** (node-ები და გადასვლები). LLM-ს ყოველთვის `services/llm.py` იძახებს; LangChain-ის chat model-ები არ გამოიყენება |
 | **არხები** | Facebook Messenger Platform · Instagram Messaging (Graph `v21.0`) |
 | **ჰოსტინგი** | Render (Starter $7/თვე — cold-start გამორთულია) |
 | **დომენი** | `chatassist.ge` (DNS + SSL) |
@@ -141,8 +150,12 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │       │   └── tiers.py         პაკეტები, ლიმიტები, ფასები
 │       ├── models/              Pydantic სქემები (shop, product, order, chat)
 │       └── services/
-│           ├── bot.py           get_bot_reply — თხელი wrapper (prompt.py + llm.py)
-│           ├── prompt.py        სამფენიანი prompt (L1 საერთო წესები · L2 მაღაზია · L3 საუბარი)
+│           ├── graph.py         ბოტის გრაფი (LangGraph): preprocess → agent ⇄ tools → postprocess · `run_turn`
+│           ├── tools.py         4 tool: search_products · search_knowledge · order_link · request_human
+│           ├── replies.py       შაბლონური პასუხები (მისალმება/მადლობა/ოპერატორი) + markdown-ის გასუფთავება
+│           ├── memory.py        ისტორიის შეკუმშვა: >16 შეტყობინება → ბოლო 8 + summary
+│           ├── bot.py           საცნობარო ფოტოები graph-ისთვის (პროდუქტის სურათები)
+│           ├── prompt.py        სამფენიანი prompt (L1 საერთო წესები · L2 მაღაზია · L3 summary + საუბარი)
 │           ├── llm.py           Claude Messages API / OpenAI Responses API · retry · usage → `llm_usage`
 │           ├── facebook.py      Graph API · Send API · SSRF-დაცული download_image
 │           ├── import_products.py  Excel/CSV პარსერი (all-or-nothing)
@@ -160,7 +173,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         25 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         26 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -187,19 +200,33 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 
 | # | ფუნქცია | აღწერა |
 |---|---|---|
-| **#1** | საუბრის მეხსიერება | ბოლო 20 შეტყობინება, 24 საათი (`BOT_MEMORY_*`) |
+| **#1** | საუბრის მეხსიერება | 24 საათი (`BOT_MEMORY_*`); ისტორია 16 შეტყობინებამდე იზრდება, მერე ძველი ნაწილი summary-ად იკუმშება და ბოლო 8 რჩება (იხ. ქვემოთ) |
 | **#2** | გაძლიერებული prompt | პერსონა, დაზუსტება, upsell, handoff-ის წესები |
-| **#3** | ჭკვიანი პროდუქტ-ძებნა | ≤30 პროდუქტი → ყველა; >30 → keyword-match, top-30 (სიზუსტე + იაფი prompt) |
-| **#4** | ოპერატორზე გადართვა | ბოტი პასუხს `[[HANDOFF]]` ნიშანს ამატებს → საუბარი პანელში ინიშნება |
+| **#3** | ჭკვიანი პროდუქტ-ძებნა | ≤30 პროდუქტი → ყველა prompt-ში; >30 → keyword-match, top-30; დამატებით agent-ს აქვს `search_products` tool |
+| **#4** | ოპერატორზე გადართვა | agent იძახებს `request_human` tool-ს (ძველი `[[HANDOFF]]` ნიშანი აღარ არსებობს) → საუბარი პანელში „ყურადღება სჭირდება"-დ ინიშნება |
 | **#5** | სურათის გაგება | კლიენტი ფოტოს აგზავნის → LLM multimodal → მარაგს ადარებს |
 | — | ვიზუალური ამოცნობა | პროდუქტების ფოტოებს ადარებს და კონკრეტულს ცნობს |
 | **#7** | ანალიტიკა | საუბრების რაოდ., top-terms, ბოლო შეკითხვები |
 | — | მრავალენოვნება | ქართული / English / Русский — ავტო ან ხელით |
 | — | შესაკვეთი ლინკი | `order.html?shop=<id>` — ბოტი თვითონ აძლევს |
 
-**ჩარჩო:** `get_bot_reply(shop, products, message, history, images)` —
-[backend/app/services/bot.py](backend/app/services/bot.py) (თხელი wrapper) +
-[prompt.py](backend/app/services/prompt.py) + [llm.py](backend/app/services/llm.py).
+**ჩარჩო:** `graph.run_turn(shop, products, message, history, images, summary=...)` —
+[backend/app/services/graph.py](backend/app/services/graph.py) +
+[tools.py](backend/app/services/tools.py) · [replies.py](backend/app/services/replies.py) ·
+[memory.py](backend/app/services/memory.py) · [prompt.py](backend/app/services/prompt.py) ·
+[llm.py](backend/app/services/llm.py). webhook და `/test-chat` ორივე ამ ერთ გზას იყენებს
+(ძველი `get_bot_reply` / `[[HANDOFF]]` პარსერი წაშლილია).
+
+**ბოტის გრაფი** (ერთი შემოსული შეტყობინება = ერთი turn):
+1. **preprocess** — შაბლონური პასუხი LLM-ის გარეშე (მისალმება / მადლობა / ოპერატორის მოთხოვნა). ფოტოიან შეტყობინებაზე არასდროს.
+2. **agent ⇄ tools** — LLM-ის გამოძახება ოთხი tool-ით: `search_products` (პროდუქტების ძებნა), `search_knowledge` (PDF-ცოდნაში ძებნა), `order_link` (შესაკვეთი ლინკი), `request_human` (ოპერატორზე გადართვა — ამთავრებს turn-ს). ჭერი: **≤4 LLM გამოძახება** (≤3 tool რაუნდი, რაუნდში ≤3 call) და **45 წმ** მთელ turn-ზე; tool შედეგების ჯამი ≤8000 სიმბოლო. შეცდომა/timeout ვრცელდება და webhook-ის fallback პასუხს აგზავნის.
+3. **postprocess** — markdown-ის გასუფთავება (სათაურები, `**bold**`, ბულეტები, ლინკები); ცარიელი პასუხი ცარიელი რჩება.
+
+LangGraph გამოიყენება **მხოლოდ wiring-ად** (node-ები, გადასვლები). ჭერებს, deadline-ს და usage-ს ჩვენი კოდი აკონტროლებს; checkpointer არ არის; LLM-ს ყოველთვის `llm.py` იძახებს.
+
+⚠️ **Production-ში `LANGSMITH_TRACING`, `LANGCHAIN_TRACING_V2` და `LANGSMITH_API_KEY` (ზოგადად `LANGSMITH_*` / `LANGCHAIN_*`) არასდროს დააყენო** — tracing საუბრებს (კლიენტების შეტყობინებებს) მესამე მხარეს გაუგზავნიდა. ტესტებში conftest ამ ცვლადებს შლის.
+
+**მეხსიერება და summary:** ისტორია 16 შეტყობინებამდე მხოლოდ იზრდება (prompt-ის cache-ის პრეფიქსი სტაბილურია). გადაჭარბებისას — **პასუხის გაგზავნის შემდეგ** — `memory.compact` ძველ ნაწილს ერთ მოკლე summary-ად (≤1200 სიმბოლო, პირადი მონაცემების გარეშე) აქცევს და მხოლოდ ბოლო 8 შეტყობინება რჩება. summary ინახება `bot_conversations.summary`-ში (მიგრაცია `0026`) და შემდეგ პასუხებში ისტორიის წინ ემატება prompt-ში. შეკუმშვა ხდება მხოლოდ agent turn-ზე (არა შაბლონზე); ჩავარდნისას შეტყობინებები უცვლელი რჩება, ლოგში WARNING (მხოლოდ shop id) და შემდეგ turn-ზე თავიდან ცდის. `0026`-ის გარეშე backend მუშაობს: summary გამორთულია, ჭრა არ ხდება, ლოგში ერთი WARNING.
 
 **სამი ფენა prompt-ში** (cache-ის გამო სტაბილური ნაწილი წინ დგას):
 - **L1** — ინგლისურად დაწერილი საერთო წესები, ყველა მაღაზიისთვის იდენტური (Claude cache 1 სთ)
@@ -251,7 +278,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 | **Facebook Messenger** | ✅ სრულად მუშაობს (dev-რეჟიმში testers-ზე) |
 | **Instagram Direct** | ✅ კოდი მზადაა · ⏳ Live-რეჟიმს ელოდება |
 
-ორივე იმავე `get_bot_reply`-ს იყენებს — ბოტის ლოგიკა 100% reuse-დება.
+ორივე იმავე `graph.run_turn`-ს იყენებს — ბოტის ლოგიკა 100% reuse-დება.
 webhook `object` ველით არჩევს (`page` / `instagram`).
 
 ---
@@ -343,13 +370,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `orders` | კლიენტის შეკვეთა, პოზიციები (JSON), ჯამი, სტატუსი |
 | `upgrade_requests` | პაკეტის მოთხოვნები (manual billing) |
 | `bot_customers` | უნიკალური კლიენტი თვეში (ლიმიტის მრიცხველი) |
-| `bot_conversations` | საუბრის მეხსიერება (ბოლო შეტყობინებები) + handoff-ის ნიშანი (`needs_attention`, 0010) |
+| `bot_conversations` | საუბრის მეხსიერება (ბოლო შეტყობინებები) + ძველი ნაწილის `summary` (0026, nullable) + handoff-ის ნიშანი (`needs_attention`, 0010) |
 | `llm_usage` | LLM-ის გამოძახებების usage: `shop_id`, `provider`, `model`, `input_tokens` (cache-ის გარეშე), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0025) |
 
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (25)
+### მიგრაციები (26)
 
 | # | რა |
 |---|---|
@@ -378,8 +405,9 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0023` | `products.price` / `orders.total`: CHECK `< 'Infinity'` — Postgres-ში NaN `>= 0`-ს აკმაყოფილებს, ამიტომ NaN/Infinity ბაზაში ჩაწერა შეიძლებოდა. PRE-CHECK ფაილის თავშია |
 | `0024` | 🔒 `upgrade_requests`: INSERT/UPDATE/DELETE მოხსნილია `authenticated`-დან, პოლისი `ur_owner_insert` იშლება; partial UNIQUE — მაქს. ერთი pending მაღაზიაზე. გაუშვი backend-ის deploy-ის **შემდეგ** |
 | `0025` | 🔒 `llm_usage` — LLM usage-ის აღრიცხვა (RLS ჩართული, პოლისების გარეშე, მხოლოდ `service_role`). გაუშვი backend deploy-**მდე** |
+| `0026` | `bot_conversations.summary` (text, nullable) — ძველი შეტყობინებების შეკუმშული ვერსია (Stage 16). ახალი პოლისი/უფლება არ არის. იდემპოტენტურია. გაუშვი Stage 16-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — summary გამორთულია, ლოგში ერთი WARNING |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -449,13 +477,13 @@ npm test         # Vitest-ის ტესტები
 
 ### Provider-ების ბრმა შედარება (Stage 15)
 
-1. **დანიშნულება.** 40 შეკითხვა × 2 provider (Claude და OpenAI) — იგივე prompt-ით და იგივე LLM გზით, რასაც ბოტი იყენებს; მონაცემი ფიქტიური მაღაზიისაა. Supabase-ს და `llm_usage`-ს არ ეხება. სკრიპტს **მხოლოდ მფლობელი** უშვებს (რეალური API-ები და ხარჯი).
+1. **დანიშნულება.** 40 შეკითხვა × 2 provider (Claude და OpenAI) — იგივე გზით, რასაც ბოტი იყენებს: `graph.run_turn` (შაბლონები, tool-ები, გასუფთავება); ერთი შეკითხვა შეიძლება რამდენიმე LLM გამოძახება იყოს (≤4), usage = ამ turn-ის გამოძახებების ჯამი (`calls`), შაბლონურ პასუხზე 0; მონაცემი ფიქტიური მაღაზიისაა. Supabase-ს და `llm_usage`-ს არ ეხება. სკრიპტს **მხოლოდ მფლობელი** უშვებს (რეალური API-ები და ხარჯი).
 2. **წინაპირობა.** `ANTHROPIC_API_KEY` და `OPENAI_API_KEY` ორივე სავალდებულოა — ლოკალურ `.env`-ში ან გარემოს ცვლადებში (სკრიპტი key-ს არ ბეჭდავს). რეკომენდაცია: ორივე კონსოლში დააყენე spend limit.
 3. **ბრძანებები** (`backend/` საქაღალდიდან). PowerShell — ჯერ smoke (`--limit 3`, 6 გამოძახება):
    ```powershell
    $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m scripts.compare_providers --limit 3
    ```
-   დაათვალიერე შედეგი და მერე სრული გაშვება (80 გამოძახება, თანმიმდევრულად, ~1 წმ პაუზით; რამდენიმე წუთი):
+   დაათვალიერე შედეგი და მერე სრული გაშვება (80 შეკითხვა-გაშვება (თითოს tool-ების გამო შეიძლება რამდენიმე LLM გამოძახება ჰქონდეს), თანმიმდევრულად, ~1 წმ პაუზით; რამდენიმე წუთი):
    ```powershell
    $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m scripts.compare_providers
    ```
@@ -580,7 +608,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `OPENAI_API_KEY` | ✅ ბოტისთვის (`LLM_PROVIDER=openai`) | — | 🔒 OpenAI Platform → API keys |
 | `OPENAI_MODEL` | | `gpt-6-luna` | მოდელის შეცვლა კოდის გარეშე |
 | `LLM_TIMEOUT_SECONDS` | | `20` | ერთი LLM მცდელობის timeout (წმ); `gt 0, ≤ 20`, სხვა მნიშვნელობა → სერვერი არ ადგება. retry-ების ჯამი ≤45 წმ, მერე webhook fallback პასუხი |
-| `BOT_MEMORY_MESSAGES` | | `20` | 0 = მეხსიერება გამორთული |
+| `BOT_MEMORY_MESSAGES` | | `20` | 0 = მეხსიერება გამორთული (ისტორიის შეკუმშვა 16-ზე/8-ზე კოდშია, `memory.py`) |
 | `BOT_MEMORY_HOURS` | | `24` | |
 | `FB_APP_ID` · `FB_APP_SECRET` | ✅ | — | 🔒 Meta App |
 | `FB_VERIFY_TOKEN` | ✅ | — | webhook-ის ვერიფიკაცია |
@@ -599,6 +627,8 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key; არავალიდური → `FB_TOKEN_ENCRYPTION_KEY (invalid format)`).
 LLM provider-ის key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) ამ სიაში **არ არის**: მის გარეშე აპი ირთვება, ბოტი ოპერატორის პასუხს აგზავნის (საუბარი „ყურადღება სჭირდება"-ში ინიშნება), ლოგში WARNING `LLM disabled: <VAR> is not set`. დარჩენილი `GEMINI_*` ცვლადები იგნორირდება — Render-ზე წაშალე ახალი ვერსიის live-ის შემდეგ (იხ. [DEPLOYMENT.md](DEPLOYMENT.md)).
 `development`-ში შემოწმება არ მუშაობს, თუმცა ცარიელი `FB_APP_SECRET`-ით webhook/signed_request/OAuth state/data-deletion კოდი ყოველთვის უარყოფილია.
+
+⚠️ **`LANGSMITH_TRACING` / `LANGCHAIN_TRACING_V2` / `LANGSMITH_API_KEY` არასდროს დააყენო production-ში** (არც ლოკალურად რეალურ საუბრებზე): LangGraph-ის tracing კლიენტების შეტყობინებებს მესამე მხარეს გაგზავნიდა.
 
 Fernet key-ის დაგენერირება:
 ```bash
