@@ -22,7 +22,7 @@ npm run build    # → frontend/dist/
 push-ამდე შემოწმება:
 - [ ] `frontend/dist/`-ში **8 `.html`** + `config.js`, `favicon.svg`, 2 sample-ფაილი
 - [ ] საიდუმლოების სკანი (ცარიელი უნდა იყოს):
-      `grep -rin "service_role\|FB_APP_SECRET\|GEMINI\|FERNET" frontend/dist/`
+      `grep -rin "service_role\|FB_APP_SECRET\|ANTHROPIC\|OPENAI\|sk-ant-\|FERNET" frontend/dist/`
       (`config.js`-ის კომენტარი ცრუ დამთხვევაა — მასში მხოლოდ anon key-ია)
 - [ ] `dist/` დაკომიტებულია
 
@@ -35,9 +35,10 @@ push-ამდე შემოწმება:
 ## 🔴 კრიტიკული (ამის გარეშე არ ვტვირთავთ)
 
 ### 1. საიდუმლო გასაღებები — `.env` არასდროს სერვერზე ფაილად
-- [ ] `SUPABASE_SECRET_KEY` (`sb_secret_...`; ძველი `SUPABASE_SERVICE_ROLE_KEY` fallback-ად მუშაობს), `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_TOKEN_ENCRYPTION_KEY`
+- [ ] `SUPABASE_SECRET_KEY` (`sb_secret_...`; ძველი `SUPABASE_SERVICE_ROLE_KEY` fallback-ად მუშაობს), `ANTHROPIC_API_KEY` (ან `OPENAI_API_KEY`, თუ `LLM_PROVIDER=openai`), `FB_APP_SECRET`, `FB_TOKEN_ENCRYPTION_KEY`
       ⚠️ production-ში (S11-6) აპი **არ ირთვება**, თუ ცარიელია: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`,
-      `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key). ლოგში მხოლოდ სახელები ჩანს.
+      `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key). ლოგში მხოლოდ სახელები ჩანს.
+      LLM key ამ სიაში არ არის: მის გარეშე აპი ირთვება, მაგრამ ბოტი მხოლოდ ოპერატორის პასუხს აგზავნის (ლოგში WARNING `LLM disabled`).
       გადავიტანოთ hosting-ის **Environment Variables**-ში (არა ფაილად რეპოში)
 - [ ] დავრწმუნდეთ რომ `.env` **არასდროს** აიტვირთა Git-ზე (`git log` შემოწმება)
 - [ ] თუ ერთხ ელ მაინც აიტვირთა — **ყველა გასაღები შევცვალოთ** (rotate)
@@ -65,7 +66,7 @@ push-ამდე შემოწმება:
 
 ### 5. `public/config.js` — მხ ოლოდ საჯარო გასაღებები
 - [ ] გადავამოწმოთ: მხ ოლოდ `publishable key` (`sb_publishable_...`) + `URL`
-      (`service_role` / `FB_APP_SECRET` / `GEMINI_KEY` — არასდროს frontend-ში)
+      (`service_role` / `FB_APP_SECRET` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — არასდროს frontend-ში)
 
 ---
 
@@ -121,7 +122,7 @@ push-ამდე შემოწმება:
 - [x] **კოდი მზადაა** — `APP_ENV=production`-ზე:
       - გლობალური exception handler → კლიენტს ზოგადი „სერვერის შიდა შეცდომა" (stack trace არ ჟონავს)
       - `db.py` → ბაზის ნედლი ტექსტი აღარ უბრუნდება კლიენტს (მხოლოდ ლოგში)
-      - dev endpoint `/test-chat` → 404 (დაუცველად Gemini-ს აღარ იძახებს)
+      - dev endpoint `/test-chat` → 404 (დაუცველად LLM-ს აღარ იძახებს)
 - [ ] deploy-ზე: `.env`-ში `APP_ENV=production` დაყენება
 - [ ] (სასურველი) Sentry უფასო tier — error tracking
 
@@ -143,12 +144,42 @@ push-ამდე შემოწმება:
 | ვარიანტი | ღირებულება | შენიშვნა |
 |---|---|---|
 | **1. 🆓 უფასო** | **0₾/თვე** | Render/Koyeb free subdomain + HTTPS (Facebook-ს ვარგა). მინუსი: სერვერი უმოქმედობისას „იძინებს", პირველი პასუხი ნელია |
-| **2. 💼 მინიმალური რეალური** | **~25–35₾/თვე** | Render Starter **$7** (≈19₾) ან Railway **$5** (≈14₾) + .ge დომენი **~60₾/წ** (≈5₾/თვე) + Gemini (დაბალ ტრაფიკზე თითქმის უფასო) |
-| **3. 📈 ზრდის ეტაპზე** | **~50–80₾/თვე** | ცალკე DB / მეტი RAM, Sentry, მეტი Gemini — მხოლოდ მაშინ, როცა ბევრი კლიენტი იქნება |
+| **2. 💼 მინიმალური რეალური** | **~25–35₾/თვე** | Render Starter **$7** (≈19₾) ან Railway **$5** (≈14₾) + .ge დომენი **~60₾/წ** (≈5₾/თვე) + Claude Haiku 5.5 (დაბალ ტრაფიკზე მცირე) |
+| **3. 📈 ზრდის ეტაპზე** | **~50–80₾/თვე** | ცალკე DB / მეტი RAM, Sentry, მეტი LLM ხარჯი — მხოლოდ მაშინ, როცა ბევრი კლიენტი იქნება |
 
 **დაშლილი (ვარიანტი 2):**
 - სერვერი (backend): ~14–19₾/თვე · .ge დომენი: ~5₾/თვე (60₾/წელი, წინასწარ იხდება)
-- Gemini API: ~0–მცირე (გამოყენებაზეა) · Supabase: უფასო tier (ჯერ სრულად ჰყოფნის)
+- LLM API (Claude Haiku 5.5): გამოყენებაზეა · Supabase: უფასო tier (ჯერ სრულად ჰყოფნის)
+
+**LLM ფასი (claude-haiku-5-5, ტოკენების მიხედვით):**
+
+| პუნქტი | ფასი |
+|---|---|
+| input | $0.10 / MTok (prompt ≤100K ტოკენი) |
+| output | $0.50 / MTok (prompt ≤100K ტოკენი) |
+| >100K-ტოკენიანი request | $0.50 / $2.50 per MTok — **5×**, მთელ request-ზე |
+| cache read | 0.1× input-ის ფასი |
+| cache write | 1.25× (5 წთ) · 2× (1 სთ) |
+
+> OpenAI `gpt-6-luna` (`LLM_PROVIDER=openai`): მესამე მხარის წყაროებით $0.10 / $0.50, cached ≈ $0.01 per MTok — **OpenAI-ის ოფიციალურ გვერდზე არ არის დადასტურებული**.
+> რეალური ხარჯი ჩანს `llm_usage` ცხრილში.
+
+### Stage 14: Render env ცვლადები
+
+დეტალური თანმიმდევრობა: `PROGRESS.md` → `## Stage 14 — Deploy plan`.
+
+**დასამატებელი (deploy-მდე):**
+- `ANTHROPIC_API_KEY` 🔒 — საჭიროა ბოტისთვის (მის გარეშე აპი ადგება, ბოტი მხოლოდ ოპერატორის პასუხს აგზავნის)
+- `LLM_PROVIDER=claude` — რეკომენდებული (default-ია; არავალიდური მნიშვნელობა → სერვერი არ ადგება)
+- `CLAUDE_MODEL`, `LLM_TIMEOUT_SECONDS` — არასავალდებულო (default `claude-haiku-5-5`, `20`)
+- `OPENAI_API_KEY`, `OPENAI_MODEL` — მხოლოდ თუ `LLM_PROVIDER=openai`
+
+**წასაშლელი (მხოლოდ ახალი ვერსიის live-ის და შემოწმების შემდეგ — ძველ ვერსიას rollback-ისთვის `GEMINI_API_KEY` სჭირდება):**
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL`
+- `GEMINI_TIMEOUT_SECONDS`
+
+**მიგრაცია:** `supabase/migrations/0025_llm_usage.sql` გაუშვი SQL Editor-ში backend deploy-**მდე**.
 
 **რეკომენდაცია:** Render — მარტივი მართვა, env-ცვლადები, ავტო-HTTPS.
 

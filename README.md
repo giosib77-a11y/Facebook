@@ -56,9 +56,9 @@
               │  └ საუბრის მეხსიერება│
               └──────────┬──────────┘
                          ▼
-                   ┌──────────┐
-                   │  Gemini  │  ← ქართული / English / Русский
-                   └────┬─────┘
+                   ┌───────────────────┐
+                   │  Claude / OpenAI  │  ← ქართული / English / Русский
+                   └────┬─────────────┘
                         ▼
                  პასუხი Send API-ით
                         │
@@ -101,7 +101,7 @@ App Roles-ში დამატებულ ანგარიშებზე (
 | **Backend** | FastAPI (Python 3.11+), uvicorn |
 | **DB / Auth / Storage** | Supabase — Postgres + Row Level Security + Auth + Storage |
 | **Frontend** | React 18 + Vite (**MPA**, არა SPA) — 8 გვერდი |
-| **AI** | Google Gemini (`gemini-2.5-flash`, `GEMINI_MODEL`-ით იცვლება) |
+| **AI** | Anthropic Claude (`claude-haiku-5-5`, default) ან OpenAI (`gpt-6-luna`) — `LLM_PROVIDER`-ით; მოდელები `CLAUDE_MODEL` / `OPENAI_MODEL`-ით იცვლება |
 | **არხები** | Facebook Messenger Platform · Instagram Messaging (Graph `v21.0`) |
 | **ჰოსტინგი** | Render (Starter $7/თვე — cold-start გამორთულია) |
 | **დომენი** | `chatassist.ge` (DNS + SSL) |
@@ -137,7 +137,9 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │       │   └── tiers.py         პაკეტები, ლიმიტები, ფასები
 │       ├── models/              Pydantic სქემები (shop, product, order, chat)
 │       └── services/
-│           ├── bot.py           get_bot_reply · prompt · პროდუქტ-ძებნა · ლინკი
+│           ├── bot.py           get_bot_reply — თხელი wrapper (prompt.py + llm.py)
+│           ├── prompt.py        სამფენიანი prompt (L1 საერთო წესები · L2 მაღაზია · L3 საუბარი)
+│           ├── llm.py           Claude Messages API / OpenAI Responses API · retry · usage → `llm_usage`
 │           ├── facebook.py      Graph API · Send API · SSRF-დაცული download_image
 │           ├── import_products.py  Excel/CSV პარსერი (all-or-nothing)
 │           └── pdf_extract.py   PDF → ტექსტი (ბოტის ცოდნა)
@@ -154,7 +156,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         19 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         25 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -185,14 +187,22 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 | **#2** | გაძლიერებული prompt | პერსონა, დაზუსტება, upsell, handoff-ის წესები |
 | **#3** | ჭკვიანი პროდუქტ-ძებნა | ≤30 პროდუქტი → ყველა; >30 → keyword-match, top-30 (სიზუსტე + იაფი prompt) |
 | **#4** | ოპერატორზე გადართვა | ბოტი პასუხს `[[HANDOFF]]` ნიშანს ამატებს → საუბარი პანელში ინიშნება |
-| **#5** | სურათის გაგება | კლიენტი ფოტოს აგზავნის → Gemini multimodal → მარაგს ადარებს |
+| **#5** | სურათის გაგება | კლიენტი ფოტოს აგზავნის → LLM multimodal → მარაგს ადარებს |
 | — | ვიზუალური ამოცნობა | პროდუქტების ფოტოებს ადარებს და კონკრეტულს ცნობს |
 | **#7** | ანალიტიკა | საუბრების რაოდ., top-terms, ბოლო შეკითხვები |
 | — | მრავალენოვნება | ქართული / English / Русский — ავტო ან ხელით |
 | — | შესაკვეთი ლინკი | `order.html?shop=<id>` — ბოტი თვითონ აძლევს |
 
 **ჩარჩო:** `get_bot_reply(shop, products, message, history, images)` —
-[backend/app/services/bot.py](backend/app/services/bot.py)
+[backend/app/services/bot.py](backend/app/services/bot.py) (თხელი wrapper) +
+[prompt.py](backend/app/services/prompt.py) + [llm.py](backend/app/services/llm.py).
+
+**სამი ფენა prompt-ში** (cache-ის გამო სტაბილური ნაწილი წინ დგას):
+- **L1** — ინგლისურად დაწერილი საერთო წესები, ყველა მაღაზიისთვის იდენტური (Claude cache 1 სთ)
+- **L2** — მაღაზიის სტაბილური ბლოკი: სახელი, აღწერა, ვალუტა, ენის წესი, შეკვეთის ლინკი, ცოდნა, მარაგი (≤30 პროდუქტი სრულად) (cache 5 წთ)
+- **L3** — საუბრის ისტორია + კლიენტის ბოლო შეტყობინება (ავტომატური cache)
+
+`llm.py` იძახებს არჩეულ provider-ს (Claude Messages API / OpenAI Responses API), SDK-ის retry გამორთულია, აქვს საკუთარი ერთი retry (ჯამი ≤45 წმ) და ყოველი გამოძახების usage-ს (ტოკენები, cache read/write) წერს `llm_usage`-ში.
 
 ### 5.3 შეკვეთები
 
@@ -314,13 +324,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 ### Dev
 | Method | Path | აღწერა |
 |---|---|---|
-| POST | `/test-chat` | ⚠️ ბოტის ტესტი Messenger-ის გარეშე — **production-ში გამორთულია** |
+| POST | `/test-chat` | ⚠️ ბოტის ტესტი Messenger-ის გარეშე — **production-ში გამორთულია** (404). provider-ის key-ის გარეშე → 503 `<VAR> არ არის კონფიგურირებული`; LLM-ის შეცდომა → 502 |
 
 ---
 
 ## 7. მონაცემთა ბაზა
 
-### ცხრილები (6) — ყველას აქვს RLS
+### ცხრილები (7) — ყველას აქვს RLS
 
 | ცხრილი | რა ინახება |
 |---|---|
@@ -330,11 +340,12 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `upgrade_requests` | პაკეტის მოთხოვნები (manual billing) |
 | `bot_customers` | უნიკალური კლიენტი თვეში (ლიმიტის მრიცხველი) |
 | `bot_conversations` | საუბრის მეხსიერება (ბოლო შეტყობინებები) + handoff-ის ნიშანი (`needs_attention`, 0010) |
+| `llm_usage` | LLM-ის გამოძახებების usage: `shop_id`, `provider`, `model`, `input_tokens` (cache-ის გარეშე), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0025) |
 
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (24)
+### მიგრაციები (25)
 
 | # | რა |
 |---|---|
@@ -362,6 +373,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0022` | 🔒 `orders`: UPDATE სრულად მოხსნილია `authenticated`-დან; `shops.knowledge*`-ზე UPDATE მოხსნილია (ჩაწერა მხოლოდ backend-ით). გაუშვი backend-ის deploy-ის **შემდეგ** |
 | `0023` | `products.price` / `orders.total`: CHECK `< 'Infinity'` — Postgres-ში NaN `>= 0`-ს აკმაყოფილებს, ამიტომ NaN/Infinity ბაზაში ჩაწერა შეიძლებოდა. PRE-CHECK ფაილის თავშია |
 | `0024` | 🔒 `upgrade_requests`: INSERT/UPDATE/DELETE მოხსნილია `authenticated`-დან, პოლისი `ur_owner_insert` იშლება; partial UNIQUE — მაქს. ერთი pending მაღაზიაზე. გაუშვი backend-ის deploy-ის **შემდეგ** |
+| `0025` | 🔒 `llm_usage` — LLM usage-ის აღრიცხვა (RLS ჩართული, პოლისების გარეშე, მხოლოდ `service_role`). გაუშვი backend deploy-**მდე** |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით.
 
@@ -529,9 +541,12 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `CLIENT_IP_TRUSTED_HOPS` | ✅ | — (Render: `3`) | production-ში სავალდებულოა (≥1), სხვაგვარად სერვერი არ ადგება. კლიენტის IP = `X-Forwarded-For`-ის მარჯვნიდან N-ური ჩანაწერი (Render-ზე სწორი N დაადგინე `CLIENT_IP_DEBUG`-ით). `CF-Connecting-IP` იგნორირდება |
 | `CLIENT_IP_DEBUG` | | `false` | დროებით `true` → ერთი INFO ხაზი ლოგში: სრული XFF (≤1000 სიმბ.), entries, peer (არასანდო), hops, resolved IP (10 წმ-ში ერთხელ); შემდეგ გამორთე. production-ში XFF-ის ნაკლებობისას resolved = `unknown` (საერთო key, `peer` არ გამოიყენება — გაყალბებადია) |
 | `LOG_LEVEL` | | `INFO` | `app` logger-ის დონე (stdout-ზე): `DEBUG` / `INFO` / `WARNING` / `ERROR`; არავალიდური → `INFO` |
-| `GEMINI_API_KEY` | ✅ | — | <https://aistudio.google.com/apikey> |
-| `GEMINI_MODEL` | | `gemini-2.5-flash` | მოდელის შეცვლა კოდის გარეშე |
-| `GEMINI_TIMEOUT_SECONDS` | | `20` | ერთი Gemini მცდელობის timeout (წმ); retry-ების ჯამი ≤45 წმ, მერე webhook fallback პასუხი |
+| `LLM_PROVIDER` | | `claude` | `claude` ან `openai`; ცარიელი → `claude`; სხვა მნიშვნელობა → სერვერი არ ადგება |
+| `ANTHROPIC_API_KEY` | ✅ ბოტისთვის (`LLM_PROVIDER=claude`) | — | 🔒 Anthropic Console → API Keys. არ არის fail-closed სიაში: გარეშე აპი ირთვება, ბოტი ოპერატორის პასუხს აგზავნის |
+| `CLAUDE_MODEL` | | `claude-haiku-5-5` | მოდელის შეცვლა კოდის გარეშე |
+| `OPENAI_API_KEY` | ✅ ბოტისთვის (`LLM_PROVIDER=openai`) | — | 🔒 OpenAI Platform → API keys |
+| `OPENAI_MODEL` | | `gpt-6-luna` | მოდელის შეცვლა კოდის გარეშე |
+| `LLM_TIMEOUT_SECONDS` | | `20` | ერთი LLM მცდელობის timeout (წმ); `gt 0, ≤ 20`, სხვა მნიშვნელობა → სერვერი არ ადგება. retry-ების ჯამი ≤45 წმ, მერე webhook fallback პასუხი |
 | `BOT_MEMORY_MESSAGES` | | `20` | 0 = მეხსიერება გამორთული |
 | `BOT_MEMORY_HOURS` | | `24` | |
 | `FB_APP_ID` · `FB_APP_SECRET` | ✅ | — | 🔒 Meta App |
@@ -548,7 +563,8 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 🔒 = საიდუმლო. **`.env` არასდროს ჩააქოს git-ში.**
 
 **Fail-closed (S11-6):** `APP_ENV=production`-ზე აპი **არ ირთვება** (`RuntimeError: Missing required production settings: ...`, მხოლოდ სახელები), თუ ცარიელია რომელიმე:
-`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key; არავალიდური → `FB_TOKEN_ENCRYPTION_KEY (invalid format)`).
+`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN`, `FB_TOKEN_ENCRYPTION_KEY` (ვალიდური Fernet key; არავალიდური → `FB_TOKEN_ENCRYPTION_KEY (invalid format)`).
+LLM provider-ის key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) ამ სიაში **არ არის**: მის გარეშე აპი ირთვება, ბოტი ოპერატორის პასუხს აგზავნის (საუბარი „ყურადღება სჭირდება"-ში ინიშნება), ლოგში WARNING `LLM disabled: <VAR> is not set`. დარჩენილი `GEMINI_*` ცვლადები იგნორირდება — Render-ზე წაშალე ახალი ვერსიის live-ის შემდეგ (იხ. [DEPLOYMENT.md](DEPLOYMENT.md)).
 `development`-ში შემოწმება არ მუშაობს, თუმცა ცარიელი `FB_APP_SECRET`-ით webhook/signed_request/OAuth state/data-deletion კოდი ყოველთვის უარყოფილია.
 
 Fernet key-ის დაგენერირება:

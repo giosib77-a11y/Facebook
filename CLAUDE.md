@@ -6,7 +6,7 @@
 - Backend: FastAPI (Python 3.14), `backend/app` — venv `backend/.venv`
 - DB / Auth / Storage: Supabase (Postgres + RLS), მიგრაციები `supabase/migrations/`
 - Frontend: React 19 + Vite MPA, `frontend/` — build-ის შედეგი `frontend/dist/` **git-შია**
-- LLM: Google Gemini (`google-genai`)
+- LLM: Anthropic Claude (`anthropic`, default) / OpenAI (`openai`) — `LLM_PROVIDER`
 - Hosting: Render (auto-deploy `main`-ზე push-ისას) + Cloudflare
 
 ## Commands
@@ -21,7 +21,7 @@
 - typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (ერთჯერადი გაშვება, watch-ის გარეშე; 274 ტესტი, offline — fake Supabase + mock Graph/Gemini)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 410 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
 - test frontend: `cd frontend && npm test`
   (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; ტესტები `src/**/*.test.{js,jsx}` ფაილის გვერდით)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
@@ -30,15 +30,15 @@
 
 ## Conventions
 - **აკრძალულია** (მფლობელის თანხმობის გარეშე): `git push`, `main`-ში merge, deploy, remote Supabase-ზე
-  migration/query, Meta/Facebook Graph API-ს გამოძახება, Gemini-ს გამოძახება რეალური key-ით, `.env`-ის წაკითხვა/შეცვლა.
+  migration/query, Meta/Facebook Graph API-ს გამოძახება, Anthropic/OpenAI API-ს გამოძახება რეალური key-ით, `.env`-ის წაკითხვა/შეცვლა.
 - **ბრენჩი:** სამუშაო ბრენჩი მხოლოდ `agent-system`-ია. **ყოველ commit-მდე** გაუშვი `git branch --show-current`; თუ პასუხი `agent-system` არ არის (მაგ. `main` — მფლობელმა merge/push-ის შემდეგ ბრენჩი შეცვალა) — **გაჩერდი და მკითხე**, არ დააკომიტო. სესიის დასაწყისშიც შეამოწმე.
 - ტესტები offline: ახალი ტესტი იყენებს `tests/conftest.py`-ის `client` / `user_db` / `service_db` fixture-ებს;
-  Graph — `httpx.MockTransport` ან monkeypatch; Gemini — monkeypatch `get_bot_reply`. გარე სერვისი სჭირდება → ჯერ კითხვა.
+  Graph — `httpx.MockTransport` ან monkeypatch; LLM — fake client (`llm._anthropic_client`/`_openai_client`; conftest რეალურს ბლოკავს) ან monkeypatch `get_bot_reply`. გარე სერვისი სჭირდება → ჯერ კითხვა.
 - Tenant isolation: seller-ის endpoint-ები DB-ს `auth.client`-ით (მომხმარებლის JWT, RLS) მიმართავენ.
   `get_service_client()` მხოლოდ იქ, სადაც სესია არ არის (webhook, საჯარო შეკვეთა, storage, admin) —
   და მაშინ ownership ჯერ `auth.client`-ით მოწმდება ან ფილტრი კოდშია ცხადად.
 - ახალი SECURITY DEFINER ფუნქცია → იმავე მიგრაციაში `REVOKE EXECUTE ... FROM public, anon, authenticated`.
-- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0025_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
+- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0026_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
 - Frontend-ის ცვლილება → `npm run build` და `dist/` იმავე commit-ში. 8 `.html` სახელი არ იცვლება (URL-კონტრაქტი).
 - commit-ის სტილი: `fix(scope): ... (ID)` — აუდიტის მიგნების ID ფრჩხილებში.
 - კოდის comments ბევრგან ქართულადაა — შეინარჩუნე ფაილის არსებული სტილი.
