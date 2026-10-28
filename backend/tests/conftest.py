@@ -187,6 +187,19 @@ def _app_logger_propagates(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _block_real_llm_clients(monkeypatch):
+    """No test may build a real Anthropic/OpenAI client (network + real key). A test that needs
+    the real factory (with a fake SDK class) restores it from tests.test_llm_client."""
+    import app.services.llm
+
+    def _blocked(*args, **kwargs):
+        raise RuntimeError("real LLM client blocked in tests")
+
+    monkeypatch.setattr(app.services.llm, "_anthropic_client", _blocked)
+    monkeypatch.setattr(app.services.llm, "_openai_client", _blocked)
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limits():
     """In-memory per-IP buckets are process-global; keep tests independent."""
     from app.core import ratelimit
