@@ -54,6 +54,14 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `CLAUDE.md`: test-ის ხაზი — ზუსტი რაოდენობა ბოლო `pytest -q`-დან (ახლა მოძველებულია: „410"); Conventions-ში ერთი ხაზი: „`backend/scripts/compare_providers.py` (Stage 15) — აგენტი **არასდროს** უშვებს (არც `--dry-run`): რეალური API + ხარჯი; მხოლოდ მფლობელი (README §9); ტესტები — fake client-ებით." სკრიპტის ბრძანება `## Commands`-ში **არ** ემატება (verify.sh-მა/აგენტმა არ გაუშვას). `.claude/`-ს არ ეხება.
   - done when: CLAUDE.md ≤ 50 ხაზი (რაოდენობა report-ში); ტესტების რაოდენობა = ბოლო `pytest -q`; README-ის არგუმენტები = `grep -n "add_argument" backend/scripts/compare_providers.py` (report-ში შედარება; სკრიპტი `--help`-ით **არ** ეშვება); README-ში key-ის მნიშვნელობა/ნიმუში არ არის; საერთო done-when (pytest/ruff/compileall უცვლელად მწვანე).
 
+### Finish-check (Stage 15, 2026-10-28) — should-fix (fix round 1)
+> code-reviewer: 0 critical, 0 should-fix, 4 nit; security-auditor: 0 critical, 0 should-fix, 2 nit. ორივეს საერთო nit (ბრმის გაჟონვა შეცდომის კლასით) ორკესტრატორმა **should-fix-მდე აწია** — stage-ის მთავარი მიზანი ბრმა შეფასებაა და 529/503 Anthropic-ზე რეალისტურია; კოდში დადასტურდა (`compare_providers.py:196-201`, `llm.py:210`). reviewer-ებმა `.venv` python ვერ გაუშვეს (hook) — ორკესტრატორმა: 472 passed, ruff/compileall სუფთა.
+
+- [ ] **S15-5 — should-fix: ბრმა output-ში provider-ის ნიშანი (შეცდომის კლასი, console WARNING)** · owner: task-executor · files: `backend/scripts/compare_providers.py`, `backend/tests/test_compare_providers.py` · depends: —
+  - მიზეზი: `ask()` `compare_output.md`-ში წერს `[error: {type(exc).__name__}]`; `anthropic 2.3.0`-ს აქვს მხოლოდ მისი კლასები (`OverloadedError` 529, `ServiceUnavailableError` 503, `DeadlineExceededError` 504, `RequestTooLargeError` 413 — `.venv/Lib/site-packages/anthropic/_exceptions.py`) → ფაილი ავლენს, რომელი label-ია Claude. გარდა ამისა, სკრიპტი logging-ს არ აკონფიგურირებს → `llm.py`-ის `logger.warning` („retrying once (… <Class>)", „LLM refused to answer" — მხოლოდ Claude-ის გზა) Python-ის lastResort handler-ით stderr-ზე ჩანს `[i/N] Qxx`-ის გვერდით.
+  - Fix: (1) md-ში მხოლოდ ნეიტრალური კატეგორია `status_code`-ის მიხედვით: `[error: timeout]` (status არ არის და კლასის სახელში `Timeout`/`Deadline` — ან უბრალოდ status-ის გარეშე → `[error: no response]`), `[error: rate limit]` (429), `[error: server]` (≥500), `[error: client]` (სხვა 4xx) — ზუსტი რუკა შეარჩიე უმარტივესად, მთავარია provider-ისთვის საერთო სიტყვები; ზუსტი კლასი + status მხოლოდ `compare_key.json`-ის `errors`-ში (უცვლელი); (2) `main()`-ში, გამოძახებების ციკლამდე, `logging.getLogger("app")` — `propagate=False` + `logging.NullHandler()` (ან level ERROR-ზე მაღლა) ისე, რომ ტესტების შემდეგ სხვა ტესტებზე გავლენა არ დარჩეს (restore `finally`-ში ან ტესტში `monkeypatch`; caplog-ზე დამოკიდებული სხვა ტესტები არ უნდა ჩავარდეს — სრული pytest); retry/refusal-ის რაოდენობა გასაღებში ისედაც ჩანს errors/empty-ით.
+  - done when: ახალი ტესტი — fake Claude ორივე მცდელობაზე აგდებს რეალურ `anthropic.OverloadedError`-ს (ან `anthropic.InternalServerError` 529-ით; `time.sleep` patch) ერთ შეკითხვაზე (`--limit 1`) → md-ის lowercase-ში არ არის `overloaded`, არცერთი SDK კლასის სახელი; `key["errors"][qid]["claude"]["class"] == "OverloadedError"`; `capsys` stderr-ში არ არის `retrying`/`refused`/კლასის სახელი; ტესტი ძველ კოდზე ვარდება (report-ში); არსებული `test_call_error_does_not_stop` განახლდეს ახალ ტექსტზე (შესუსტების გარეშე: `boom` არსად); საერთო done-when (pytest 472 + ახალი, ruff/compileall `app tests scripts`); სკრიპტი shell-იდან არ გაშვებულა.
+
 ## Stage 14 — Deploy plan (Render; NOT to execute — main merge is not planned until keys exist)
 > შეასრულებს **მხოლოდ მფლობელი**, როცა `ANTHROPIC_API_KEY` ექნება და Stage 14 დასრულებულია (finish-check). აგენტი remote-ზე არაფერს უშვებს.
 > ⚠️ რიგი მნიშვნელოვანია: ძველ (Gemini) ვერსიას production-ში `GEMINI_API_KEY` სჭირდება (fail-closed) → `GEMINI_*` **წაშალე მხოლოდ ახალი ვერსიის წარმატებული deploy-ის შემდეგ**, თორემ rollback/restart ძველ ვერსიას ვეღარ ააწევს. ახალ ვერსიას დარჩენილი `GEMINI_*` არ აწუხებს (`extra="ignore"`).
@@ -306,6 +314,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - სატესტო ფოტოები სინთეტიკურია (სილუეტები) — რეალური ფოტოს ამოცნობის შედარება Stage 18-თან ერთად ან რეალური ფოტოებით (ზომის ლიმიტი `test_compare_data.py`-ში 100 KB — commit-ის წონისთვის).
 - CI-ში `ruff`/`compileall` `backend/scripts`-ს არ მოიცავს (მხოლოდ `app tests`; pytest მას იმპორტით ამოწმებს) — `ci.yml`-ში `scripts`-ის დამატება, თუ სკრიპტები გამრავლდება.
 - usage-ის ხაზი (`<details>`) provider-ის „ანაბეჭდია" (tokenizer-ები განსხვავდება) — თუ ბრმა შეფასებას აზიანებს: `--hide-usage` (usage მხოლოდ გასაღებში).
+- Finish-check (Stage 15), nit-ები: (a) `out_dir.mkdir` და ჩაწერა მხოლოდ 80 ფასიანი გამოძახების შემდეგ (`compare_providers.py` ~406-413) — დაუწერადი `--out-dir`-ზე შედეგი იკარგება (< $0.10); fix: mkdir + `os.access(W_OK)` key-ის შემოწმების შემდეგ, ციკლამდე; (b) `totals.mean_latency_s` ჩავარდნილ გამოძახებებსაც ითვლის — სწრაფი 400-ები საშუალოს ამცირებს; fix: მხოლოდ `error is None`; (c) პარიტეტი `bot.get_bot_reply`-თან კოპირებით (`MAX_REF_IMAGES`, label-ის ფორმატი) და ტესტი ასლს hardcode-ით ამოწმებს → `get_bot_reply`-ის ცვლილებისას (Stage 16/18!) შედარება ჩუმად დაშორდება production-ს; fix: ტესტი რეალური `get_bot_reply`-ით (`llm.generate` იჭერს `Prompt`-ს, `record_usage` no-op, `_fetch_product_images` → `cp.load_image`) და შედარება `cp.build_question_prompt`-თან 40-ზე — **Stage 16/18-ის დაგეგმვისას გასათვალისწინებელი**; `PROVIDERS` `Settings.llm_provider`-ის `Literal`-ს იმეორებს; (d) README §9 smoke (`--limit 3`) იმავე seed-ით → smoke-ის გასაღების გახსნა Q01–Q03-ის ბრმას არღვევს სრულ გაშვებაში; fix (docs): smoke `--seed 0`-ით; (e) `Q38` `must_mention: ["79"]` vs note „ან აზუსტებს" — ოდნავ ურთიერთსაწინააღმდეგო.
 
 ## Shared files
 <!-- წესი: მხოლოდ task-ში აღწერილი ცვლილება; სხვისი ჩანაწერის შეცვლა/წაშლა არა; ერთ საერთო ფაილზე ორი task ერთდროულად არ მუშაობს — რიგი ქვემოთ. -->
@@ -320,8 +329,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ## Run State
 - Stage: Stage 15 — ბრმა შედარება Claude vs OpenAI (სკრიპტი იწერება, არ ეშვება)
-- Finish-check this stage: not run
-- Fix rounds this stage: 0/2
+- Finish-check this stage: done (code-reviewer 0/0/4 nit, security 0/0/2 nit; ბრმის გაჟონვა აწეულია → S15-5; დანარჩენი nit-ები Backlog „Stage 15")
+- Fix rounds this stage: 1/2
 - Failed attempts: —
 
 ## Last Session
