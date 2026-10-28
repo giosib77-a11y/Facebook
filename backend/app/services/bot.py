@@ -1,16 +1,10 @@
-"""ბოტის ლოგიკა — LLM-ით (Claude / OpenAI) პასუხები მაღაზიის მარაგზე დაყრდნობით.
+"""საცნობარო ფოტოები გრაფისთვის (`services/graph.py`).
 
-მთავარი ფუნქცია: get_bot_reply(shop, products, message, history, images).
-prompt-ის აგება — services/prompt.py (სუფთა, offline), LLM-ის გამოძახება, retry და
-usage — services/llm.py. აქ რჩება მხოლოდ მათი შეკვრა, საცნობარო ფოტოების ჩამოტვირთვა
-და პასუხის დამუშავება.
+პასუხის აგება — `graph.run_turn`; prompt — services/prompt.py, LLM-ის გამოძახება, retry და
+usage — services/llm.py. აქ რჩება მხოლოდ რელევანტური პროდუქტების ფოტოების ჩამოტვირთვა
+(`_fetch_product_images`) და მათი წარწერა (`product_ref_label`).
 """
-from app.config import get_settings
-from app.services import llm, prompt
-
-# ოპერატორზე გადართვის ნიშანი — ბოტი პასუხის ბოლოს ამატებს, სისტემა წაშლის
-# კლიენტამდე გაგზავნამდე და საუბარს „ყურადღება სჭირდება"-დ ნიშნავს.
-HANDOFF_TOKEN = "[[HANDOFF]]"
+from app.config import get_settings  # noqa: F401  (tests/test_golden_conversations.py still patches bot.get_settings)
 
 # ფოტოიანი შეტყობინების მეხსიერების ჭერი (512 MB instance-ზე რამდენიმე
 # პარალელური ფოტო-შეტყობინება სერვისს არ უნდა აგდებდეს).
@@ -26,17 +20,6 @@ def product_ref_label(p) -> str:
     if p.get("sku"):
         label += f" (SKU: {p['sku']})"
     return label
-
-
-def parse_reply(raw: str) -> tuple[str, bool]:
-    """ბოტის raw პასუხიდან [[HANDOFF]] ნიშანს აცლის.
-
-    აბრუნებს: (გასუფთავებული_ტექსტი, handoff_საჭიროა?)
-    """
-    text = raw or ""
-    handoff = HANDOFF_TOKEN in text
-    clean = text.replace(HANDOFF_TOKEN, "").strip()
-    return clean, handoff
 
 
 def _fetch_product_images(products, customer_images=None, max_images: int = MAX_REF_IMAGES):
@@ -87,35 +70,3 @@ def _fetch_product_images(products, customer_images=None, max_images: int = MAX_
             remaining -= len(got[0])
             refs.append((product_ref_label(p), got))
     return refs
-
-
-def get_bot_reply(shop, products, message: str, history=None, images=None) -> str:
-    """აბრუნებს ბოტის პასუხს LLM-ით.
-
-    shop:     dict (id, name, currency, description, ...)
-    products: list[dict] (მხოლოდ აქტიური პროდუქტები უნდა გადმოეცეს)
-    message:  კლიენტის შეტყობინება
-    history:  წინა საუბარი (არასავალდებულო)
-    images:   სია (bytes, mime_type) — კლიენტის ფოტოები (multimodal, არასავალდებულო)
-
-    LLM-ის შეცდომა (timeout, 5xx, ...) გადადის გამომძახებელს — webhook-ის fallback პასუხი
-    იქ ამუშავდება.
-    """
-    settings = get_settings()
-    if not settings.llm_ready:
-        raise RuntimeError(f"{settings.llm_key_env_name} არ არის კონფიგურირებული")
-
-    # ვიზუალური ამოცნობა — თუ კლიენტმა ფოტო გამოგზავნა, რელევანტური პროდუქტების
-    # ფოტოებსაც ვურთავთ, რომ LLM-მა ვიზუალურად შეადაროს და კონკრეტული ამოიცნოს.
-    # კანდიდატები = ზუსტად ის ქვესიმრავლე, რასაც build_prompt ირჩევს, ამიტომ იგივე
-    # დალაგება (prompt._sort_key) — DB-ის რიგითობა გარანტირებული არ არის.
-    product_refs = None
-    if images:
-        ordered = sorted(products or [], key=prompt._sort_key)
-        relevant = prompt.select_relevant_products(ordered, message, history)
-        product_refs = _fetch_product_images(relevant, images)
-
-    p = prompt.build_prompt(shop, products, message, history, images, product_refs)
-    result = llm.generate(p, shop["id"])
-    llm.record_usage(shop["id"], result)
-    return result.text.strip()

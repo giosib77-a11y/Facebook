@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict, deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
@@ -14,6 +15,7 @@ from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
 from app.core.tiers import DAILY_ABUSE_CAP, limits_for
 from app.services.facebook import download_image, send_text_message, verify_signature
+from app.services import memory
 from app.services.graph import run_turn
 
 router = APIRouter(tags=["messenger webhook"])
@@ -118,38 +120,77 @@ def _rate_limited(shop_id: str, psid: str) -> bool:
     return False
 
 
-def _load_history(sc, shop_id: str, psid: str) -> list:
-    """კლიენტის ბოლო შეტყობინებები (მეხსიერება). migration 0008-ის გარეშე — [] (უმეხსიერებოდ)."""
+@dataclass
+class Conversation:
+    """შენახული საუბარი. summary_supported=False — `bot_conversations.summary` სვეტი (migration 0026)
+    არ არსებობს / ვერ წაიკითხა: summary გამორთულია და upsert-ში `summary` გასაღები არ იგზავნება."""
+    messages: list = field(default_factory=list)
+    summary: str | None = None
+    summary_supported: bool = True
+
+
+_SUMMARY_COLUMN_WARNED = False  # სვეტის არარსებობის WARNING — ერთხელ პროცესზე
+
+
+def _load_conversation(sc, shop_id: str, psid: str) -> Conversation:
+    """კლიენტის ბოლო შეტყობინებები + summary (მეხსიერება). migration 0008-ის გარეშე — ცარიელი;
+    migration 0026-ის გარეშე — შეტყობინებები summary-ის გარეშე (Stage 14-ის ქცევა)."""
+    global _SUMMARY_COLUMN_WARNED
     s = get_settings()
     if s.bot_memory_messages <= 0:
-        return []
-    try:
-        r = (
-            sc.table("bot_conversations").select("messages,updated_at")
+        return Conversation(summary_supported=False)
+
+    def select(columns: str):
+        return (
+            sc.table("bot_conversations").select(columns)
             .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
         )
+
+    supported = True
+    try:
+        r = select("messages,updated_at,summary")
+    except Exception:
+        supported = False
+        try:
+            r = select("messages,updated_at")
+        except Exception:
+            return Conversation(summary_supported=False)
+        if not _SUMMARY_COLUMN_WARNED:
+            _SUMMARY_COLUMN_WARNED = True
+            logger.warning(
+                "bot_conversations.summary missing (migration 0026 not applied) - conversation summary disabled"
+            )
+    try:
         if not r.data:
-            return []
+            return Conversation(summary_supported=supported)
         row = r.data[0]
         try:
             ts = datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00"))
             if datetime.now(timezone.utc) - ts > timedelta(hours=s.bot_memory_hours):
-                return []  # ძველი საუბარი — ახლიდან
+                return Conversation(summary_supported=supported)  # ძველი საუბარი — ახლიდან
         except Exception:
             pass
         msgs = row.get("messages") or []
-        return msgs[-s.bot_memory_messages:]
+        summary = row.get("summary") if supported else None
+        return Conversation(
+            msgs[-s.bot_memory_messages:],
+            summary if isinstance(summary, str) and summary.strip() else None,
+            supported,
+        )
     except Exception:
-        return []
+        return Conversation(summary_supported=supported)
 
 
 def _save_turn(
     sc, shop_id: str, psid: str, history: list, user_text: str, bot_reply: str,
-    needs_attention: bool = False,
+    needs_attention: bool = False, *, conv: Conversation | None = None, compact: bool = False,
 ) -> None:
     """ახალი წყვილის (კლიენტი+ბოტი) შენახვა, ბოლო N-მდე მოჭრით.
 
     needs_attention=True → საუბარი ინიშნება „ყურადღება სჭირდება"-დ (handoff).
+    compact=True (agent turn) + conv → თუ შეტყობინებები > memory.HISTORY_CUT, ძველი ნაწილი summary-ში
+    იკეცება (LLM გამოძახება; გამოძახებელი ამას პასუხის გაგზავნის შემდეგ აკეთებს). ჩავარდნისას
+    memory.compact იგივე სიას და summary-ს აბრუნებს. conv=None → `summary` გასაღები payload-ში არ არის.
     """
     s = get_settings()
     if s.bot_memory_messages <= 0 and not needs_attention:
@@ -159,8 +200,13 @@ def _save_turn(
         {"role": "user", "content": user_text},
         {"role": "bot", "content": bot_reply},
     ]
+    summary = conv.summary if conv is not None else None
+    if compact and conv is not None and conv.summary_supported and memory.needs_compaction(new):
+        new, summary = memory.compact(shop_id, new, summary)
     new = new[-s.bot_memory_messages:] if s.bot_memory_messages > 0 else new[-2:]
     base = {"shop_id": shop_id, "psid": psid, "messages": new, "updated_at": now}
+    if conv is not None and conv.summary_supported:
+        base["summary"] = summary  # None ასუფთავებს (ძველი საუბარი)
     full = dict(base)
     if needs_attention:
         full["needs_attention"] = True
@@ -365,7 +411,7 @@ def _process_events(data: dict) -> None:
                 try:
                     _save_turn(
                         sc, shop["id"], str(sender_id),
-                        _load_history(sc, shop["id"], str(sender_id)),
+                        _load_conversation(sc, shop["id"], str(sender_id)).messages,
                         text or ("[სურათი]" if image_urls else ""), auto_reply,
                         needs_attention=True,
                     )
@@ -383,11 +429,13 @@ def _process_events(data: dict) -> None:
                 except Exception:
                     pass  # ერთი სურათი ვერ ჩამოიტვირთა — დანარჩენით/ტექსტით ვაგრძელებთ
 
-            history = _load_history(sc, shop["id"], str(sender_id))
+            conv = _load_conversation(sc, shop["id"], str(sender_id))
             handoff = False
+            compact = False  # summary-ის LLM გამოძახება მხოლოდ agent turn-ზე (შაბლონზე/შეცდომაზე — არა)
             try:
-                result = run_turn(shop, products, text, history, images=images)
+                result = run_turn(shop, products, text, conv.messages, images=images, summary=conv.summary)
                 reply, handoff = result.text, result.handoff
+                compact = result.route == "agent"
             except Exception:
                 logger.exception("ბოტის პასუხი ვერ შეიქმნა (shop=%s)", shop.get("id"))
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."
@@ -410,7 +458,10 @@ def _process_events(data: dict) -> None:
                 )
                 continue
             try:
-                _save_turn(sc, shop["id"], str(sender_id), history, saved_text, reply, handoff)
+                _save_turn(
+                    sc, shop["id"], str(sender_id), conv.messages, saved_text, reply, handoff,
+                    conv=conv, compact=compact,
+                )
             except Exception:
                 # პასუხი უკვე გაიგზავნა — მეხსიერების ჩაწერის ჩავარდნა კლიენტს არ ეხება
                 logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
