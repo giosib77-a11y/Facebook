@@ -116,6 +116,10 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 ```
 .
 ├── backend/
+│   ├── scripts/                 ⚠️ მხოლოდ მფლობელი უშვებს (რეალური API + ხარჯი)
+│   │   ├── compare_providers.py    Claude vs OpenAI ბრმა შედარება (Stage 15)
+│   │   ├── compare_questions.json  ფიქტიური მაღაზია + 40 შეკითხვა
+│   │   └── compare_assets/         სინთეტიკური დემო-ფოტოები
 │   └── app/
 │       ├── main.py              entrypoint · CORS · security headers · static mount
 │       ├── config.py            პარამეტრები (.env → pydantic-settings)
@@ -442,6 +446,35 @@ npm test         # Vitest-ის ტესტები
 > ⚠️ **ხაფანგი:** `uvicorn --reload` ხანდახან ობოლ პროცესს ტოვებს, რომელიც პორტს
 > იკავებს და ძველ კოდს ასერვირებს. თუ ცვლილება არ ჩანს —
 > `Get-Process python | Stop-Process -Force` და თავიდან გაუშვი.
+
+### Provider-ების ბრმა შედარება (Stage 15)
+
+1. **დანიშნულება.** 40 შეკითხვა × 2 provider (Claude და OpenAI) — იგივე prompt-ით და იგივე LLM გზით, რასაც ბოტი იყენებს; მონაცემი ფიქტიური მაღაზიისაა. Supabase-ს და `llm_usage`-ს არ ეხება. სკრიპტს **მხოლოდ მფლობელი** უშვებს (რეალური API-ები და ხარჯი).
+2. **წინაპირობა.** `ANTHROPIC_API_KEY` და `OPENAI_API_KEY` ორივე სავალდებულოა — ლოკალურ `.env`-ში ან გარემოს ცვლადებში (სკრიპტი key-ს არ ბეჭდავს). რეკომენდაცია: ორივე კონსოლში დააყენე spend limit.
+3. **ბრძანებები** (`backend/` საქაღალდიდან). PowerShell — ჯერ smoke (`--limit 3`, 6 გამოძახება):
+   ```powershell
+   $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m scripts.compare_providers --limit 3
+   ```
+   დაათვალიერე შედეგი და მერე სრული გაშვება (80 გამოძახება, თანმიმდევრულად, ~1 წმ პაუზით; რამდენიმე წუთი):
+   ```powershell
+   $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m scripts.compare_providers
+   ```
+   Git Bash:
+   ```bash
+   PYTHONUTF8=1 .venv/Scripts/python.exe -m scripts.compare_providers --limit 3
+   PYTHONUTF8=1 .venv/Scripts/python.exe -m scripts.compare_providers
+   ```
+   არგუმენტები:
+   - `--seed N` — A/B ეტიკეტების შემთხვევითობის seed (მთელი რიცხვი, default `15`);
+   - `--limit N` — მხოლოდ პირველი N შეკითხვა (N ≥ 1);
+   - `--delay S` — პაუზა გამოძახებებს შორის წამებში (≥ 0, default `1.0`);
+   - `--out-dir DIR` — სად ჩაიწეროს შედეგი (default — `backend/scripts/`);
+   - `--dry-run` — key-ის და API-ს გარეშე, მხოლოდ prompt-ების ზომებს ბეჭდავს და ფაილს არ წერს.
+4. **ხარჯი.** ~80 გამოძახება; სკრიპტის ფასების ცხრილით < $0.10. gpt-6-luna-ს ფასი **UNVERIFIED** (მესამე წყაროდანაა) — რეალური ხარჯი ნახე OpenAI კონსოლში.
+5. **გამოსავალი.** `backend/scripts/compare_output.md` და `compare_key.json` — ორივე gitignored, **არასდროს** დააკომიტო. ხელახალი გაშვება მათ გადაწერს. `--out-dir` მიუთითე repo-ს გარეთ ან ignored გზაზე.
+6. **ბრმა შეფასება.** ჯერ გახსენი მხოლოდ `compare_output.md`. თითო შეკითხვაზე A და B შეაფასე 0–2 ქულით თითო კრიტერიუმზე: facts (ფოტოზე — სწორი პროდუქტი), ქართული/ენა, მოკლეობა + markdown-ის გარეშე, handoff. `usage` ბლოკი არ გახსნა, სანამ ტექსტს არ შეაფასებ (ტოკენების რაოდენობა provider-ს ავლენს). მხოლოდ ამის შემდეგ გახსენი `compare_key.json` და დაითვალე ქულების ჯამი provider-ზე.
+7. **შემდეგ `PROJECT.md` Decision Log-ში ჩაწერე:** default provider (`LLM_PROVIDER`); thinking/effort საჭიროა თუ არა; output-ის ჭერი (800); 5-წუთიანი cache-ის ეკონომიკა (key-ის totals: cache read vs write); OpenAI-ის `input_tokens`-ის სემანტიკა; gpt-6-luna-ს რეალური ფასი; 429/timeout-ების რაოდენობა.
+8. **შენიშვნა.** ფოტოები სინთეტიკურია — ისინი ამოწმებენ pipeline-ს და უხეშ შესაბამისობას, არა რეალური ფოტოების ხარისხს; მაღაზია ერთია, ≤30 პროდუქტით.
 
 ---
 
