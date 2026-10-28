@@ -7,7 +7,6 @@ pydantic-settings>=2.7
 supabase>=2.11
 python-dotenv>=1.0
 httpx>=0.28
-google-genai>=1.0
 anthropic>=2.3
 openai>=3.40
 openpyxl>=3.1
