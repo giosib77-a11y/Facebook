@@ -9,6 +9,10 @@ Rules enforced here:
     retry itself, inside LLM_TOTAL_BUDGET_SECONDS.
   - No sampling parameters (temperature/top_p/top_k), no assistant prefill, no reasoning
     parameters: provider defaults only.
+  - Claude cache breakpoints (max 3 of 4, longer TTL first): L1 system (1h) -> L2 system (5m) ->
+    the last history block (5m). The final user turn is never a breakpoint: it is rebuilt per message
+    (relevant-product subset, photos) and the webhook stores only the raw customer text in history,
+    so a breakpoint there could never be read back on the next turn.
   - Provider SDKs are imported lazily (inside functions) and the clients are built only by the two
     factories below. Tests replace the factories (conftest blocks the real ones).
 """
@@ -103,7 +107,12 @@ def build_claude_request(prompt, model: str) -> dict:
                 "type": "image",
                 "source": {"type": "base64", "media_type": item[1], "data": item[2]},
             })
-    messages = [{"role": t["role"], "content": t["text"]} for t in prompt.history]
+    # History as block lists so the last block can carry the L3 breakpoint. No top-level
+    # (automatic) cache_control: it would put the breakpoint at the end of the final turn, whose
+    # content (product subset, photos) never reappears in that form in the next request's history.
+    messages = [{"role": t["role"], "content": [{"type": "text", "text": t["text"]}]} for t in prompt.history]
+    if messages:
+        messages[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}  # 5m, after the 1h -> 5m system
     messages.append({"role": "user", "content": final_blocks})
     return {
         "model": model,
@@ -114,7 +123,6 @@ def build_claude_request(prompt, model: str) -> dict:
             {"type": "text", "text": prompt.layer2, "cache_control": {"type": "ephemeral", "ttl": "5m"}},
         ],
         "messages": messages,
-        "cache_control": {"type": "ephemeral"},
     }
 
 

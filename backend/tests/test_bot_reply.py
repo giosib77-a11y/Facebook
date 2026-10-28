@@ -144,6 +144,11 @@ def test_claude_system_is_byte_identical_across_messages(h, n_products):
     assert a[0]["text"] == LAYER1_FIXTURE
     assert a[0]["text"].encode("utf-8") == b[0]["text"].encode("utf-8")
     assert a[1]["text"].encode("utf-8") == b[1]["text"].encode("utf-8")
+    # SF-1: L3 breakpoint is on the last history block, never on the variable final turn
+    for r in h.requests:
+        assert "cache_control" not in r
+        assert r["messages"][-2]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert all("cache_control" not in b for b in r["messages"][-1]["content"])
     # the per-message part really differs
     assert h.requests[0]["messages"][-1] != h.requests[1]["messages"][-1]
     if n_products > 30:

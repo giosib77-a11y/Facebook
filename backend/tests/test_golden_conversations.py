@@ -120,6 +120,8 @@ class Golden:
     def history_turns(self, request):
         """Everything before the final user turn, as (role, text)."""
         turns = request["messages"] if self.provider == "claude" else request["input"][1:]
+        if self.provider == "claude":  # history turns are block lists on Claude (cache breakpoint)
+            return [(t["role"], "".join(b["text"] for b in t["content"])) for t in turns[:-1]]
         return [(t["role"], t["content"]) for t in turns[:-1]]
 
     def final_blocks(self, request):
