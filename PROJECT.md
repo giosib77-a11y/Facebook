@@ -19,18 +19,20 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 15 — ბრმა შედარება: Claude vs OpenAI (სკრიპტი იწერება, არ ეშვება)**
-(იხ. `PROGRESS.md`; Stage 10–14 დასრულებულია, Stage 14 — offline, deploy key-ებს ელოდება). Stage 16–18 (LangGraph, PDF-ცოდნა, ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
-სამუშაო მხოლოდ `agent-system`-ზე; `main`-ში merge არ იგეგმება, სანამ API key-ები არ იქნება.
+**Stage 16 — ბოტის გრაფი: preprocess (შაბლონები LLM-ის გარეშე) → agent + tools → postprocess; ისტორია ბლოკებად + summary**
+(იხ. `PROGRESS.md`; Stage 10–15 დასრულებულია, Stage 14/15 — offline, deploy/გაშვება key-ებს ელოდება). Stage 17–18 (PDF-ცოდნა, ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
+სამუშაო მხოლოდ `agent-system`-ზე; `main`-ში merge არ იგეგმება, სანამ API key-ები არ იქნება. ყველაფერი offline, fake client-ებით.
 
 ## Scope
-### In scope (current stage — Stage 15)
-- `llm.generate`-ში provider-ის override (`provider=`), default ქცევა უცვლელი
-- `backend/scripts/compare_providers.py`: 40 ქართული შეკითხვა ფიქტიურ მაღაზიაზე × 2 provider, იგივე `prompt` + `llm` გზით; `compare_output.md` (A/B, provider-ის სახელების გარეშე, ტოკენები/ფასი თითო პასუხზე) + `compare_key.json` (გასაღები) — ორივე gitignored
-- სატესტო მონაცემი (`compare_questions.json`, `compare_assets/`), offline ტესტები fake client-ებით, README-ს ინსტრუქცია
-- სკრიპტს **არავინ უშვებს, გარდა მფლობელისა** key-ების დამატების შემდეგ; შედეგის Decision Log (default provider, thinking/effort, output-ის ჭერი, 5m cache) — მფლობელი, გაშვების შემდეგ
+### In scope (current stage — Stage 16)
+- `services/graph.py`: `preprocess → agent ⟲ tools → postprocess`, `run_turn(...) -> TurnResult`; wiring — LangGraph, თუ S16-1 = GO, თორემ plain Python (იგივე node-ები). LLM-ის გამოძახება მხოლოდ `llm.py`-ით (LangChain chat model-ები — არა)
+- `llm.py`: tool calling ორივე provider-ზე (Claude `tool_use`/`tool_result`, OpenAI `function_call`/`function_call_output`), turn-ის deadline, `complete()` summary-სთვის
+- `services/tools.py`: `search_products`, `search_knowledge`, `order_link` (read-only, მხოლოდ state-იდან) + `request_human` (ანაცვლებს `[[HANDOFF]]`-ს → `needs_attention`)
+- `services/replies.py`: მისალმება / მადლობა / ოპერატორის მოთხოვნა (ka/en/ru) შაბლონით, LLM-ისა და `llm_usage`-ის გარეშე; markdown-ის გასუფთავება
+- `services/memory.py` + migration `0026` (`bot_conversations.summary`): ისტორია 16-ზე მეტისას → ბოლო 8 + summary (ერთი დამატებითი გამოძახება, პასუხის გაგზავნის შემდეგ)
+- webhook + `/test-chat` → `run_turn`; `get_bot_reply` / `parse_reply` / `[[HANDOFF]]` იშლება; შედარების სკრიპტი იმავე გზით (`run_turn`, provider-ის override, DB-ის გარეშე)
 ### Out of scope (for now)
-- Stage 15-ში: production-ის ქცევის ცვლილება (prompt, webhook, default provider), Stage 14-ის Backlog nit-ები, LangGraph/tools, PDF-ის შეკუმშვა, ფოტოს აღწერა (Stage 16–18)
+- Stage 16-ში: L2-ის ცვლილება (მარაგი/ცოდნა რჩება), PDF-ის chunk-ები / FAQ (Stage 17), ფოტოს აღწერა (Stage 18), default provider-ის ცვლილება, frontend (privacy-ის ტექსტი — Open Questions), Stage 14/15-ის Backlog nit-ები (გარდა Stage 15 (c) — S16-9)
 - ახალი ფიჩერები — [ROADMAP.md](ROADMAP.md) (Instagram Live, web widget, ინტეგრაციები,
   ავტომატური billing, Redis/queue, CSP, admin pagination)
 
@@ -38,7 +40,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 1. რეგისტრაცია → მაღაზია → პროდუქტები (ხელით / Excel / CSV) → PDF-ცოდნა.
 2. Facebook OAuth connect → page token (დაშიფრული) → webhook subscribe.
 3. Meta webhook (`POST /webhook`, ხელმოწერით) → page_id → მაღაზია → ლიმიტები →
-   LLM (ახლა Gemini; Stage 14-დან Claude/OpenAI; key-ის გარეშე — ოპერატორის პასუხი) → Send API პასუხი (background task).
+   LLM (ახლა Gemini; Stage 14-დან Claude/OpenAI; key-ის გარეშე — ოპერატორის პასუხი; Stage 16-დან გრაფი: შაბლონი ან agent + tools ≤4 გამოძახებით → markdown-ის გასუფთავება) → Send API პასუხი (background task) → ისტორიის შენახვა (16-ზე მეტისას summary).
 4. საჯარო შეკვეთა (`POST /orders`) → სერვერი ითვლის ჯამს → შეკვეთა `new` სტატუსით; მარაგი **არ იკლებს** ((IP, shop)-ზე დღიური ლიმიტი).
 5. გამყიდველი მართავს შეკვეთებს: `new → processing` ატომურად აკლებს მარაგს (არასაკმარისზე 409); `processing/done → cancelled` აბრუნებს; `new`-ის გაუქმება მარაგს არ ეხება.
 6. პაკეტის მოთხოვნა (`upgrade_requests`) → ადმინი ხელით ადასტურებს.
@@ -58,6 +60,9 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 ## Data
 Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0024`
 (სია: [README.md](README.md) §7). Stage 14: `0025_llm_usage.sql` (დაგეგმილი; `llm_usage` — მხოლოდ service_role).
+Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) — `bot_conversations.summary text` (nullable): ძველი შეტყობინებების
+მოკლე შეჯამება; წერს მხოლოდ backend (service_role, როგორც `messages`), გამყიდველი კითხულობს საკუთარს 0008-ის select პოლისით;
+ახალი grant/პოლისი არ არის. backend მის გარეშეც მუშაობს (summary გამორთულია, WARNING).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`
 - `orders.items` — JSON პოზიციები; ფული — numeric
@@ -78,7 +83,8 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Frontend: React 19 + Vite **MPA** (8 გვერდი); `frontend/dist/` git-შია
 - Backend: FastAPI (Python 3.14), sync handlers + FastAPI BackgroundTasks
 - LLM: Gemini (`google-genai`) → planned replacement (Stage 14): `anthropic` / `openai` SDK, `services/prompt.py` +
-  `services/llm.py`; LangGraph — მხოლოდ Stage 16-ში
+  `services/llm.py`; Stage 16: `services/graph.py` (+ `tools.py`, `replies.py`, `memory.py`) — wiring LangGraph-ით (S16-1 GO) ან plain Python;
+  LLM-ის გამოძახება ყოველთვის `llm.py`-ით (Decision Log 2026-10-28, Stage 16)
 - Database: Supabase Postgres + RLS + RPC-ები (EXECUTE მხოლოდ service_role-ს; `track_bot_customer` — DEFINER, stock RPC-ები — INVOKER)
 - Storage: Supabase Storage
 - Auth: Supabase Auth; backend ამოწმებს JWT-ს `auth.get_user()`-ით და DB-ს მომხმარებლის
@@ -124,6 +130,10 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
   response 200 `{reply: str, products_in_context: int, model: str}`. Stage 14: `model` = არჩეული provider-ის მოდელი
   (`CLAUDE_MODEL` / `OPENAI_MODEL`); არჩეული provider-ის key არ არის → **503** `{"detail": "<ENV_NAME> არ არის კონფიგურირებული"}`;
   provider-ის შეცდომა → 502; მაღაზია ვერ მოიძებნა → 404; rate limit (15/წთ) → 429.
+  **Stage 16: კონტრაქტი უცვლელია** (`{reply, products_in_context, model}`, იგივე სტატუს-კოდები). შიგნით — `graph.run_turn`: შაბლონურ
+  შეტყობინებაზე (მაგ. „გამარჯობა") `reply` = შაბლონი LLM-ის გამოძახების გარეშე (503-ის შემოწმება მანამდე რჩება); `reply` markdown-ისგან
+  გასუფთავებულია; handoff (`request_human`) პასუხში არ ჩანს (როგორც ახლა `[[HANDOFF]]`); turn-ის ბიუჯეტის ამოწურვა (`TimeoutError`) → 502.
+- **`POST /webhook`** — Stage 16: გარე ქცევა უცვლელია; handoff-ის წყარო `[[HANDOFF]]` ნიშნის ნაცვლად `request_human` tool call ან ოპერატორის შაბლონია → `needs_attention`.
 
 ## Decision Log
 > კოდიდან და git-ის ისტორიიდან აღდგენილი გადაწყვეტილებები (თარიღი ≈ შესაბამისი commit).
@@ -395,6 +405,75 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Alternatives considered: `--provider claude|openai` (ბრმა აღარ არის; ერთი provider-ის გამართვა `--limit`-ით და ერთი key-ით მაინც შეუძლებელია — მისაღებია); პარალელური გამოძახებები (429-ის რისკი, latency-ს გაზომვა მახინჯდება); ნაწილობრივი ფაილის ჩაწერა ყოველი შეკითხვის შემდეგ (მეტი კოდი; 80 გამოძახება რამდენიმე წუთია).
 - როგორ შეიცვლება: შედეგის შემდეგ მფლობელი Decision Log-ში წერს: default provider, thinking/effort, output-ის ჭერი (800), 5m cache-ის ეკონომიკა (გასაღების ჯამები: cache read vs write), OpenAI-ის `input_tokens`-ის სემანტიკა, gpt-6-luna-ს რეალური ფასი.
 
+### 2026-10-28 — Stage 16: LangGraph თუ plain Python — S16-1-ის go/no-go; არქიტექტორის რეკომენდაცია: plain Python
+- Context: მფლობელმა ცხადად ითხოვა LangGraph. ნაკადი = 3 node + ერთი შემოსაზღვრული ციკლი (`agent ⟲ tools`, ≤3 რაუნდი) ერთი შეტყობინების ფარგლებში; ისტორია Supabase-შია (checkpointer არ გვჭირდება); streaming, interrupt/resume, პარალელური branch-ები არ გამოიყენება. LLM-ის გამოძახება LangChain chat model-ით აკრძალულია (`cache_control`-ის და ბაიტ-იდენტური prefix-ის კონტროლი — Decision Log 2026-10-28, „Gemini სრულად იცვლება").
+- Decision: **S16-1** (task-executor) ამოწმებს და აყენებს `langgraph`-ს (უახლესი stable) მხოლოდ `backend/.venv`-ში. **GO** — თუ ყველა: (1) ყოველ compiled პაკეტს (მოსალოდნელი: `ormsgpack`, `xxhash`, `orjson`, `zstandard`, …) აქვს cp314 manylinux x86_64 wheel (`pip download --only-binary=:all: --platform manylinux2014_x86_64` ან `manylinux_2_28_x86_64` `--python-version 3.14 --no-deps`), დანარჩენი pure-python; (2) არცერთი არსებული lock-ის pin არ იცვლება; (3) `pip check` სუფთა; (4) `pip-audit` 0; (5) offline smoke (2-node `StateGraph` + ციკლი) მუშაობს; (6) pytest უცვლელად 473. სხვა შემთხვევაში **NO-GO** — დაყენებული პაკეტები იშლება, requirements უცვლელია.
+  - GO → `graph.py` node-ებს LangGraph-ის `StateGraph`-ით აწყობს: მხოლოდ wiring (`langgraph` import მხოლოდ `graph.py`-ში; `langchain_core`-ის message/tool/chat model ტიპები — არსად; checkpointer — არა; `recursion_limit` მხოლოდ დამცავი ბადეა, ჭერს ჩვენი მთვლელი აკონტროლებს). LangSmith tracing არასდროს: `LANGSMITH_*`/`LANGCHAIN_*` env არ ყენდება (ტესტებში conftest შლის).
+  - NO-GO → იგივე node ფუნქციები (`preprocess`, `agent`, `tools`, `postprocess`; `state -> dict`) plain Python ციკლით (~20 ხაზი), იგივე routing ფუნქციები და იგივე ტესტები; მიზეზი — ამ ჩანაწერის ბოლოს და `PROGRESS.md` `## Blockers`-ში.
+- ვარაუდი (/auto): GO-ზე LangGraph-ით ვაწყობთ, რადგან ეს მფლობელის ცხადი მოთხოვნაა (პრიორიტეტი #1) — ქვემოთ მოცემული რეკომენდაციის მიუხედავად. ორივე გზაზე node-ები ჩვეულებრივი ფუნქციებია, ამიტომ wiring-ის შეცვლა ერთი ფუნქციაა.
+- **არქიტექტორის რეკომენდაცია (on merit): plain Python.** (1) LangGraph-ის არცერთი უნიკალური შესაძლებლობა (checkpoint/resume, streaming, interrupt, parallel fan-out) აქ არ გამოიყენება — 3-node-იანი ხაზოვანი ნაკადი ერთი შემოსაზღვრული ციკლით ერთ ეკრანზე იწერება; (2) ~12–16 ახალი პაკეტი (`langgraph`, `langgraph-checkpoint`/`-prebuilt`/`-sdk`, `langchain-core`, `langsmith`, `ormsgpack`, `xxhash`, `orjson`, `zstandard`, `requests` + `urllib3`/`charset-normalizer` (S14-7-ში ამოღებული), `requests-toolbelt`, `jsonpatch`, `jsonpointer`, `tenacity`…) — supply chain / pip-audit-ის ზედაპირი, import-ის მეხსიერება Render-ის 512 MB-ზე, Python 3.14-ის wheel-ების რისკი; (3) `langsmith` — telemetry SDK, env-ით ჩართვადი → კონფიგურაციის შეცდომით კლიენტების საუბრები მესამე მხარეს წავა; (4) ჭერს, deadline-ს და cache-ს მაინც ჩვენი კოდი აკონტროლებს. LangGraph გამართლდება, როცა გამოჩნდება: მრავალსაფეხურიანი/პარალელური workflow, შეჩერება-გაგრძელება (human approval), გრძელვადიანი state checkpointer-ით.
+- Alternatives considered: LangGraph + LangChain chat models (cache-ის კონტროლი იკარგება — უარყოფილია); Claude Agent SDK (უარყოფილია 2026-10-28); ორივე wiring feature flag-ით (ორმაგი კოდი).
+- როგორ შეიცვლება: მფლობელი წყვეტს (Open Questions). plain-ზე გადასვლა = `graph.py`-ის wiring + lock-იდან პაკეტების ამოღება (S14-7-ის მეთოდით).
+- **S16-1-ის შედეგი:** _(ორკესტრატორი ავსებს: GO / NO-GO + მიზეზი, `langgraph`-ის ვერსია, ახალი პაკეტების რაოდენობა და ზომა)_.
+
+### 2026-10-28 — Stage 16: გრაფის ფორმა, მოდულები, `run_turn` (webhook / `/test-chat` / სკრიპტი)
+- Decision: მოდულები — `services/graph.py` (node-ები, routing, `run_turn`, `build_turn_prompt`, `TurnResult`, ჭერის კონსტანტები), `services/tools.py` (tool spec-ები + executor-ები), `services/replies.py` (შაბლონები + `clean_reply`; სუფთა), `services/memory.py` (ისტორიის ჭრა + summary). prompt-ის აგება — მხოლოდ `prompt.py`, provider-ის გამოძახება — მხოლოდ `llm.py`. `bot.py`-ში რჩება მხოლოდ საცნობარო ფოტოები (`_fetch_product_images`, `MAX_REF_IMAGES`, `product_ref_label`); `get_bot_reply`, `parse_reply`, `HANDOFF_TOKEN` იშლება (S16-8).
+- `run_turn(shop, products, message, history=None, images=None, *, summary=None, provider=None, record_usage=True, refs_loader=None) -> TurnResult(text, handoff, route, calls, tools_used)` (`route` = `"template"` | `"agent"`, `calls` = ამ turn-ის `LLMResult`-ები). node-ები: `preprocess` (შაბლონი → END; ფოტოიან შეტყობინებაზე არასდროს) → `agent` (ზუსტად ერთი `llm.generate`) → `tools` → `agent` … → `postprocess` (`clean_reply`). LLM-ის შეცდომა / `TimeoutError` / not ready (`RuntimeError`) ვრცელდება — webhook-ის „ბოდიში…" fallback და `/test-chat`-ის 503/502 უცვლელია.
+- webhook / `/test-chat`: `get_bot_reply` + `parse_reply`-ის ნაცვლად ერთი `run_turn` გამოძახება (`reply, handoff = result.text, result.handoff`); შემოწმებების რიგი (echo/dedup → წუთობრივი ლიმიტი → `track_bot_customer` → abuse cap → თვიური ლიმიტი → გამორთული ბოტი → ფოტოები → გრაფი), FA-12 და `_save_turn` — უცვლელი. ე.ი. over-limit/გამორთულ ბოტზე შაბლონი არ მუშაობს (ოპერატორის პასუხი, როგორც ახლა).
+- შედარების სკრიპტი (`compare_providers.py`) — იგივე `run_turn` (`provider=`, `record_usage=False`, ლოკალური `refs_loader` `bot.product_ref_label`/`bot.MAX_REF_IMAGES`-ით) → production-ის გზას სტრუქტურულად ზომავს; Backlog Stage 15 nit (c) იხურება (S16-9, პარიტეტის ტესტით).
+- Reason: ერთი შესასვლელი სამივე გამომძახებლისთვის; node-ები სუფთა ფუნქციებია და wiring-ისგან დამოუკიდებლად ტესტდება.
+- Alternatives considered: `get_bot_reply`-ის გაფართოება (დაბრუნების ტიპი მაინც იცვლება → ტესტების იგივე ცვლილება; ყველაფერი ერთ ფაილში); `get_bot_reply` wrapper-ად (ორი გზა ერთი რამისთვის).
+- ტესტები: `test_bot_reply.py`-ის `get_bot_reply`-ის დონის გარანტიები გადადის `test_graph.py`-ში (S16-6-ის mapping ცხრილით); ძველები იშლება მხოლოდ S16-8-ში ამ ცხრილის მიხედვით — სხვაგან ტესტის წაშლა აკრძალულია.
+
+### 2026-10-28 — Stage 16: tool calling `llm.py`-ში — ორივე provider, cache, `tool_choice`, deadline, usage
+- tool spec — provider-ნეიტრალური `{"name", "description", "parameters"}` (`tools.TOOL_SPECS`, სტატიკური, მაღაზიისგან დამოუკიდებელი; `llm.py` `tools.py`-ს არ იმპორტებს — spec-ს გამომძახებელი აწვდის). Claude: `tools=[{name, description, input_schema}]`; OpenAI Responses: `tools=[{"type": "function", name, description, parameters, "strict": true}]`.
+- **cache:** Claude-ის prefix-ის რიგი tools → system → messages. tools სტატიკურია → L1-ის 1h breakpoint (`system[0]`) tools-ს და L1-ს ერთად ფარავს; ცალკე breakpoint tools-ზე **არ** არის; breakpoint-ები უცვლელია (1h → 5m → ისტორიის ბოლო ბლოკი; ≤3). tools-ის დამატება deploy-ზე ერთჯერადი cache miss-ია. turn-ის შიგნით 2–4 გამოძახება ისტორიის ბოლომდე cache-იდან კითხულობს; ბოლო turn + tool ნაბიჯები cache-ის გარეშეა (მე-4 breakpoint — Backlog, `llm_usage`-ის ციფრებით). OpenAI: tools prefix-ის ნაწილია, `prompt_cache_key` უცვლელი.
+- `tool_choice`: გამოძახებები 1–3 — არ იგზავნება (= auto); მე-4 (ბოლო დაშვებული) — `none` (Claude `{"type": "none"}`, OpenAI `"none"`) → ტექსტური პასუხი გარანტირებულია. Claude-ზე `tool_choice`-ის ცვლილება message-ების cache-ს ამ ერთ (იშვიათ) გამოძახებაზე აუქმებს — მისაღებია.
+- turn-ის შიგნითა transcript (`steps`, provider-ნეიტრალური: `{"text", "calls": [ToolCall], "results": [{"id", "content", "is_error"}]}`) ბოლო user turn-ის შემდეგ ემატება: Claude — assistant (`text` თუ არაცარიელია + `tool_use` ბლოკები) → user (`tool_result` ბლოკები; `is_error` მხოლოდ შეცდომაზე). OpenAI — `store=False`-ის გამო ყოველ გამოძახებაზე თავიდან იგზავნება: assistant ტექსტი (თუ არის) + `function_call` (`call_id`, `name`, **ორიგინალი** `arguments` სტრიქონი) + `function_call_output`; `previous_response_id` არ გამოიყენება (`store=True` სჭირდება — privacy). reasoning item-ები ხელახლა არ იგზავნება (Open Question).
+- პასუხის დამუშავება: `LLMResult.tool_calls: list[ToolCall(id, name, arguments: dict | None, raw_arguments)]` — Claude `type == "tool_use"` ბლოკები, OpenAI `output[*].type == "function_call"`; არავალიდური JSON → `arguments=None` → tool-ის შეცდომის შედეგი (ციკლი გრძელდება). ტექსტი — როგორც ახლა (Claude `text` ბლოკები, refusal → `""`; OpenAI `output_text`). კლიენტს მიდის მხოლოდ ბოლო, tool call-ის გარეშე პასუხის ტექსტი; tool-იანი პასუხის „წინასიტყვაობა" — არა (გამონაკლისი: `request_human`).
+- max tokens 800 ყოველ გამოძახებაზე, thinking disabled, sampling-ის გარეშე (უცვლელი).
+- **deadline:** `graph.TURN_BUDGET_SECONDS = 45` მთელ turn-ზე → `llm.generate(..., deadline=)`: ყოველ მცდელობას per-request `timeout=min(LLM_TIMEOUT_SECONDS, დარჩენილი)`; <3 წმ დარჩენისას → `TimeoutError` გამოძახების გარეშე; ერთი retry მხოლოდ თუ ეტევა. ე.ი. ერთი შეტყობინების worst case ≈ 45 წმ (როგორც Stage 14-ის ერთი გამოძახების ჭერი), არა 4 × 45. `deadline=None` → Stage 14-ის ზუსტი ქცევა (არსებული ტესტები უცვლელი).
+- **usage:** `llm_usage` — ერთი მწკრივი **ყოველ** LLM გამოძახებაზე (არსებული `record_usage`, სქემა უცვლელი; უმარტივესი), ჩაწერა ყოველი გამოძახებისთანავე (turn-ის შუაში შეცდომისასაც აღრიცხულია). შაბლონური პასუხი → 0 მწკრივი. turn-ის ჯამი — query-ით (`created_at`-ის სიახლოვე) ან `graph`-ის INFO ლოგით (`calls=N`).
+- summary-სთვის ცალკე `llm.complete(system, text, shop_id, *, max_tokens, provider=None, deadline=None)` — tools/cache-ის გარეშე, იგივე retry.
+- Alternatives considered: OpenAI `previous_response_id` (`store=True` — privacy-ის გადაწყვეტილების საწინააღმდეგო); turn-ის usage ერთ მწკრივში (სქემის ცვლილება); `tool_choice` `any`/`required` (იძულებითი ძებნა ყოველ შეტყობინებაზე); LangChain-ის tool/message ფორმატი.
+
+### 2026-10-28 — Stage 16: tools — სქემები, executor-ები, tenant isolation; L2 უცვლელია
+- 4 tool, სტატიკური ინგლისური აღწერებით; სქემები OpenAI strict-თან თავსებადი (`additionalProperties: false`, ყველა property `required`-ში): `search_products(query: string)`, `search_knowledge(query: string)`, `order_link()`, `request_human(reason ∈ customer_request | complaint | cannot_help | other)`.
+- **tenant isolation:** `tools.execute(name, arguments, ToolContext(shop, products))` — shop და products **მხოლოდ graph state-იდან** (webhook-მა მაღაზია `entry.id`-ით იპოვა, პროდუქტები `shop_id`-ით წაიკითხა). tool-ის არგუმენტები untrusted: schema-ს გარეთ ნებისმიერი გასაღები (მაგ. `shop_id`), არასწორი ტიპი, ცარიელი / >200-სიმბოლოიანი `query` → შეცდომის შედეგი. executor-ები DB-ს და ქსელს არ მიმართავენ (ყველაფერი უკვე ჩატვირთულია) → სხვა tenant-ის მონაცემამდე სტრუქტურულად ვერ მიდიან და ახალ query-ს არ ქმნიან.
+- `search_products` → `prompt.match_products` (იგივე keyword ქულა, რაც retrieval-ს; მხოლოდ დამთხვეული, ≤10). `search_knowledge` → `shops.knowledge`-ის **სრული** ტექსტი (L2-ში 20000 სიმბოლომდეა მოჭრილი — tool მის მიღმაც პოულობს), აბზაცებად (>800 → ფანჯრები), ტოპ-3 (Stage 17 — chunk-ებზე გადავა). `order_link` → `prompt.order_link_for(shop)`. `request_human` — **terminal**: graph მას არ „ასრულებს" და LLM-ს აღარ იძახებს; `handoff=True`, პასუხი = იმავე LLM პასუხის ტექსტი ან (ცარიელზე) ოპერატორის ფრაზა მაღაზიის ენაზე (`replies.handoff_reply`); იმავე პასუხის სხვა tool call-ები იგნორდება.
+- ზომები: შედეგი ≤3000 სიმბოლო; turn-ზე შედეგების ჯამი ≤8000 (მერე „Result omitted…"); ერთ პასუხში ≤3 შესრულებული tool call (დანარჩენს „skipped" შეცდომა — ყოველ `tool_use`-ს `tool_result` უნდა ჰქონდეს); ცარიელი შედეგი — ცხადი ტექსტი („No products match …"). ჯამი: prompt ≤60K (`MAX_PROMPT_CHARS`) + spec-ები ≤3K + შედეგები ≤8K ≈ ≤71K სიმბოლო + სურათები (~24K ტოკენი) → პესიმისტურადაც <100K (5×-იანი ფასის ზღვარი).
+- **L2 უცვლელია** (≤30 პროდუქტი — სრული მარაგი; >30 — რელევანტური სია ბოლო turn-ში; ცოდნა 20000-მდე). Reason: Stage 15-ის / `llm_usage`-ის ციფრები ჯერ არ არის; მარაგის L2-დან ამოღება ყოველ პროდუქტის შეკითხვას ≥2 გამოძახებად აქცევს (latency ×2, ბოლო turn ორჯერ) და 5m-იან L2 cache-ს (read 0.1×) კარგავს. tools დამატებითია: L1 ეუბნება მოდელს, რომ ძებნა მხოლოდ მაშინ, როცა საჭირო SHOP block-ში არ არის → ტიპურ შეტყობინებაზე 1 გამოძახება.
+- გულწრფელი შეფასება: Stage 16-ში `order_link` L2-ს იმეორებს, `search_knowledge` ახალს მხოლოდ >20000-სიმბოლოიან ცოდნაზე იძლევა, `search_products` — >30 პროდუქტზე სხვა სიტყვებით ძებნისას. ისინი მფლობელის სიიდანაა და იაფია (spec-ები cached prefix-შია); რეალური ღირებულება Stage 17-ში ჩნდება. მთავარი სტრუქტურული მოგება — `request_human` (handoff აღარ არის ტექსტური ნიშანი) და tool-ის შედეგი, რომელსაც კლიენტი ვერ გააყალბებს (S14-11-ის სათაურისგან განსხვავებით).
+- Alternatives considered: executor-ები DB query-ით (ზედმეტი query + tenant-ის ფილტრის რისკი); `shop_id` არგუმენტად (აკრძალულია); L2-დან მარაგის ამოღება (იხ. ზემოთ).
+- როგორ შეიცვლება: Stage 17 — `search_knowledge` chunk-ებზე; L2-ის შემცირება — `llm_usage`-ის ციფრებით (Backlog).
+
+### 2026-10-28 — Stage 16: preprocess — შაბლონური პასუხები LLM-ის გარეშე (`services/replies.py`)
+- Decision: სამი intent — მისალმება, მადლობა, ოპერატორის მოთხოვნა — ka (მათ შორის ლათინური ქართული), en, ru ფრაზების ფიქსირებული სიით (ზუსტი სია — `PROGRESS.md` S16-3). ნორმალიზაცია: `casefold`, ყველა არა-`\w` სიმბოლო (პუნქტუაცია, emoji) → space, whitespace-ის შეკუმშვა. დამთხვევა **მხოლოდ მთლიან შეტყობინებაზე** (ტოლობა, არა substring) — „გამარჯობა, წითელი მაისური გაქვთ?" LLM-ს მიდის. ფოტოიან შეტყობინებაზე შაბლონი არასდროს.
+- პასუხები (ka / en / ru): მისალმება „გამარჯობა! 😊 რით შემიძლია დაგეხმაროთ?" (L1-ის few-shot); მადლობა „არაფრის! 😊 კიდევ რით შემიძლია დაგეხმაროთ?"; ოპერატორი „ერთ წამში, ოპერატორი დაგიკავშირდებათ 🙏" (L1-ის არსებული ფრაზა) + `handoff=True` → `needs_attention`. ენა: მაღაზიის `bot_language` ∈ {ka, en, ru} → ის; `auto` (ან უცნობი) → დამთხვეული ფრაზის ენა.
+- შაბლონური პასუხი ისტორიაში ჩვეულებრივ bot პასუხად ინახება; LLM-ის გამოძახება და `llm_usage` მწკრივი — 0; summary-ის ჭრა შაბლონურ turn-ზე არ ხდება (შემდეგ agent turn-ზე).
+- Reason: მფლობელის მოთხოვნა (ტოკენების მინიმიზაცია); ეს შეტყობინებები ხშირია და პასუხი ფიქსირებულია.
+- Alternatives considered: substring/regex დამთხვევა (გრძელ შეკითხვას „გადაყლაპავს"); LLM-ით intent-ის კლასიფიკაცია (თვითონ გამოძახებაა).
+- ვარაუდი (/auto): ფრაზების სია და ტექსტები — არქიტექტორის; მფლობელის გადასახედი (Open Questions). შუა საუბარში მისალმებაზეც იგივე მისალმება ბრუნდება.
+
+### 2026-10-28 — Stage 16: postprocess — markdown-ის გასუფთავება (`replies.clean_reply`)
+- Decision (ზუსტი რიგი): (1) `[[WORD]]` სტილის ნიშნები (`\[\[[A-Z_]{2,30}\]\]`) იშლება — ძველი `[[HANDOFF]]`-ის ნარჩენი, handoff-ს **არ** რთავს (ერთადერთი წყარო — `request_human`/შაბლონი); (2) მხოლოდ code fence-იანი ხაზები იშლება, დარჩენილი backtick-ები იშლება; (3) `[label](https://url)` → `label: url` (ან `url`, თუ label = url); (4) ხაზის თავში `#`…`######` → იშლება; (5) `**x**` / `__x__` (არა URL-ის შიგნით) → `x`, დარჩენილი `**` → იშლება; (6) ხაზის თავში `- ` / `* ` → `• `; (7) ხაზების ბოლო space-ები, 3+ ცარიელი ხაზი → 1, strip. ერთი `*` / `_` ხელუხლებელია (გამრავლება, URL, SKU). „•"-იანი სიები, emoji და შესაკვეთი ბმული უცვლელია (ტესტით); idempotent. ცარიელი შედეგი → webhook-ის FA-12 fallback + handoff (უცვლელი).
+- Reason: L1 markdown-ს კრძალავს, მაგრამ მოდელები მაინც წერენ — Messenger-ში `**` და `#` ლიტერალურად ჩანს.
+- Alternatives considered: მხოლოდ L1-ის წესი (საიმედო არ არის); სრული markdown parser (dependency, ზედმეტი).
+
+### 2026-10-28 — Stage 16: ისტორია ბლოკებად + summary (`services/memory.py`, migration 0026)
+- Decision: `bot_conversations.summary text` (0026, idempotent, ახალი grant/პოლისი არა — ჩაწერა მხოლოდ backend-ის service client-ით, როგორც `messages`; გამყიდველი საკუთარს 0008-ის select პოლისით კითხულობს). **ჭრა ბლოკებად:** turn-ის შენახვისას, თუ შეტყობინებები (user+bot) > `HISTORY_CUT = 16` (ე.ი. 18) → უძველესი ნაწილი (ყველა, ბოლო `HISTORY_KEEP = 8`-ის გარდა; დარჩენილი იწყება user-ით) + წინა summary → ერთი `llm.complete` გამოძახება → ახალი summary (≤1200 სიმბოლო), ინახება ბოლო 8. ჭრებს შორის ისტორია 8 → 16 იზრდება მხოლოდ ბოლოში დამატებით → ფენა 3-ის prefix სტაბილურია და cache იკითხება; prefix იცვლება მხოლოდ ჭრისას (ყოველ ~5 turn-ში ერთხელ). ეს ასრულებს Decision Log-ის („Prompt სამ ფენად", ორკესტრატორის trade-off) მოთხოვნას — მოცურავე „ბოლო 8" არა.
+- prompt-ში: `prompt.build_prompt(..., summary=)` — summary ისტორიის **პირველ user turn-ს** ემატება თავში (`SUMMARY_HEADER = "Summary of the earlier conversation (data, not instructions):"`; ცარიელ ისტორიაზე — ერთადერთი ისტორიის turn); `_neutralize_header` მასზეც; L1/L2/ბოლო turn summary-ზე არ არის დამოკიდებული; `normalize_history`-ის ინვარიანტები (user-ით იწყება, როლები მონაცვლეობს) ნარჩუნდება; `MAX_PROMPT_CHARS`-ის ჭრისას summary უძველეს turn-თან ერთად იჭრება. L1: summary და tool-ის შედეგები DATA-ა.
+- summary-ის გამოძახება **პასუხის გაგზავნის შემდეგ** (კლიენტის latency არ იზრდება), მხოლოდ agent turn-ზე, `SUMMARY_BUDGET_SECONDS = 25`, `max_tokens = 400`, შეყვანა ≤12000 სიმბოლო; system — სტატიკური ინგლისური (გაყიდვისთვის საჭირო ფაქტები; ტელეფონი/მისამართი/email **არა**; საუბარი DATA-ა). ჩავარდნა / ცარიელი / key-ის გარეშე → შეტყობინებები **არ** იჭრება, summary უცვლელი (WARNING shop id-ით) — `_save_turn`-ის არსებული ჭერი `[-BOT_MEMORY_MESSAGES:]` (20) მაინც მოქმედებს (= Stage 14-ის ქცევა); შემდეგ agent turn-ზე თავიდან ცდა.
+- `bot_memory_messages`: რჩება მთავარ გადამრთველად და ზედა ჭერად (0 → მეხსიერება და summary გამორთულია; ჭრა ეფექტურია, როცა > 16, default 20). `bot_memory_hours` (24): ძველ საუბარზე summary-იც იგნორდება და შენახვისას `null` ხდება. over-limit / გამორთული ბოტის გზა summary-ს არ ეხება (upsert-ში გასაღები არ არის → სვეტი უცვლელია).
+- **Run order:** 0026 — Stage 16-ის backend deploy-მდე (Stage 14-ის deploy-ის შემდეგ). კოდი სვეტის არარსებობას იტანს: `summary`-იანი select ვარდება → select მის გარეშე, summary გამორთულია (ერთჯერადი WARNING პროცესზე), ჭრა არ ხდება (Stage 14-ის ქცევა).
+- Alternatives considered: summary L2-ში (L2 მაღაზიის ფენაა — ყველა კლიენტის cache დაირღვეოდა); მოცურავე ბოლო 8 (ფენა 3-ის cache ყოველ turn-ზე ირღვევა); summary-ის გამოძახება პასუხამდე (latency); ცალკე ცხრილი (ზედმეტი).
+- Privacy: summary არის უკვე შენახული საუბრის შეკუმშული ფორმა იმავე მწკრივში (იშლება მაღაზიის წაშლით და Data Deletion callback-ით, როგორც `messages`); privacy.html §6-ის ფორმულირება („საუბრები — ბოლო N შეტყობინება") — მფლობელის გადასახედი (Open Questions).
+
+### 2026-10-28 — Stage 16: ლიმიტები, latency, ხარჯი
+- LLM-ის გამოძახება ერთ შემოსულ შეტყობინებაზე: შაბლონი — 0; agent — **≤4** (`MAX_LLM_CALLS = 4` = 1 + `MAX_TOOL_ROUNDS = 3`; მე-4 იძულებით ტექსტურია) + summary — **≤1** მხოლოდ ჭრისას, პასუხის შემდეგ. ტესტით (`test_graph.py`, `test_webhook_memory.py`).
+- latency: ტიპური შეტყობინება — 1 გამოძახება (როგორც ახლა); ძებნით — 2; worst case — turn-ის 45 წმ deadline (ერთი Stage 14-ის გამოძახების ჭერის ტოლი). Meta webhook-ს 200 დამუშავებამდე უბრუნდება (უცვლელი).
+- ხარჯი: tool spec-ები cached prefix-შია (L1-თან ერთად); ფოტოიან turn-ზე ყოველი დამატებითი გამოძახება სურათებს ხელახლა აგზავნის (≤15 × ~1.6K ტოკენი) — Backlog / Stage 18 (2–3 საცნობარო ფოტო). გაზომვა — `llm_usage` (მწკრივი გამოძახებაზე) და შედარების სკრიპტის `calls`.
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 > 2026-10-09 — გარე აუდიტის (27 პუნქტი) პუნქტები, რომლებიც ახლანდელ კოდში არ დადასტურდა ან ამ მასშტაბისთვის ზედმეტია (მფლობელის მითითებით).
@@ -412,7 +491,9 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - **#18 subscription ლიმიტები მხოლოდ application layer-ში** — გამყიდველს ლიმიტიან ცხრილებზე DB-ში პირდაპირი ჩაწერა არ შეუძლია (0015: products INSERT, shops-ის tier/bot სვეტები ჩამორთმეულია; 0017–0019), ამიტომ backend ერთადერთი ჩამწერია (`knowledge` — 0022, `upgrade_requests` — 0024).
 - **#19 PII retention/deletion policy** — არსებობს: privacy.html §6 (ანგარიში — აქტიურობის განმავლობაში, მოთხოვნისას 30 დღეში; საუბრები — ბოლო N შეტყობინება; შეკვეთები — სანამ გამყიდველი/მაღაზია არ წაშლის) და კოდი ემთხვევა (shop-ზე `on delete cascade` ყველა ცხრილზე, admin delete + Storage cleanup, Meta Data Deletion callback + `delete-data.html`). Meta App Review-ს callback ან ინსტრუქციის URL სჭირდება — ორივე არის. გადახედვა: ავტომატური ვადიანი წაშლის საჭიროება ან კანონის ცვლილება.
 - **#20 Gemini prompt-ში user/seller content** — კლიენტის ტექსტი ცალკე `user` turn-შია და არა system instruction-ში; system-ში მხოლოდ გამყიდველის საკუთარი მონაცემია (მხოლოდ საკუთარ ბოტს აზიანებს); ბოტს ქმედებები (tools) არ აქვს — მხოლოდ ტექსტი. PDF-ცოდნის ამოღება — Backlog B-14.
+  - ⚠️ **გადაიხედება Stage 16-ში (2026-10-28; ჩანაწერის შეცვლა — მფლობელის გადაწყვეტილება):** ბოტს ემატება tools — 3 read-only (`search_products`, `search_knowledge`, `order_link` — მხოლოდ სერვერის state-ში უკვე ჩატვირთულ ამ მაღაზიის მონაცემზე, DB/ქსელის გარეშე, `shop_id` მოდელიდან არასდროს) + `request_human` (საუბარს `needs_attention`-ად ნიშნავს). prompt injection-ის worst case: ზედმეტი handoff (გამყიდველის ხმაური) ან ზედმეტი ძებნა (≤4 გამოძახება/შეტყობინება, 45 წმ). `search_knowledge` ცოდნის 20000-სიმბოლოიან clip-ს მიღმა ნაწილსაც აჩენს — B-14-ის ზედაპირს არ ზრდის (ცოდნა ისედაც საჯაროდ ითვლება).
 - **#22 Gemini output structured schema-ს გარეშე** — პასუხი Messenger-ის თავისუფალი ტექსტია; ერთადერთი სტრუქტურა `[[HANDOFF]]` ნიშანია და `parse_reply` მას ამოწმებს; ცარიელ პასუხზე fallback + handoff (FA-12).
+  - ⚠️ **გადაიხედება Stage 16-ში (2026-10-28):** `[[HANDOFF]]` და `parse_reply` იშლება; handoff = `request_human` tool call (სტრუქტურირებული, provider-ის tool API) ან ოპერატორის შაბლონი; ტექსტი `clean_reply`-ით სუფთავდება; FA-12 უცვლელი. ჩანაწერის განახლება — მფლობელი.
 - **#25 CSP header** — ROADMAP-შია (out of scope); frontend React-ია (escape-ით), user HTML არ რენდერდება. გადახედვა: მესამე მხარის script-ების დამატებისას.
 
 > 2026-10-09 — მესამე აუდიტი (Stage 12), მფლობელის გადაწყვეტილებით.
@@ -431,3 +512,7 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Anthropic-ის workspace: cache workspace-ზეა — production-ისთვის ცალკე workspace + spend limit? data retention (privacy.html-ის ფორმულირება Anthropic/OpenAI-ზე) — მფლობელი.
 - 5m cache write-ის ეკონომიკა დაბალ ტრაფიკზე (1.25× write vs 0.1× read) — Stage 15-ის სკრიპტის გასაღების ჯამებით (ერთ გაშვებაში cache „თბილია" — დაბალი ტრაფიკის შემთხვევას production-ის `llm_usage` აჩვენებს).
 - ვარაუდი (Stage 15): სატესტო ფოტოები სინთეტიკურია, მაღაზია ერთია ≤30 პროდუქტით — მფლობელს რეალური ფოტოები / დიდი კატალოგის შედარება სურს? (Decision Log 2026-10-28, Stage 15).
+- **Stage 16 — LangGraph თუ plain Python** (მფლობელის გადაწყვეტილება S16-1-ის შედეგის შემდეგ): არქიტექტორი plain Python-ს გირჩევს (Decision Log 2026-10-28, Stage 16); GO-ზე ახლა LangGraph-ით იწყობა, რადგან ცხადად მოითხოვე.
+- Stage 16, დასადასტურებელი პირველ რეალურ გამოძახებაზე (offline ვერ მოწმდება): OpenAI Responses `store=False` + `function_call` ხელახლა reasoning item-ების გარეშე → 400 ხომ არ არის gpt-6-luna-ზე (თუ კი — `include=["reasoning.encrypted_content"]` და reasoning item-ების გადაცემა); `strict: true` tool-ები gpt-6-luna-ზე; Claude Haiku 5.5-ზე `tool_choice: {"type": "none"}` და tools + 1h cache-ის ერთად მუშაობა (`cache_read_input_tokens` მე-2 გამოძახებაზე); რამდენ შეტყობინებაზე იძახებს მოდელი tool-ს „ზედმეტად" (`llm_usage`-ის მწკრივები / შეტყობინება).
+- ვარაუდი (Stage 16): შაბლონების ფრაზები (ka/en/ru) და ტექსტები, summary-ის სიგრძე (≤1200) და ჭრის ზღვრები (16 → 8) — არქიტექტორის; მფლობელმა გადახედოს ტონს.
+- privacy.html §6 („საუბრები — ბოლო N შეტყობინება"): Stage 16-დან იმავე მწკრივში ინახება ძველი შეტყობინებების მოკლე summary (PII-ის გარეშე ინსტრუქციით) — ფორმულირების განახლება საჭიროა? (frontend task, მფლობელის გადაწყვეტილება).
