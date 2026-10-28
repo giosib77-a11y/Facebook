@@ -36,7 +36,7 @@ def env(monkeypatch, service_db):
 
     def fake_bot_reply(shop, products, text, history, images=None):
         bot_calls.append(text)
-        return "gemini reply"
+        return "llm reply"
 
     monkeypatch.setattr(webhook, "get_bot_reply", fake_bot_reply)
     return db, sent, bot_calls, clock
@@ -55,7 +55,7 @@ def _send(psid, page_id=PAGE_ID):
     }]})
 
 
-def test_psid_over_limit_skipped_without_gemini_or_reply(env, caplog):
+def test_psid_over_limit_skipped_without_llm_or_reply(env, caplog):
     db, sent, bot_calls, _ = env
     with caplog.at_level(logging.WARNING, logger="app"):
         for _ in range(webhook._RATE_PER_PSID + 1):

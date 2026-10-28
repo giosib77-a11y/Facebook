@@ -1,7 +1,7 @@
 """FA-12: a bot reply is never dropped silently (empty model output, platform length limits).
 
 `_process_events` is called directly with a fake service client; Facebook and
-Gemini calls are monkeypatched, so nothing leaves the process.
+LLM calls are monkeypatched, so nothing leaves the process.
 """
 import logging
 
@@ -25,7 +25,7 @@ def env(monkeypatch, service_db):
     db.rpc_responses["track_bot_customer"] = [{"monthly_unique": 1, "day_count": 1}]
 
     sent = []
-    bot = {"reply": "gemini reply"}
+    bot = {"reply": "llm reply"}
     monkeypatch.setattr(webhook, "get_service_client", lambda: db)
     monkeypatch.setattr(webhook, "decrypt", lambda token: "page-token")
     monkeypatch.setattr(webhook, "send_text_message", lambda tok, psid, text: sent.append(text))
@@ -98,7 +98,7 @@ def test_short_reply_is_sent_once_unchanged(env):
 
     _run()
 
-    assert sent == ["gemini reply"]
+    assert sent == ["llm reply"]
     assert "needs_attention" not in _saved(db)
 
 

@@ -29,8 +29,11 @@ _SEEN_MIDS: "OrderedDict[str, float]" = OrderedDict()
 _SEEN_TTL = 600      # წამი — ამაზე ძველს ვივიწყებთ
 _SEEN_MAX = 5000     # ჩანაწერების ჭერი (მეხსიერება არ გაიბეროს)
 
-# FA-12: ცარიელი პასუხი (Gemini-მ დაბლოკა / MAX_TOKENS) კლიენტს ჩუმად არ უნდა დაეკარგოს
+# FA-12: ცარიელი პასუხი (LLM-მა უარი თქვა / MAX_TOKENS) კლიენტს ჩუმად არ უნდა დაეკარგოს
 EMPTY_REPLY_FALLBACK = "ბოდიში, ახლა ვერ გიპასუხებთ — ოპერატორი მალე დაგიკავშირდებათ."
+# ლიმიტის გადაჭარბებისას და გამორთული ბოტის (LLM key არ არის) დროს — კლიენტს ვპასუხობთ
+# ამ ტექსტით და საუბარს ოპერატორზე ვაგდებთ (needs_attention)
+OPERATOR_SOON_REPLY = "მადლობა შეტყობინებისთვის! 🙏 ჩვენი ოპერატორი მალე დაგიკავშირდებათ."
 # პლატფორმის ლიმიტზე (Messenger 2000, Instagram 1000) ცოტა ნაკლები — მარაგით
 _REPLY_LIMITS = {"page": 1900, "instagram": 900}
 _MAX_REPLY_PARTS = 3
@@ -78,8 +81,8 @@ def _already_handled(mid: str | None) -> bool:
     return False
 
 
-# B-3: წუთობრივი ლიმიტი — ერთმა კლიენტმა/მაღაზიამ საერთო Gemini კვოტა და threadpool
-# არ უნდა ამოწუროს. ლიმიტს გადაცილებულს ჩუმად ვტოვებთ (პასუხი და Gemini-ს გამოძახება არ არის).
+# B-3: წუთობრივი ლიმიტი — ერთმა კლიენტმა/მაღაზიამ საერთო LLM კვოტა და threadpool
+# არ უნდა ამოწუროს. ლიმიტს გადაცილებულს ჩუმად ვტოვებთ (პასუხი და LLM-ის გამოძახება არ არის).
 # მეხსიერებაშია (_SEEN_MIDS-ის მსგავსად ერთი instance-ისთვის); ბლოკირებული შეტყობინება არ ითვლება.
 _RATE_WINDOW = 60.0       # წამი
 _RATE_PER_PSID = 6        # (shop, psid)-ზე წუთში
@@ -292,7 +295,7 @@ def _process_events(data: dict) -> None:
             message = ev.get("message", {})
             sender_id = (ev.get("sender") or {}).get("id")
             text = message.get("text") or ""
-            # სურათის დანართები (Messenger/Instagram) — Gemini multimodal-ისთვის
+            # სურათის დანართები (Messenger/Instagram) — LLM multimodal-ისთვის
             image_urls = [
                 (a.get("payload") or {}).get("url")
                 for a in (message.get("attachments") or [])
@@ -304,7 +307,7 @@ def _process_events(data: dict) -> None:
             if _already_handled(message.get("mid")):
                 logger.info("გამეორებული შეტყობინება იგნორდა (mid=%s)", message.get("mid"))
                 continue
-            # B-3: წუთობრივი ლიმიტი — ბაზისა და Gemini-ს წინ, რომ spam იაფად მოიჭრას
+            # B-3: წუთობრივი ლიმიტი — ბაზისა და LLM-ის წინ, რომ spam იაფად მოიჭრას
             if _rate_limited(str(shop["id"]), str(sender_id)):
                 logger.warning(
                     "წუთობრივი ლიმიტი გადაჭარბდა — შეტყობინება გამოტოვებულია (shop=%s, psid=%s)",
@@ -343,8 +346,17 @@ def _process_events(data: dict) -> None:
                     shop.get("id"), exc_info=True,
                 )
 
-            if over_limit:
-                auto_reply = "მადლობა შეტყობინებისთვის! 🙏 ჩვენი ოპერატორი მალე დაგიკავშირდებათ."
+            # გამორთული ბოტი: არჩეული provider-ის key არ არის. აპი მუშაობს (პანელი), კლიენტი
+            # კი ოპერატორთან გადადის. კლიენტი უკვე დათვლილია (track_bot_customer ზემოთაა).
+            settings = get_settings()
+            bot_disabled = not settings.llm_ready
+            if bot_disabled:
+                logger.warning(
+                    "bot disabled — %s not set (shop=%s)", settings.llm_key_env_name, shop.get("id"),
+                )
+
+            if over_limit or bot_disabled:
+                auto_reply = OPERATOR_SOON_REPLY
                 try:
                     send_text_message(page_token, sender_id, auto_reply)
                 except Exception:
@@ -361,7 +373,7 @@ def _process_events(data: dict) -> None:
                     logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
                 continue
 
-            # შემოსული სურათების ჩამოტვირთვა (მაქს 3) — Gemini-სთვის
+            # შემოსული სურათების ჩამოტვირთვა (მაქს 3) — LLM-ისთვის
             images = []
             for url in image_urls[:3]:
                 try:

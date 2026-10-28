@@ -1,7 +1,7 @@
 """FA-11: over the monthly customer limit, keep serving already-counted customers.
 
 `_process_events` is called directly with a fake service client; Facebook and
-Gemini calls are monkeypatched, so nothing leaves the process.
+LLM calls are monkeypatched, so nothing leaves the process.
 """
 import logging
 
@@ -32,7 +32,7 @@ def env(monkeypatch, service_db):
 
     def fake_bot_reply(shop, products, text, history, images=None):
         bot_calls.append(text)
-        return "gemini reply"
+        return "llm reply"
 
     monkeypatch.setattr(webhook, "get_bot_reply", fake_bot_reply)
     return db, sent, bot_calls
@@ -57,7 +57,7 @@ def test_early_customer_still_served_when_shop_over_limit(env):
     _run(db, monthly=31)
 
     assert bot_calls == ["გამარჯობა"]
-    assert sent == ["gemini reply"]
+    assert sent == ["llm reply"]
     assert AUTO_REPLY not in sent
     count_q = _rank_queries(db)[1]
     assert ("lt", "created_at", "2026-10-01T10:00:00+00:00") in count_q.filters
@@ -101,4 +101,4 @@ def test_rank_not_queried_within_limit(env):
     _run(db, monthly=30)
 
     assert _rank_queries(db) == []
-    assert sent == ["gemini reply"]
+    assert sent == ["llm reply"]
