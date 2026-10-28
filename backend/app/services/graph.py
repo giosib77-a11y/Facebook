@@ -11,11 +11,13 @@ LangGraph-ის `recursion_limit` მხოლოდ დამცავი ბ�
 LLM-ის გამოძახება ყოველთვის `services/llm.py`-ით; prompt-ის აგება — `services/prompt.py`.
 """
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langsmith import tracing_context
 
 from app.services import bot, llm, replies, tools
 from app.services import prompt as prompt_lib
@@ -186,6 +188,14 @@ def _build_graph():
 _GRAPH = _build_graph()
 
 
+def _drop_legacy_tracing_env() -> None:
+    """ძველი `LANGCHAIN_TRACING` / `LANGCHAIN_HANDLER` env-ის არსებობისას LangGraph-ის callback-ების კონფიგურაცია ყოველ invoke-ზე
+    RuntimeError-ს აგდებს (tracing_context(enabled=False) მას ვერ აჩერებს — შემოწმება ნედლ env-ს კითხულობს).
+    ეს ცვლადები ჩვენთვის უაზროა → ყოველ turn-ზე იშლება."""
+    for name in ("LANGCHAIN_TRACING", "LANGCHAIN_HANDLER"):
+        os.environ.pop(name, None)
+
+
 def run_turn(shop, products, message, history=None, images=None, *, summary=None, provider=None,
              record_usage: bool = True, refs_loader: Callable | None = None) -> TurnResult:
     """ერთი შემოსული შეტყობინების დამუშავება. LLM-ის შეცდომა / TimeoutError / RuntimeError (key არ არის)
@@ -201,7 +211,11 @@ def run_turn(shop, products, message, history=None, images=None, *, summary=None
         "steps": [], "calls": [], "pending": [], "tool_chars": 0, "tools_used": [],
         "text": "", "handoff": False, "route": "agent",
     }
-    final = _GRAPH.invoke(state, config={"recursion_limit": _RECURSION_LIMIT})
+    # tracing ყოველთვის გამორთულია: context var env-ს (LANGSMITH_TRACING / LANGCHAIN_TRACING_V2) სჯობს,
+    # ამიტომ env-ის შეცდომით TurnState (shop row, კლიენტის ტექსტი/ფოტო) მესამე მხარეს ვერ გავა.
+    _drop_legacy_tracing_env()
+    with tracing_context(enabled=False):
+        final = _GRAPH.invoke(state, config={"recursion_limit": _RECURSION_LIMIT})
     result = TurnResult(
         text=final["text"], handoff=final["handoff"], route=final["route"],
         calls=final["calls"], tools_used=final["tools_used"],

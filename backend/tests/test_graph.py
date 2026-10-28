@@ -721,6 +721,41 @@ def test_tracing_env_is_off_in_tests():
         assert name not in os.environ
 
 
+@pytest.mark.parametrize("env", [
+    {"LANGSMITH_TRACING": "true", "LANGSMITH_API_KEY": "test-not-real"},
+    {"LANGCHAIN_TRACING_V2": "true", "LANGCHAIN_API_KEY": "test-not-real"},
+    {"LANGSMITH_TRACING_V2": "true", "LANGSMITH_API_KEY": "test-not-real"},
+    {"LANGCHAIN_TRACING": "true"},  # legacy var: without the fix langchain-core raises RuntimeError
+    {"LANGCHAIN_HANDLER": "langchain"},
+    {"LANGCHAIN_TRACING": "true", "LANGSMITH_TRACING": "true", "LANGSMITH_API_KEY": "test-not-real"},
+])
+def test_tracing_env_by_mistake_never_creates_a_tracer_or_touches_the_network(hc, monkeypatch, env):
+    """S16-12: TurnState (shop row, customer text/photos) must never reach LangSmith, whatever the env says."""
+    from langchain_core.tracers.langchain import LangChainTracer
+    from langsmith import Client
+    from langsmith.utils import get_env_var
+
+    created = []
+
+    def _boom(*args, **kwargs):  # langchain-core swallows exceptions from the tracer, so record as well
+        created.append(args)
+        raise AssertionError("a LangSmith tracer / client was created")
+
+    monkeypatch.setattr(LangChainTracer, "__init__", _boom)
+    monkeypatch.setattr(Client, "__init__", _boom)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    get_env_var.cache_clear()  # langsmith caches env lookups (lru_cache) — without this the env above is ignored
+    hc.script = [hc.text("Hello")]
+    try:
+        result = run()
+    finally:
+        get_env_var.cache_clear()
+    assert result.text == "Hello"
+    assert len(hc.requests) == 1
+    assert created == []
+
+
 def test_turn_logs_one_info_line_without_customer_text(hc, caplog):
     hc.script = [hc.calls(("c1", "order_link", {})), hc.text("ok")]
     with caplog.at_level(logging.INFO, logger="app"):
