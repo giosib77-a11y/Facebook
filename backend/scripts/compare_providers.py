@@ -15,6 +15,7 @@ gitignored.
 """
 import argparse
 import json
+import logging
 import random
 import sys
 import time
@@ -186,9 +187,18 @@ def estimate_cost(provider: str, usage: llm.Usage) -> float:
     ) / 1e6
 
 
+def error_category(status) -> str:
+    """Provider-neutral error label for the blind output (the exact class/status go to the key)."""
+    if not isinstance(status, int):
+        return "no response"
+    if status == 429:
+        return "rate limit"
+    return "server" if status >= 500 else "client"
+
+
 def ask(provider: str, p: prompt.Prompt, shop_id: str) -> Answer:
-    """One provider call. Errors become `[error: <Class>]` (never the message: it may carry
-    provider details); KeyboardInterrupt propagates."""
+    """One provider call. Errors become `[error: <category>]` (never the class name or message:
+    they identify the provider); KeyboardInterrupt propagates."""
     started = time.perf_counter()
     try:
         result = llm.generate(p, shop_id, provider=provider)
@@ -196,7 +206,7 @@ def ask(provider: str, p: prompt.Prompt, shop_id: str) -> Answer:
         status = getattr(exc, "status_code", None)
         name = type(exc).__name__
         return Answer(
-            text=f"[error: {name}]", handoff=False, usage=llm.Usage(),
+            text=f"[error: {error_category(status)}]", handoff=False, usage=llm.Usage(),
             latency_s=time.perf_counter() - started, cost_usd=0.0,
             error={"class": name, "status": status if isinstance(status, int) else None},
         )
@@ -394,14 +404,25 @@ def main(argv=None) -> int:
     answers: dict[str, dict[str, Answer]] = {}
     total_calls = len(questions) * len(llm.PROVIDERS)
     done = 0
-    for i, q in enumerate(questions, 1):
-        print(f"[{i}/{len(questions)}] {q['id']}")
-        answers[q["id"]] = {}
-        for provider in llm.PROVIDERS:
-            answers[q["id"]][provider] = ask(provider, prompts[q["id"]], shop["id"])
-            done += 1
-            if args.delay > 0 and done < total_calls:
-                time.sleep(args.delay)
+    # llm.py warnings (retry with the exception class, "refused" — Claude only) would reach the
+    # console next to [i/N] and reveal the provider; silence the "app" logger for the call loop.
+    app_logger = logging.getLogger("app")
+    null_handler = logging.NullHandler()
+    old_propagate = app_logger.propagate
+    app_logger.addHandler(null_handler)
+    app_logger.propagate = False
+    try:
+        for i, q in enumerate(questions, 1):
+            print(f"[{i}/{len(questions)}] {q['id']}")
+            answers[q["id"]] = {}
+            for provider in llm.PROVIDERS:
+                answers[q["id"]][provider] = ask(provider, prompts[q["id"]], shop["id"])
+                done += 1
+                if args.delay > 0 and done < total_calls:
+                    time.sleep(args.delay)
+    finally:
+        app_logger.removeHandler(null_handler)
+        app_logger.propagate = old_propagate
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)

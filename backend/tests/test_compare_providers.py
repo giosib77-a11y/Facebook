@@ -37,6 +37,7 @@ class Env:
         self.produced: dict[str, str] = {}  # answer text -> provider
         self.requests: list[tuple[str, dict]] = []
         self.claude_fail_at: int | None = None  # n-th Claude call raises
+        self.claude_raise: Exception | None = None  # raised on every Claude call
         self.openai_empty = False
         self.text_override: str | None = None
 
@@ -69,6 +70,8 @@ class Env:
         text = self._text("claude", kwargs)
         if self.claude_fail_at == self.claude_calls:
             raise TimeoutError("boom")
+        if self.claude_raise is not None:
+            raise self.claude_raise
         return SimpleNamespace(
             content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn",
             usage=SimpleNamespace(input_tokens=1000, output_tokens=200, cache_read_input_tokens=4000,
@@ -201,11 +204,42 @@ def test_call_error_does_not_stop(env, tmp_path):
     assert len(re.findall(r"^## Q\d\d · ", md, re.MULTILINE)) == 40
     qid = "Q05"
     claude_label = next(lbl for lbl, p in key["mapping"][qid].items() if p == "claude")
-    assert answers_of(md)[(qid, claude_label)] == "[error: TimeoutError]"
+    assert answers_of(md)[(qid, claude_label)] == "[error: no response]"
+    assert "timeouterror" not in md.lower()
     assert "boom" not in md and "boom" not in json.dumps(key)
     assert key["errors"] == {qid: {"claude": {"class": "TimeoutError", "status": None}}}
     assert key["totals"]["claude"]["errors"] == 1
     assert key["totals"]["openai"]["errors"] == 0
+
+
+# (6b) S15-5: provider-unique error class / llm.py warnings must not reach md or console ---
+def test_error_does_not_fingerprint_provider(env, tmp_path, monkeypatch, capsys):
+    import anthropic
+    import httpx2
+
+    request = httpx2.Request("POST", "https://api.invalid/v1/messages")
+    response = httpx2.Response(529, request=request)
+    env.claude_raise = anthropic.OverloadedError("overloaded_secret_msg", response=response, body=None)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)  # retry delay instant
+    logger = llm.logger
+    handlers_before, propagate_before = list(logger.handlers), logger.propagate
+
+    code, out = run(tmp_path, "--limit", "1")
+    captured = capsys.readouterr()
+    assert code == 0
+    assert env.claude_calls == 2  # transient -> retried once, so the warning was emitted
+    md, key = read_outputs(out)
+    qid = "Q01"
+    claude_label = next(lbl for lbl, p in key["mapping"][qid].items() if p == "claude")
+    assert answers_of(md)[(qid, claude_label)] == "[error: server]"
+    low = md.lower()
+    for word in ("overloaded", "overloadederror", "anthropic", "apistatuserror", "529", "secret_msg"):
+        assert word not in low
+    assert key["errors"][qid]["claude"] == {"class": "OverloadedError", "status": 529}
+    err = captured.err.lower()
+    for word in ("retrying", "refused", "overloaded", "transient", "warning"):
+        assert word not in err
+    assert logger.handlers == handlers_before and logger.propagate == propagate_before
 
 
 # (7) empty answer -------------------------------------------------------------------------
