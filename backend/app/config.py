@@ -62,11 +62,6 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-6-luna"
     llm_timeout_seconds: float = Field(20.0, gt=0, le=20)  # ერთი LLM მცდელობის timeout
 
-    # ძველი provider — bot.py ჯერ იყენებს
-    gemini_api_key: str = Field("", repr=False)  # removed in S14-5
-    gemini_model: str = "gemini-2.5-flash"  # removed in S14-5
-    gemini_timeout_seconds: float = 20.0  # removed in S14-5
-
     # ბოტის საუბრის მეხსიერება — ბოლო N შეტყობინება, ბოლო H საათში (0 = გამორთული)
     bot_memory_messages: int = 20
     bot_memory_hours: int = 24

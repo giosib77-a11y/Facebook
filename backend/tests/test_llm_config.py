@@ -141,6 +141,6 @@ def test_leftover_gemini_env_vars_do_not_break_startup(monkeypatch):
     monkeypatch.setenv("GEMINI_MODEL", "gemini-x")
     monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "15")
     s = _s(**_prod_kwargs())
-    assert s.gemini_api_key == "leftover-from-render"  # env really was seen, just not required
+    assert not hasattr(s, "gemini_api_key")  # the field is gone; leftover env is just ignored
     assert s.is_production
     assert s.missing_required_secrets() == []

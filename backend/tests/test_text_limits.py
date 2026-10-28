@@ -6,8 +6,8 @@ from pydantic import ValidationError
 
 from app.models.order import OrderCreate
 from app.models.product import ProductCreate
-from app.services.bot import build_system_prompt
 from app.services.import_products import parse_products_file
+from app.services.prompt import MAX_PROMPT_CHARS, build_prompt
 
 SHOP_ID = str(uuid.uuid4())
 
@@ -25,8 +25,12 @@ def test_prompt_is_bounded_regardless_of_db_contents():
         {"name": huge, "sku": huge, "description": huge, "price": 10, "quantity": 1}
         for _ in range(30)
     ]
-    prompt = build_system_prompt(shop, products)
-    assert len(prompt) < 100_000
+    p = build_prompt(shop, products, "hello")
+    assert len(p.layer1) + len(p.layer2) < 100_000
+    total = len(p.layer1) + len(p.layer2) + sum(len(t["text"]) for t in p.history) + sum(
+        len(x["text"]) for x in p.final if x["type"] == "text"
+    )
+    assert total <= MAX_PROMPT_CHARS
 
 
 def test_product_description_cap():

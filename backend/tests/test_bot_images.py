@@ -1,6 +1,6 @@
 """Product reference images stay within the per-message inline image budget (N-03).
 
-download_image is faked — no network, no Gemini.
+download_image is faked — no network, no LLM.
 """
 import pytest
 

@@ -108,9 +108,10 @@ def test_missing_secrets_lists_exact_names():
     assert _prod().missing_required_secrets() == ALL_NAMES
     assert _prod(**_full(fb_app_secret="", supabase_secret_key=" ")).missing_required_secrets() == [
         "SUPABASE_SECRET_KEY", "FB_APP_SECRET"]
-    # a blank legacy gemini key is no longer a required secret
-    assert _prod(**_full(fb_app_secret="", gemini_api_key=" ")).missing_required_secrets() == [
-        "FB_APP_SECRET"]
+    # blank LLM provider keys are not required secrets; FB_APP_SECRET still is
+    assert _prod(**_full(
+        fb_app_secret="", anthropic_api_key=" ", openai_api_key=" ",
+    )).missing_required_secrets() == ["FB_APP_SECRET"]
     # an empty LLM provider key is not a startup-blocking secret (bot just stays disabled)
     assert _prod(**_full(anthropic_api_key="", openai_api_key="")).missing_required_secrets() == []
 

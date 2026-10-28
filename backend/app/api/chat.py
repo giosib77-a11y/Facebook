@@ -23,13 +23,13 @@ router = APIRouter(tags=["bot (dev)"])
 )
 def test_chat(payload: TestChatRequest):
     settings = get_settings()
-    # DEV-only endpoint — production-ში დახურულია (დაუცველად Gemini-ს იძახებს).
+    # DEV-only endpoint — production-ში დახურულია (დაუცველად LLM-ს იძახებს).
     if settings.is_production:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
-    if not settings.gemini_api_key:
+    if not settings.llm_ready:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GEMINI_API_KEY არ არის კონფიგურირებული .env-ში",
+            detail=f"{settings.llm_key_env_name} არ არის კონფიგურირებული",
         )
 
     sc = get_service_client()
@@ -59,9 +59,9 @@ def test_chat(payload: TestChatRequest):
         )
     except RuntimeError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
-    except Exception as e:  # Gemini-ის ან ქსელის შეცდომა
+    except Exception as e:  # LLM-ის ან ქსელის შეცდომა
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"ბოტის შეცდომა: {e}")
 
     return TestChatResponse(
-        reply=reply, products_in_context=len(products), model=settings.gemini_model
+        reply=reply, products_in_context=len(products), model=settings.llm_model
     )
