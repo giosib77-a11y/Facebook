@@ -5,6 +5,7 @@ with a fake Claude SDK client (the agent call and the summary call share it; the
 system prompt), a fake service DB and patched Facebook I/O. `events` records the order of model calls and
 sent messages, so "the summary is requested AFTER the reply was sent" is checked, not assumed.
 """
+import copy
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,7 @@ import pytest
 import app.api.webhook as webhook
 import app.services.llm as llm
 from app.services import memory, prompt
-from tests.conftest import FakeQuery
+from tests.conftest import FakeQuery, FakeResult
 from tests.test_reply_delivery import PAGE_ID, PSID, SHOP_ID
 
 MESSAGE = "what is the price of Item 1?"  # not a template: it reaches the model
@@ -66,6 +67,39 @@ class NoSummaryColumnQuery(FakeQuery):
         return super().execute()
 
 
+class StatefulQuery(FakeQuery):
+    """bot_conversations as ONE real row (select / upsert / filtered update), so a race between two
+    webhook runs can be replayed: what the second run reads is what the first one has written so far.
+    An update with `eq` filters changes the row only if every filter matches it (like PostgREST)."""
+
+    row: dict | None = None  # class-level on purpose: FakeSupabase.table() builds a new query per call
+
+    @classmethod
+    def install(cls, db, row):
+        """A fresh subclass (own `row`) wired into `db.table`; returns it so tests can read `.row`."""
+        store = type("Store", (cls,), {"row": row})
+        db.table = lambda name: store(db, name)
+        return store
+
+    def execute(self):
+        if self.table != "bot_conversations":
+            return super().execute()
+        self._db.calls.append(self)
+        cls = type(self)
+        if self.op == "select":
+            return FakeResult([copy.deepcopy(cls.row)] if cls.row else [])
+        if self.op == "upsert":
+            cls.row = {**(cls.row or {}), **copy.deepcopy(self.payload)}
+            return FakeResult([copy.deepcopy(cls.row)])
+        if self.op == "update":
+            row = cls.row
+            if row is None or not all(row.get(col) == val for kind, col, val in self.filters if kind == "eq"):
+                return FakeResult([])
+            row.update(copy.deepcopy(self.payload))
+            return FakeResult([copy.deepcopy(row)])
+        return super().execute()
+
+
 class Memory:
     """Fake provider client + fake DB + patched Facebook I/O around the real webhook -> graph -> llm chain."""
 
@@ -74,6 +108,7 @@ class Memory:
         self.events: list[tuple] = []
         self.requests: list[dict] = []
         self.script: list = []
+        self.on_summary = None  # called (once) while the summary model call is being served
         s = webhook.get_settings().model_copy(update=settings_update)
         for module in (webhook, llm):
             monkeypatch.setattr(module, "get_settings", lambda: s)
@@ -100,7 +135,10 @@ class Memory:
             if isinstance(item, Exception):
                 raise item
             item = {"text": item, "calls": []} if isinstance(item, str) else item
-            content = [SimpleNamespace(type="text", text=item["text"])] if item["text"] else []
+            if kind == "summary" and self.on_summary is not None:
+                hook, self.on_summary = self.on_summary, None
+                hook()  # the next customer message arrives while this call is in flight
+            content =[SimpleNamespace(type="text", text=item["text"])] if item["text"] else []
             content += [SimpleNamespace(type="tool_use", id=i, name=n, input=a) for i, n, a in item["calls"]]
             return SimpleNamespace(
                 content=content, stop_reason="tool_use" if item["calls"] else "end_turn",
@@ -132,6 +170,16 @@ class Memory:
         (payload,) = self.upserts()
         return payload
 
+    def updates(self):
+        return self.db.calls_for("bot_conversations", "update")
+
+    def final(self):
+        """The row after the single upsert and the (optional) compaction update, as the DB would hold it."""
+        row = dict(self.saved())
+        for update in self.updates():
+            row.update(update.payload)
+        return row
+
     def kinds(self):
         return [e[1] for e in self.events if e[0] == "llm"]
 
@@ -161,9 +209,17 @@ def test_summary_is_requested_after_the_reply_and_replaces_the_older_messages(m)
     agent_request, summary_request = m.requests
     assert "Previous summary:\nS0" in summary_request["messages"][0]["content"][0]["text"]
     assert "tools" not in summary_request
-    saved = m.saved()
     full = pairs(16) + _pair(MESSAGE, "Answer")
     assert len(full) == 18
+    # the turn is stored first, uncompacted and with the OLD summary (the model call comes after it) ...
+    stored = m.saved()
+    assert stored["messages"] == full and stored["summary"] == "S0"
+    # ... then folded by a conditional update that only matches the row just written
+    (update,) = m.updates()
+    assert update.payload == {"messages": full[-8:], "summary": "S1"}
+    assert ("eq", "updated_at", stored["updated_at"]) in update.filters
+    assert ("eq", "shop_id", SHOP_ID) in update.filters and ("eq", "psid", PSID) in update.filters
+    saved = m.final()
     assert saved["messages"] == full[-8:]
     assert saved["messages"][0]["role"] == "user"
     assert saved["summary"] == "S1"
@@ -185,6 +241,7 @@ def test_failed_summary_keeps_all_messages_and_the_old_summary(m, caplog):
     saved = m.saved()
     assert saved["messages"] == pairs(16) + _pair(MESSAGE, "Answer")  # all 18
     assert saved["summary"] == "S0"
+    assert m.updates() == []  # nothing to apply
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any(SHOP_ID in w and "summary failed" in w for w in warnings)
     assert not any(PSID in w for w in warnings)
@@ -308,7 +365,7 @@ def test_history_prefix_of_the_next_turn_is_byte_identical(m):
 
 
 # --- (h) over the customer limit: the summary is untouched, no model call --------------------------------
-def test_over_limit_turn_keeps_the_summary_column_untouched(m):
+def test_over_limit_turn_keeps_a_fresh_summary(m):
     m.db.rpc_responses["track_bot_customer"] = [{"monthly_unique": 31, "day_count": 1}]
     m.db.responses[("bot_customers", "select")] = [{"created_at": "2026-10-01T10:00:00+00:00"}]
     m.db.counts[("bot_customers", "select")] = 30  # rank 31 -> over the free limit
@@ -319,12 +376,13 @@ def test_over_limit_turn_keeps_the_summary_column_untouched(m):
     assert m.requests == []
     assert m.sent() == [webhook.OPERATOR_SOON_REPLY]
     saved = m.saved()
-    assert "summary" not in saved  # the upsert does not name the column
+    assert saved["summary"] == "S0"  # the loaded summary is written back unchanged (no model call)
     assert saved["needs_attention"] is True
     assert len(saved["messages"]) == 18
+    assert m.updates() == []
 
 
-def test_disabled_bot_keeps_the_summary_column_untouched(m, monkeypatch):
+def test_disabled_bot_keeps_a_fresh_summary(m, monkeypatch):
     s = webhook.get_settings().model_copy(update={"anthropic_api_key": ""})
     monkeypatch.setattr(webhook, "get_settings", lambda: s)
     m.seed(pairs(16), "S0")
@@ -332,7 +390,36 @@ def test_disabled_bot_keeps_the_summary_column_untouched(m, monkeypatch):
     m.run()
 
     assert m.requests == []
-    assert "summary" not in m.saved()
+    assert m.saved()["summary"] == "S0"
+
+
+# --- (h2) over the limit / disabled on an OLD conversation: its summary is cleared (S16-11) ------------------
+def test_over_limit_turn_on_an_old_conversation_clears_the_summary(m):
+    m.db.rpc_responses["track_bot_customer"] = [{"monthly_unique": 31, "day_count": 1}]
+    m.db.responses[("bot_customers", "select")] = [{"created_at": "2026-10-01T10:00:00+00:00"}]
+    m.db.counts[("bot_customers", "select")] = 30
+    m.seed(pairs(16), "OLD", updated_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat())
+
+    m.run()
+
+    assert m.requests == [] and m.updates() == []  # no model call
+    saved = m.saved()
+    assert "summary" in saved and saved["summary"] is None  # not revived by the next agent turn
+    assert saved["messages"] == _pair(MESSAGE, webhook.OPERATOR_SOON_REPLY)
+    assert saved["needs_attention"] is True
+
+
+def test_disabled_bot_on_an_old_conversation_clears_the_summary(m, monkeypatch):
+    s = webhook.get_settings().model_copy(update={"anthropic_api_key": ""})
+    monkeypatch.setattr(webhook, "get_settings", lambda: s)
+    m.seed(pairs(16), "OLD", updated_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat())
+
+    m.run()
+
+    assert m.requests == []
+    saved = m.saved()
+    assert "summary" in saved and saved["summary"] is None
+    assert len(saved["messages"]) == 2
 
 
 # --- (i) memory switched off -----------------------------------------------------------------------------
@@ -370,7 +457,112 @@ def test_request_human_turn_is_flagged_and_still_compacted(m):
     m.run()
 
     assert m.kinds() == ["agent", "summary"]
-    saved = m.saved()
-    assert saved["needs_attention"] is True
+    saved = m.final()
+    assert m.saved()["needs_attention"] is True  # flagged in the first write
+    assert "needs_attention" not in m.updates()[0].payload
     assert len(saved["messages"]) == 8 and saved["messages"][0]["role"] == "user"
     assert saved["summary"] == "S1"
+
+
+# --- (k) the model call does not sit between the send and the save (S16-11) ---------------------------------
+def _stateful(m, messages, summary):
+    row = {"shop_id": SHOP_ID, "psid": PSID, "messages": messages, "summary": summary,
+           "updated_at": datetime.now(timezone.utc).isoformat()}
+    return StatefulQuery.install(m.db, row)
+
+
+def test_message_arriving_during_the_summary_call_sees_the_previous_turn_and_nothing_is_lost(m):
+    """A's summary call is in flight when B arrives. Invariant asserted: B's request history contains A's
+    pair, and the stored row holds A's pair followed by B's pair (no turn lost, none duplicated); A's
+    late conditional update matches nothing (the row's updated_at is B's), so it cannot clobber B's
+    newer row - the summary and cut in the row are B's own."""
+    store = _stateful(m, pairs(16), "S0")
+    m.script = ["AnswerA", "S1", "AnswerB", "S2"]
+    m.on_summary = lambda: m.run("and Item 2?")
+
+    m.run()
+
+    assert m.kinds() == ["agent", "summary", "agent", "summary"]  # A agent, A summary (B ran inside), B ...
+    b_agent = m.requests[2]
+    assert len(b_agent["messages"]) == 18 + 1  # A's pair is in B's history
+    text = json.dumps(b_agent, ensure_ascii=False)
+    assert MESSAGE in text and "AnswerA" in text
+    assert m.sent() == ["AnswerA", "AnswerB"]
+    full = pairs(16) + _pair(MESSAGE, "AnswerA") + _pair("and Item 2?", "AnswerB")
+    assert store.row["messages"] == full[-8:]  # B's compaction; A's pair and B's pair both kept, in order
+    assert store.row["messages"][-4:] == _pair(MESSAGE, "AnswerA") + _pair("and Item 2?", "AnswerB")
+    assert store.row["summary"] == "S2"  # A's S1 was dropped by its own failed condition, not applied
+    a_update, b_update = m.updates()[1], m.updates()[0]  # B's update executes first (nested), A's after
+    assert b_update.payload["summary"] == "S2" and a_update.payload["summary"] == "S1"
+    assert dict((c, v) for k, c, v in a_update.filters if c == "updated_at")["updated_at"] != store.row["updated_at"]
+
+
+def test_template_reply_during_the_summary_call_is_not_overwritten_by_the_late_compaction(m):
+    """Same race, B is a template turn (no model call): the stored row ends with A's pair AND B's pair
+    (20 messages, uncompacted, the loaded summary) - A's late update does not replace it."""
+    store = _stateful(m, pairs(16), "S0")
+    m.script = ["AnswerA", "S1"]
+    m.on_summary = lambda: m.run("გამარჯობა")
+
+    m.run()
+
+    b_reply = m.sent()[1]
+    assert store.row["messages"] == pairs(16) + _pair(MESSAGE, "AnswerA") + _pair("გამარჯობა", b_reply)
+    assert store.row["summary"] == "S0"
+    assert m.kinds() == ["agent", "summary"]  # B made no model call
+
+
+def test_late_compaction_is_applied_when_nothing_newer_was_saved(m):
+    store = _stateful(m, pairs(16), "S0")
+    m.script = ["Answer", "S1"]
+
+    m.run()
+
+    full = pairs(16) + _pair(MESSAGE, "Answer")
+    assert store.row["messages"] == full[-8:] and store.row["summary"] == "S1"
+
+
+def test_failed_compaction_update_loses_nothing(m, caplog):
+    m.seed(pairs(16), "S0")
+    m.db.errors[("bot_conversations", "update")] = RuntimeError("db down")
+    m.script = ["Answer", "S1"]
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        m.run()  # must not raise
+
+    saved = m.saved()
+    assert saved["messages"] == pairs(16) + _pair(MESSAGE, "Answer") and saved["summary"] == "S0"
+    assert any("compaction save failed" in r.getMessage() and SHOP_ID in r.getMessage() for r in caplog.records)
+    assert not any(PSID in r.getMessage() for r in caplog.records)
+
+
+def test_handoff_fallback_without_attention_columns_still_compacts(m, service_db):
+    """Migration 0010 not applied: the flagged upsert fails, the plain one is stored, compaction follows."""
+    class NoAttentionQuery(FakeQuery):
+        def execute(self):
+            if self.table == "bot_conversations" and self.op == "upsert" and "needs_attention" in self.payload:
+                self._db.calls.append(self)
+                raise RuntimeError("column needs_attention does not exist")
+            return super().execute()
+
+    service_db.table = lambda name: NoAttentionQuery(service_db, name)
+    m.seed(pairs(16), "S0")
+    m.script = [Memory.calls(("h1", "request_human", {"reason": "complaint"})), "S1"]
+
+    m.run()
+
+    plain = [c.payload for c in service_db.calls_for("bot_conversations", "upsert")][-1]
+    assert "needs_attention" not in plain and len(plain["messages"]) == 18
+    (update,) = m.updates()
+    assert update.payload["summary"] == "S1" and ("eq", "updated_at", plain["updated_at"]) in update.filters
+
+
+def test_no_compaction_when_the_first_write_failed(m):
+    m.seed(pairs(16), "S0")
+    m.db.errors[("bot_conversations", "upsert")] = RuntimeError("db down")
+    m.script = ["Answer"]
+
+    m.run()
+
+    assert m.kinds() == ["agent"]  # no summary call for a turn that was not stored
+    assert m.updates() == []

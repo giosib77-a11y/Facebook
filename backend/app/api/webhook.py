@@ -188,38 +188,58 @@ def _save_turn(
     """ახალი წყვილის (კლიენტი+ბოტი) შენახვა, ბოლო N-მდე მოჭრით.
 
     needs_attention=True → საუბარი ინიშნება „ყურადღება სჭირდება"-დ (handoff).
+    ჯერ ყოველთვის შეუკუმშავი წყვილი ინახება (ძველი summary-ით) — LLM-ის გამოძახებას შენახვა არ ელოდება,
+    ამიტომ მომდევნო შეტყობინება ამ წყვილს კითხულობს და turn არ იკარგება.
     compact=True (agent turn) + conv → თუ შეტყობინებები > memory.HISTORY_CUT, ძველი ნაწილი summary-ში
-    იკეცება (LLM გამოძახება; გამოძახებელი ამას პასუხის გაგზავნის შემდეგ აკეთებს). ჩავარდნისას
-    memory.compact იგივე სიას და summary-ს აბრუნებს. conv=None → `summary` გასაღები payload-ში არ არის.
+    იკეცება (LLM გამოძახება, შენახვის შემდეგ) და შედეგი ინახება **პირობითი** update-ით
+    (`updated_at` = ახლახან ჩაწერილი): თუ ამასობაში ახალი turn ჩაიწერა, update არაფერს ცვლის და
+    შემდეგი agent turn თავიდან შეკუმშავს. ჩავარდნისას memory.compact იგივე სიას აბრუნებს → update არ ხდება.
+    conv=None → `summary` გასაღები payload-ში არ არის; conv (compact=False) → ჩატვირთული summary
+    ბრუნდება უკან (ძველი საუბრისას None ასუფთავებს).
     """
     s = get_settings()
     if s.bot_memory_messages <= 0 and not needs_attention:
         return
     now = datetime.now(timezone.utc).isoformat()
-    new = list(history) + [
+    full_history = list(history) + [
         {"role": "user", "content": user_text},
         {"role": "bot", "content": bot_reply},
     ]
     summary = conv.summary if conv is not None else None
-    if compact and conv is not None and conv.summary_supported and memory.needs_compaction(new):
-        new, summary = memory.compact(shop_id, new, summary)
-    new = new[-s.bot_memory_messages:] if s.bot_memory_messages > 0 else new[-2:]
-    base = {"shop_id": shop_id, "psid": psid, "messages": new, "updated_at": now}
+    stored = full_history[-s.bot_memory_messages:] if s.bot_memory_messages > 0 else full_history[-2:]
+    base = {"shop_id": shop_id, "psid": psid, "messages": stored, "updated_at": now}
     if conv is not None and conv.summary_supported:
         base["summary"] = summary  # None ასუფთავებს (ძველი საუბარი)
     full = dict(base)
     if needs_attention:
         full["needs_attention"] = True
         full["attention_at"] = now
+    saved = False
     try:
         sc.table("bot_conversations").upsert(full).execute()
+        saved = True
     except Exception:
         # migration 0010 ჯერ არ გაშვებულა (needs_attention არ არსებობს) — მეხსიერება მაინც შევინახოთ
         if needs_attention:
             try:
                 sc.table("bot_conversations").upsert(base).execute()
+                saved = True
             except Exception:
                 pass
+    if not (saved and compact and conv is not None and conv.summary_supported
+            and memory.needs_compaction(full_history)):
+        return
+    kept, new_summary = memory.compact(shop_id, full_history, summary)  # LLM, შენახვის შემდეგ
+    if kept is full_history:
+        return  # ჩავარდა / არაფერი შეიცვალა — ჩანაწერი უკვე სრულია
+    kept = kept[-s.bot_memory_messages:] if s.bot_memory_messages > 0 else kept[-2:]
+    try:
+        (
+            sc.table("bot_conversations").update({"messages": kept, "summary": new_summary})
+            .eq("shop_id", shop_id).eq("psid", psid).eq("updated_at", now).execute()
+        )
+    except Exception:
+        logger.warning("conversation compaction save failed (shop=%s)", shop_id, exc_info=True)
 
 
 def _customer_rank(sc, shop_id: str, psid: str) -> int:
@@ -409,11 +429,12 @@ def _process_events(data: dict) -> None:
                     pass
                 # გამყიდველმა უნდა დაინახოს ეს კლიენტი „ყურადღება სჭირდება"-ში
                 try:
+                    # conv= : ჩატვირთული summary უკან იწერება (ძველ საუბარზე None); LLM არ იძახება
+                    old_conv = _load_conversation(sc, shop["id"], str(sender_id))
                     _save_turn(
-                        sc, shop["id"], str(sender_id),
-                        _load_conversation(sc, shop["id"], str(sender_id)).messages,
+                        sc, shop["id"], str(sender_id), old_conv.messages,
                         text or ("[სურათი]" if image_urls else ""), auto_reply,
-                        needs_attention=True,
+                        needs_attention=True, conv=old_conv, compact=False,
                     )
                 except Exception:
                     logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
