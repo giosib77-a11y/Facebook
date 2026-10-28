@@ -9,6 +9,10 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# Stage 15 comparison outputs (local only, never commit; README §9)
+backend/scripts/compare_output.md
+backend/scripts/compare_key.json
+
 # Environment / secrets
 .env
 .env.*
