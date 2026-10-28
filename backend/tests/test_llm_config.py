@@ -136,6 +136,85 @@ def test_no_warning_when_llm_ready(caplog):
     assert caplog.records == []
 
 
+def _clean_env(monkeypatch):
+    for name in ("LLM_PROVIDER", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_MODEL", "OPENAI_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("raw", [" " + KEY_VALUE + "\n", KEY_VALUE + "\r\n", "\t" + KEY_VALUE + "  "])
+def test_keys_are_stripped_via_init(raw):
+    c = _s(llm_provider="claude", anthropic_api_key=raw)
+    assert c.anthropic_api_key == KEY_VALUE and c.llm_ready is True
+    o = _s(llm_provider="openai", openai_api_key=raw)
+    assert o.openai_api_key == KEY_VALUE and o.llm_ready is True
+
+
+def test_keys_are_stripped_via_env(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", " " + KEY_VALUE + "\n")
+    monkeypatch.setenv("OPENAI_API_KEY", KEY_VALUE + "  ")
+    s = Settings(_env_file=None)
+    assert s.anthropic_api_key == KEY_VALUE and s.openai_api_key == KEY_VALUE
+    assert s.llm_ready is True
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    o = Settings(_env_file=None)
+    assert o.openai_api_key == KEY_VALUE and o.llm_ready is True
+
+
+def test_whitespace_only_keys_become_empty_and_not_ready(monkeypatch):
+    c = _s(llm_provider="claude", anthropic_api_key="  ")
+    assert c.anthropic_api_key == "" and c.llm_ready is False
+    o = _s(llm_provider="openai", openai_api_key="\n")
+    assert o.openai_api_key == "" and o.llm_ready is False
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "  ")
+    monkeypatch.setenv("OPENAI_API_KEY", " \n")
+    s = Settings(_env_file=None)
+    assert s.anthropic_api_key == "" and s.openai_api_key == "" and s.llm_ready is False
+
+
+def test_stripped_key_still_hidden_from_repr():
+    s = _s(anthropic_api_key=" " + KEY_VALUE + "\n", openai_api_key=KEY_VALUE + " ")
+    assert KEY_VALUE not in repr(s) + str(s)
+
+
+@pytest.mark.parametrize("blank", ["", "  ", "\n"])
+def test_blank_models_fall_back_to_defaults_via_init(blank):
+    s = _s(claude_model=blank, openai_model=blank)
+    assert s.claude_model == "claude-haiku-5-5"
+    assert s.openai_model == "gpt-6-luna"
+    assert s.llm_model == "claude-haiku-5-5"
+    assert _s(llm_provider="openai", claude_model=blank, openai_model=blank).llm_model == "gpt-6-luna"
+
+
+def test_blank_models_fall_back_to_defaults_via_env(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_MODEL", "")
+    monkeypatch.setenv("OPENAI_MODEL", "  ")
+    s = Settings(_env_file=None)
+    assert s.claude_model == "claude-haiku-5-5" and s.openai_model == "gpt-6-luna"
+
+
+def test_models_are_stripped():
+    s = _s(claude_model=" claude-x ", openai_model="\tgpt-y\n")
+    assert s.claude_model == "claude-x" and s.openai_model == "gpt-y"
+
+
+def test_models_are_stripped_via_env(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_MODEL", " claude-x ")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-y\n")
+    s = Settings(_env_file=None)
+    assert s.claude_model == "claude-x" and s.openai_model == "gpt-y"
+
+
+def test_non_str_key_and_model_are_left_to_pydantic():
+    with pytest.raises(ValidationError):
+        _s(anthropic_api_key=123)
+    with pytest.raises(ValidationError):
+        _s(claude_model=["x"])
+
+
 def test_leftover_gemini_env_vars_do_not_break_startup(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "leftover-from-render")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-x")

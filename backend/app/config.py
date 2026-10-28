@@ -104,6 +104,20 @@ class Settings(BaseSettings):
             return v or "claude"
         return v
 
+    @field_validator("anthropic_api_key", "openai_api_key", mode="before")
+    @classmethod
+    def _strip_llm_keys(cls, v):
+        # Render-ში ჩასმული key-ის ბოლოში \n/space HTTP header-ს ამახინჯებს (და key ლოგში ხვდება)
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("claude_model", "openai_model", mode="before")
+    @classmethod
+    def _strip_llm_models(cls, v, info):
+        # ცარიელი მოდელი ყოველ შეტყობინებაზე 400-ს იძლევა → ცარიელი = default
+        if isinstance(v, str):
+            return v.strip() or cls.model_fields[info.field_name].default
+        return v
+
     @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() in ("production", "prod")
