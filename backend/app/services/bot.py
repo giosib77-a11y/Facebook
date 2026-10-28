@@ -17,6 +17,15 @@ HANDOFF_TOKEN = "[[HANDOFF]]"
 INLINE_IMAGE_BUDGET = 15 * 1024 * 1024  # კლიენტის + საცნობარო ფოტოები ერთ LLM მოთხოვნაში
 PRODUCT_REF_MAX_BYTES = 3 * 1024 * 1024  # თითო საცნობარო ფოტოზე
 PRODUCT_REF_WORKERS = 4
+MAX_REF_IMAGES = 12  # საცნობარო ფოტოების ჭერი ერთ LLM მოთხოვნაში
+
+
+def product_ref_label(p) -> str:
+    """საცნობარო ფოტოს წარწერა LLM-ისთვის: `• {name} — {price}` (+ ` (SKU: …)`)."""
+    label = f"• {p.get('name', '?')} — {p.get('price', 0)}"
+    if p.get("sku"):
+        label += f" (SKU: {p['sku']})"
+    return label
 
 
 def parse_reply(raw: str) -> tuple[str, bool]:
@@ -30,7 +39,7 @@ def parse_reply(raw: str) -> tuple[str, bool]:
     return clean, handoff
 
 
-def _fetch_product_images(products, customer_images=None, max_images: int = 12):
+def _fetch_product_images(products, customer_images=None, max_images: int = MAX_REF_IMAGES):
     """რელევანტური პროდუქტების ფოტოებს ჩამოტვირთავს ვიზუალური შედარებისთვის.
 
     აბრუნებს [(label, (bytes, mime)), ...] — მხოლოდ იმ პროდუქტების, რომლებსაც
@@ -76,10 +85,7 @@ def _fetch_product_images(products, customer_images=None, max_images: int = 12):
             if len(got[0]) > remaining:
                 continue
             remaining -= len(got[0])
-            label = f"• {p.get('name', '?')} — {p.get('price', 0)}"
-            if p.get("sku"):
-                label += f" (SKU: {p['sku']})"
-            refs.append((label, got))
+            refs.append((product_ref_label(p), got))
     return refs
 
 

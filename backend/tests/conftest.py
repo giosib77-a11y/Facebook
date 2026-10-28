@@ -28,6 +28,9 @@ os.environ["LLM_PROVIDER"] = "claude"
 # non-string settings / defaults: an empty string would override the default (or fail to parse)
 for _name in ("CLAUDE_MODEL", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS"):
     os.environ.pop(_name, None)
+# Stage 16: LangGraph/LangSmith tracing would send conversations to a third party. Never in tests.
+for _name in ("LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGCHAIN_TRACING_V2", "LANGCHAIN_API_KEY"):
+    os.environ.pop(_name, None)
 # default is now production (fail-closed); tests run in development explicitly.
 os.environ["APP_ENV"] = "development"
 
