@@ -19,18 +19,18 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 14 — LLM provider-ის შეცვლა: Gemini → Claude (default) / OpenAI, სამფენიანი cache-ზე მორგებული prompt, `llm_usage`**
-(იხ. `PROGRESS.md`; Stage 10–13 დასრულებულია). Stage 15–18 (შედარება, LangGraph, PDF-ცოდნა, ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
+**Stage 15 — ბრმა შედარება: Claude vs OpenAI (სკრიპტი იწერება, არ ეშვება)**
+(იხ. `PROGRESS.md`; Stage 10–14 დასრულებულია, Stage 14 — offline, deploy key-ებს ელოდება). Stage 16–18 (LangGraph, PDF-ცოდნა, ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
 სამუშაო მხოლოდ `agent-system`-ზე; `main`-ში merge არ იგეგმება, სანამ API key-ები არ იქნება.
 
 ## Scope
-### In scope (current stage — Stage 14)
-- Gemini-ს სრული ამოღება (კოდი, `google-genai`, `GEMINI_*`, დოკუმენტაცია); provider — `anthropic` / `openai` SDK
-- prompt სამ ფენად (საერთო წესები / მაღაზია / საუბარი) prompt caching-ისთვის; usage-ის ჩაწერა `llm_usage`-ში
-- key-ის გარეშე: აპი ირთვება, ბოტი გამორთულია (ოპერატორის პასუხი + handoff)
-- ყველა ტესტი offline (mock client-ები, ქართული golden სცენარები)
+### In scope (current stage — Stage 15)
+- `llm.generate`-ში provider-ის override (`provider=`), default ქცევა უცვლელი
+- `backend/scripts/compare_providers.py`: 40 ქართული შეკითხვა ფიქტიურ მაღაზიაზე × 2 provider, იგივე `prompt` + `llm` გზით; `compare_output.md` (A/B, provider-ის სახელების გარეშე, ტოკენები/ფასი თითო პასუხზე) + `compare_key.json` (გასაღები) — ორივე gitignored
+- სატესტო მონაცემი (`compare_questions.json`, `compare_assets/`), offline ტესტები fake client-ებით, README-ს ინსტრუქცია
+- სკრიპტს **არავინ უშვებს, გარდა მფლობელისა** key-ების დამატების შემდეგ; შედეგის Decision Log (default provider, thinking/effort, output-ის ჭერი, 5m cache) — მფლობელი, გაშვების შემდეგ
 ### Out of scope (for now)
-- Stage 14-ში: LangGraph/tools, PDF-ის შეკუმშვა, ფოტოს აღწერა, provider-ების შედარება (Stage 15–18)
+- Stage 15-ში: production-ის ქცევის ცვლილება (prompt, webhook, default provider), Stage 14-ის Backlog nit-ები, LangGraph/tools, PDF-ის შეკუმშვა, ფოტოს აღწერა (Stage 16–18)
 - ახალი ფიჩერები — [ROADMAP.md](ROADMAP.md) (Instagram Live, web widget, ინტეგრაციები,
   ავტომატური billing, Redis/queue, CSP, admin pagination)
 
@@ -353,6 +353,48 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - ვარაუდი (/auto): ფაზა 1ბ (DESIGN.md + Playwright) ამ stage-ში გამოტოვებულია — UI/ვიზუალი არ იცვლება, მხოლოდ ტექსტი ორ legal გვერდზე; შემოწმება — `dist` diff მხოლოდ ამ ორ ფაილში. შეიცვლება: თუ მფლობელს Playwright smoke სურს — ცალკე task.
 - ვარაუდი: privacy-ში OpenAI ჩამოთვლილია „ალტერნატიულ მომწოდებლად" (კოდში ჩართვადია env-ით); იურიდიული ფორმულირება — მფლობელის შესამოწმებელი (Open Questions).
 
+### 2026-10-28 — Stage 15: ბრმა შედარების სკრიპტი იწერება, აგენტი არ უშვებს; `scripts` — package
+- Decision: `backend/scripts/compare_providers.py` + ცარიელი `backend/scripts/__init__.py`; გაშვება `backend/`-იდან `python -m scripts.compare_providers` (ასე `app` იმპორტდება `sys.path`-ის ხელით შეცვლის გარეშე; pytest-ის `pythonpath = .` იგივე package-ს ხედავს → ტესტი `from scripts import compare_providers`). 40 შეკითხვა × 2 provider = 80 გამოძახება, თანმიმდევრულად. **აგენტი სკრიპტს shell-იდან არასდროს უშვებს** — არც dummy key-ით, არც `--dry-run`-ით, არც `--help`-ით; ტესტები `main(argv)`-ს და ფუნქციებს აიმპორტებენ fake client-ებით. რეალური გაშვება — მხოლოდ მფლობელი, key-ების შემდეგ (README §9).
+- Reason: მფლობელის მოთხოვნა (key-ები ჯერ არ არის; რეალური API აკრძალულია). `--dry-run` ქსელს არ მიმართავს, მაგრამ shell-იდან `Settings` ლოკალურ `.env`-ს კითხულობს (production საიდუმლოებით) — ტესტში conftest `.env`-ს თიშავს, ამიტომ dry-run უსაფრთხოდ მხოლოდ pytest-იდან მოწმდება.
+- Alternatives considered: `sys.path.insert` სკრიპტის თავში (ჰაკი + ruff E402); ტესტში `importlib`-ით ფაილის გზით ჩატვირთვა (იმპორტის ორი განსხვავებული გზა).
+- როგორ შეიცვლება: CI `ruff`/`compileall` ახლა მხოლოდ `app tests`-ს ამოწმებს — `scripts` მოწმდება task-ის done-when-ში ლოკალურად; თუ სკრიპტები გამრავლდება → CI-ში დამატება (Backlog).
+
+### 2026-10-28 — provider-ის override: `llm.generate(prompt, shop_id, provider=None)` (S15-1)
+- Decision: `generate`-ს ემატება keyword `provider: str | None = None` და მოდულის კონსტანტა `PROVIDERS = ("claude", "openai")`. `None` → ქცევა ზუსტად ისეთი, როგორც ახლა. სხვა მნიშვნელობა: `provider not in PROVIDERS` → `ValueError` (factory-ის გამოძახებამდე; case-sensitive); წინააღმდეგ შემთხვევაში `s = get_settings().model_copy(update={"llm_provider": provider})` — `llm_ready`, `llm_key_env_name`, `llm_model`, factory და retry ამ ასლიდან გამოდის (not ready → `RuntimeError` მოთხოვნილი provider-ის env სახელით). cache-ში არსებული `Settings` არ იცვლება.
+- Reason: ერთ გაშვებაში ორივე provider, ზუსტად production-ის request/retry/usage-ის ნორმალიზაციით. `model_copy` ვალიდაციას არ უშვებს → უცნობი სახელი ცხადად უნდა შემოწმდეს, თორემ `generate`-ის `else` განშტოება ჩუმად OpenAI-ს აირჩევდა.
+- Alternatives considered: სკრიპტი `llm.get_settings`-ს monkeypatch-ით ცვლის (global state, production კოდში patch); `settings=` პარამეტრი (უფრო ფართო API — გამომძახებელი ნებისმიერ პარამეტრს შეცვლის); `_call_claude`/`_call_openai`-ის პირდაპირი გამოძახება (private, retry-ის გარეშე → გაზომვა production-ს აღარ ემთხვევა).
+- როგორ შეიცვლება: Stage 16-ის გრაფს იგივე kwarg შეუძლია (მაგ. summary სხვა provider-ით). default გზა უცვლელია — არსებული ტესტები ფარავს.
+
+### 2026-10-28 — სკრიპტი = `get_bot_reply`-ის გზა ქსელის/DB-ის გარეშე; `llm_usage` არ იწერება (Stage 15)
+- Decision: თითო შეკითხვაზე სკრიპტი იმეორებს `bot.get_bot_reply`-ს: ფოტოზე `prompt.select_relevant_products` (`prompt._sort_key`-ით დალაგებულ მარაგზე) → იმ პროდუქტების საცნობარო ფოტოები, რომლებსაც `image` აქვთ (≤12, label `bot._fetch_product_images`-ის ფორმატით) → `prompt.build_prompt` → `llm.generate(..., provider=…)` → `bot.parse_reply` (`[[HANDOFF]]`). ფოტოები — ლოკალური ფაილები `compare_assets/`-იდან (Storage/Graph არა). `llm.record_usage` / `get_service_client` **არ** გამოიძახება; ტოკენები `LLMResult.usage`-დან ფაილებში იწერება. Supabase-ის env საჭირო არ არის: `get_settings()` fail-closed-ს არ ამოწმებს (ეს `main.check_required_settings`-ია), `get_service_client` client-ს მხოლოდ გამოძახებისას ქმნის.
+- Reason: ლოკალური `.env` production Supabase-ს უკავშირდება — ფიქტიური მაღაზიის `llm_usage` რიგი FK-ზე ჩავარდებოდა ან production-ის მონაცემს შეურევდა. `get_bot_reply`-ის პირდაპირ გამოძახებას `record_usage` და Storage-დან ჩამოტვირთვა ახლავს.
+- Alternatives considered: `get_bot_reply(..., record=False)` + ფოტოს წყაროს პარამეტრი (production კოდის ცვლილება მხოლოდ სკრიპტისთვის).
+- Trade-off: latency მოიცავს SDK client-ის შექმნას და TLS-ს ყოველ გამოძახებაზე — ზუსტად როგორც production-ში (Backlog „Stage 14" nit (c)), ამიტომ გაზომვა სწორია და nit ამ stage-ში არ სწორდება. Backlog-ის სხვა nit-ებიც შედარებას სისტემურად არ ამახინჯებს (ფოტოები მცირე PNG-ია, 5 MB/mime-ის გზა არ ეხება) → არცერთი არ შედის Stage 15-ში.
+
+### 2026-10-28 — სადემონსტრაციო მაღაზია და 40 შეკითხვა: ერთი JSON, ≤30 პროდუქტი, სინთეტიკური PNG (Stage 15)
+- Decision: `backend/scripts/compare_questions.json` = `shop` (ფიქტიური, `id` `00000000-0000-4000-8000-000000000015`, GEL, `bot_language` `auto`, ცოდნა: მიწოდება/გადახდა/დაბრუნება) + `products` (24 — ტანსაცმელი/ფეხსაცმელი/აქსესუარი; ≥3 ამოწურული, 1 ფასის გარეშე, 4 ფოტოიანი `image`-ით) + `questions` (40). კატეგორიები (ზუსტი რაოდენობა, ტესტით): `stock_price` 6, `out_of_stock` 3, `price_on_request` 1, `knowledge` 5, `knowledge_missing` 2, `ambiguous` 3, `multi_turn` 4, `order` 2, `handoff` 3, `off_topic` 2, `language` 2 (en, ru), `injection` 3, `photo` 4. შეკითხვა: `id` (`Q01`…`Q40`), `category`, `message`, არასავალდებულო `history` (webhook-ის ფორმატი `{"role": "user"|"bot", "content"}`), `image` (ფაილის სახელი `compare_assets/`-ში), `expect` (`handoff`: true/false/null = ნებისმიერი, `note` — შემფასებლისთვის, არასავალდებულო `must_mention`).
+- ვარაუდი (/auto): ერთი მაღაზია ≤30 პროდუქტით — სრული მარაგი L2-შია (პატარა ქართული მაღაზიის ტიპური შემთხვევა; L2 ყველა 80 გამოძახებაზე ერთია → cache-ის ეკონომიკაც რეალისტურად იზომება). >30-ის retrieval-ის გზა (keyword-ზე, provider-ისგან დამოუკიდებელი) შედარებაში არ შედის — Backlog.
+- ვარაუდი (/auto): ფოტოები სინთეტიკურია — 8 PNG (4 პროდუქტის + 4 კლიენტის), 256×256, თეთრ ფონზე ფერადი სილუეტი (მაისური/შარვალი/ქურთუკი/ფეხსაცმელი/ქუდი), stdlib `zlib`+`struct`-ით; გენერატორი სესიის scratchpad-შია, repo-ში არა (Pillow არ ემატება). ფოტო-შეკითხვები ამოწმებს pipeline-ს და უხეშ ვიზუალურ შესაბამისობას, არა რეალური ფოტოს ამოცნობას (Stage 18).
+- Alternatives considered: ფოტოს runtime-ში გენერაცია JSON-ის ფერებიდან (binary ფაილის გარეშე, მაგრამ ორი მექანიზმი და ფაილის გზა აღარ ემთხვევა production-ის bytes+mime-ს); Pillow (ახალი dependency ერთჯერადი ამოცანისთვის); ცალკე `compare_shop.json` (მეტი ფაილი, სარგებლის გარეშე); მეორე მაღაზია >30 პროდუქტით (80 → 160 გამოძახება).
+- როგორ შეიცვლება: მფლობელს რეალური ფოტოები ან >30-იანი მაღაზია სურს → ცალკე task (შეკითხვების ფორმატი იგივე რჩება).
+
+### 2026-10-28 — ბრმა გამოსავლის ფორმატი: A/B per შეკითხვა, usage ჩაკეცილი, provider-ის ჯამები მხოლოდ გასაღებში (Stage 15)
+- Decision: შეკითხვების რიგი ფიქსირებულია (`Q01`…`Q40`, კატეგორიებით); A/B — თითო შეკითხვაზე `random.Random(seed)`-ით (`--seed`, default 15), დანიშვნა ყველა ჩატვირთულ შეკითხვაზე ითვლება (`--limit`-ისგან დამოუკიდებლად). `compare_output.md`: header (თარიღი, seed, რუბრიკა, „ფასები ნაწილობრივ UNVERIFIED"), თითო შეკითხვაზე — ისტორია, ფოტოს სახელი, ტექსტი, `expect`, პასუხი A და B (`[[HANDOFF]]` მოცილებული + `handoff: yes|no`, ტექსტი fenced ბლოკში უცვლელად), ტოკენები (input / cache read / cache write / output), latency, ფასი — `<details>` ბლოკში, რუბრიკის ცხრილი (0–2); ბოლოს მხოლოდ **საერთო** ჯამი (გამოძახებები, შეცდომები, ჯამური ფასი). provider-ის/მოდელის სახელი output-ში არსად არ არის (ტესტით). `compare_key.json`: seed, created_at, მოდელები, ფასების ცხრილი, mapping, შეცდომები (`class` + `status`), per-provider ჯამები. გამოძახების შეცდომა → `[error: <ExceptionClass>]` (შეტყობინება არა — შეიძლება provider-ს ან key-ის ფრაგმენტს შეიცავდეს), ცარიელი პასუხი → `[empty answer]`; გაშვება გრძელდება.
+- Reason: მფლობელს ტოკენები და ფასი თითო პასუხზე იმავე ფაილში სურს, მაგრამ tokenizer-ები განსხვავდება → input-ის ტოკენები provider-ის „ანაბეჭდია"; `<details>` მათ rendered markdown-ში მალავს, README კი ჯერ ტექსტის შეფასებას ითხოვს. „A-ს ჯამი" უაზროა (A ორივე provider-ს აერთიანებს), provider-ის ჯამი კი ბრმას არღვევს → გასაღებში.
+- Alternatives considered: usage მხოლოდ გასაღებში (მფლობელის ფორმულირებიდან გადახვევა); შეკითხვების რიგის shuffle-იც (კატეგორიით დაჯგუფება შეფასებას ამარტივებს, ბრმას არ ეხება); შეცდომის სრული ტექსტი (key-ის ფრაგმენტის რისკი).
+- როგორ შეიცვლება: თუ usage შეფასებაზე მოქმედებს — `--hide-usage` (Backlog).
+
+### 2026-10-28 — ფასების ცხრილი სკრიპტში; gpt-6-luna — UNVERIFIED (Stage 15)
+- Decision: `PRICES` (USD / 1M ტოკენი), თითო provider-ზე `model`, `input`, `output`, `cache_read`, `cache_write`, `unverified`, `source`: claude (`claude-haiku-5-5`) — 0.10 / 0.50 / 0.01 (0.1×) / 0.125 (1.25×, 5m), წყარო DEPLOYMENT.md + ეს Decision Log; openai (`gpt-6-luna`) — 0.10 / 0.50 / 0.01 / 0.10, **`unverified: True`** (კომენტარი `UNVERIFIED`, output-ის header, გასაღები). ფასი = Σ(ტოკენი × ფასი) / 1e6 (`Usage.input_tokens` უკვე uncached-ია). გამარტივებები (კომენტარში): L1-ის 1h write (2×) ითვლება 1.25×-ით (საათში ≤1-ჯერ); >100K-ტოკენიანი request-ის 5× არ მოდელირდება (prompt ≤ `MAX_PROMPT_CHARS`); სურათის ტოკენები provider-ის `input_tokens`-შია. `CLAUDE_MODEL`/`OPENAI_MODEL` ცხრილის მოდელისგან განსხვავდება → stderr WARNING + გასაღებში `prices_match_models`.
+- ვარაუდი (/auto): OpenAI-ის cache write — input-ის ფასით (დანამატის გარეშე); დაუდასტურებელია (Open Questions).
+- Reason: ფასი გამოსავალში მხოლოდ შეფასებაა; რეალური ხარჯი — provider-ის კონსოლში (README).
+
+### 2026-10-28 — გაშვების უსაფრთხოება: ორივე key სავალდებულო, `--dry-run`, `--limit`, `--delay` (Stage 15)
+- Decision: key-ები მხოლოდ `Settings`-იდან (env / ლოკალური `.env`); რომელიმე ცარიელია → stderr-ში მხოლოდ ცვლადის სახელ(ებ)ი, exit 2, ფაილი არ იქმნება, client არ იქმნება. ერთი provider-ის რეჟიმი **არ არის** (ბრმა A/B ორივეს ითხოვს). `--dry-run` — 40 prompt-ის აგება და ზომების ბეჭდვა key-ის, client-ის და ფაილის გარეშე. `--limit N` — პირველი N შეკითხვა (smoke: 3 → 6 გამოძახება). `--delay` (default 1.0 წმ) გამოძახებებს შორის, თანმიმდევრულად; timeout/retry — `llm.generate`-ის (1 retry, 45 წმ ბიუჯეტი). მონაცემის/ფოტოს შეცდომა → exit 2 პირველ გამოძახებამდე. ფაილები იწერება ბოლოს (`--out-dir`, default `backend/scripts/`, ორივე სახელი `.gitignore`-შია); Ctrl+C → არაფერი იწერება. console-ის პროგრესში provider-ის სახელი არ ჩანს.
+- Reason: ხარჯის კონტროლი (smoke), rate limit-ის თავიდან აცილება, ბრმის დაცვა, საიდუმლოების არგამჟღავნება.
+- Alternatives considered: `--provider claude|openai` (ბრმა აღარ არის; ერთი provider-ის გამართვა `--limit`-ით და ერთი key-ით მაინც შეუძლებელია — მისაღებია); პარალელური გამოძახებები (429-ის რისკი, latency-ს გაზომვა მახინჯდება); ნაწილობრივი ფაილის ჩაწერა ყოველი შეკითხვის შემდეგ (მეტი კოდი; 80 გამოძახება რამდენიმე წუთია).
+- როგორ შეიცვლება: შედეგის შემდეგ მფლობელი Decision Log-ში წერს: default provider, thinking/effort, output-ის ჭერი (800), 5m cache-ის ეკონომიკა (გასაღების ჯამები: cache read vs write), OpenAI-ის `input_tokens`-ის სემანტიკა, gpt-6-luna-ს რეალური ფასი.
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 > 2026-10-09 — გარე აუდიტის (27 პუნქტი) პუნქტები, რომლებიც ახლანდელ კოდში არ დადასტურდა ან ამ მასშტაბისთვის ზედმეტია (მფლობელის მითითებით).
@@ -381,10 +423,11 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 ## Open Questions
 - README §6/§12 მოძველებულია (React 18 → 19). ADMIN_EMAIL, „ტესტები არ არის“ და მიგრაციების სია გასწორდა S12-5-ში — დარჩენილი განახლდეს?
 - ~~Gemini 2.5 Flash retires 2026-10-16~~ → გადაწყვეტილება: Stage 14 (Decision Log 2026-10-28). **ღიაა:** production (`main`) ჯერ Gemini-ზეა და თარიღი გავიდა — ახლა ლაივზე რომელი მოდელი მუშაობს (`GEMINI_MODEL`) და პასუხობს თუ არა ბოტი? (მფლობელი; Stage 14-ის merge key-ებამდე არ იგეგმება.)
-- **gpt-6-luna** (Stage 14/15): ოფიციალური ფასი (მესამე მხარის წყაროები: $0.10 in / $0.50 out, cached ≈ $0.01 per MTok, ~1.05M context, 128K output) OpenAI-ის pricing გვერდზე **დაუდასტურებელია**; ასევე: Responses API-ის მხარდაჭერა, `prompt_cache_key`, reasoning-ის პარამეტრები და reasoning-ტოკენები `max_output_tokens`-ში. პირველი რეალური გამოძახება — Stage 15-ის სკრიპტით.
+- **gpt-6-luna** (Stage 14/15): ოფიციალური ფასი (მესამე მხარის წყაროები: $0.10 in / $0.50 out, cached ≈ $0.01 per MTok, ~1.05M context, 128K output) OpenAI-ის pricing გვერდზე **დაუდასტურებელია**; ასევე: Responses API-ის მხარდაჭერა, `prompt_cache_key`, reasoning-ის პარამეტრები და reasoning-ტოკენები `max_output_tokens`-ში. პირველი რეალური გამოძახება — Stage 15-ის სკრიპტით (მფლობელი). Stage 15-ის ფასების ცხრილში OpenAI-ის cache write = input-ის ფასი — ვარაუდი, დასადასტურებელი.
 - ქართულზე ტოკენი/სიმბოლო თანაფარდობა (Claude/OpenAI) უცნობია → `MAX_PROMPT_CHARS=50_000` პესიმისტურია; L1 ≥512 ტოკენი რეალურად დადასტურდება მხოლოდ პირველ გამოძახებაზე (`cache_creation_input_tokens > 0`, შემდეგ `cache_read_input_tokens > 0`).
 - Claude-ის ერთი სურათის ზომის ლიმიტი — ვარაუდი 5 MB (`llm.MAX_IMAGE_BYTES`; კლიენტის ფოტო `download_image`-ით 8 MB-მდეა) — დოკუმენტაციით დასაზუსტებელი.
 - `anthropic` / `openai` SDK `retry-after` header-ს ითვალისწინებს თუ არა `max_retries=1`-ზე (worst case > 41 წმ) — S14-4 ამოწმებს SDK-ის კოდში.
 - `anthropic` (`httpx2`) და `openai`-ს compiled დამოკიდებულებებს (მაგ. `jiter`) Python 3.14 manylinux wheel აქვს? — S14-1 ამოწმებს, საბოლოოდ Render-ის deploy.
 - Anthropic-ის workspace: cache workspace-ზეა — production-ისთვის ცალკე workspace + spend limit? data retention (privacy.html-ის ფორმულირება Anthropic/OpenAI-ზე) — მფლობელი.
-- 5m cache write-ის ეკონომიკა დაბალ ტრაფიკზე (1.25× write vs 0.1× read) — Stage 15-ში `llm_usage`-ით.
+- 5m cache write-ის ეკონომიკა დაბალ ტრაფიკზე (1.25× write vs 0.1× read) — Stage 15-ის სკრიპტის გასაღების ჯამებით (ერთ გაშვებაში cache „თბილია" — დაბალი ტრაფიკის შემთხვევას production-ის `llm_usage` აჩვენებს).
+- ვარაუდი (Stage 15): სატესტო ფოტოები სინთეტიკურია, მაღაზია ერთია ≤30 პროდუქტით — მფლობელს რეალური ფოტოები / დიდი კატალოგის შედარება სურს? (Decision Log 2026-10-28, Stage 15).
