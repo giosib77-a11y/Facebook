@@ -17,7 +17,7 @@ import pytest
 import app.api.chat as chat
 import app.api.webhook as webhook
 import app.services.facebook as facebook
-from app.services import bot, llm
+from app.services import bot, graph, llm
 from app.services.prompt import _sort_key
 from tests.conftest import FakeSupabase
 from tests.test_reply_delivery import PSID, _run, env  # noqa: F401  (env is a fixture)
@@ -239,10 +239,10 @@ def test_webhook_sends_fallback_when_llm_times_out(env, h, monkeypatch, caplog):
     db, sent, _ = env
     h.result = anthropic.APITimeoutError(REQ)
     h.duration = h.settings.llm_timeout_seconds  # every attempt hangs until its timeout fires
-    monkeypatch.setattr(webhook, "get_bot_reply", bot.get_bot_reply)  # env stubbed it
+    monkeypatch.setattr(webhook, "run_turn", graph.run_turn)  # env stubbed it
 
     with caplog.at_level(logging.ERROR, logger="app"):
-        _run()
+        _run(text="წითელი მაისური რა ღირს?")  # not a template: it must reach the model
 
     assert sent == ["ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."]
     assert any(WEBHOOK_SHOP_ID in r.getMessage() for r in caplog.records)
@@ -257,7 +257,8 @@ def test_webhook_sends_fallback_when_llm_times_out(env, h, monkeypatch, caplog):
 # (5) /test-chat
 # ---------------------------------------------------------------------------
 def _chat_payload():
-    return {"shop_id": SHOP_ID, "message": "hello", "history": []}
+    # not a greeting: "hello" is a template now and would never reach the (fake) model
+    return {"shop_id": SHOP_ID, "message": "what is the price of Item 1?", "history": []}
 
 
 @pytest.fixture
@@ -288,6 +289,25 @@ def test_test_chat_ok_with_fake_client(client, chat_db, h):
     assert r.status_code == 200, r.text
     assert r.json() == {"reply": "Hello!", "products_in_context": 3, "model": "claude-haiku-5-5"}
     assert len(h.requests) == 1
+
+
+def test_test_chat_greeting_is_a_template_without_an_llm_call(client, chat_db, h):
+    payload = {"shop_id": SHOP_ID, "message": "გამარჯობა", "history": []}
+    r = client.post("/test-chat", json=payload)
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "reply": "გამარჯობა! 😊 რით შემიძლია დაგეხმაროთ?",
+        "products_in_context": 3, "model": "claude-haiku-5-5",
+    }
+    assert h.requests == [] and h.factory_calls == 0
+    assert h.usage_db.calls_for("llm_usage", "insert") == []
+
+
+def test_test_chat_greeting_still_503_without_a_key(client, chat_db, h):
+    h.set_settings(anthropic_api_key="")
+    r = client.post("/test-chat", json={"shop_id": SHOP_ID, "message": "გამარჯობა", "history": []})
+    assert r.status_code == 503
+    assert h.factory_calls == 0
 
 
 def test_test_chat_is_404_in_production(client, chat_db, h):

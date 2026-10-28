@@ -12,6 +12,7 @@ import pytest
 
 import app.api.webhook as webhook
 from app.core.tiers import DAILY_ABUSE_CAP
+from app.services.graph import TurnResult
 from tests.test_reply_delivery import PAGE_ID, PSID, SHOP_ID
 
 CUSTOMER_TEXT = "ფასი რა არის? ჩემი ნომერია 555123456"
@@ -30,9 +31,9 @@ def env(monkeypatch, service_db):
     calls = {"bot": 0, "download": 0}
     sent = []
 
-    def fake_bot_reply(shop, products, text, history, images=None):
+    def fake_run_turn(shop, products, text, history, images=None, **kw):
         calls["bot"] += 1
-        return "llm reply"
+        return TurnResult("llm reply")
 
     def fake_download(url, timeout=8):
         calls["download"] += 1
@@ -42,7 +43,7 @@ def env(monkeypatch, service_db):
     monkeypatch.setattr(webhook, "decrypt", lambda token: "page-token")
     monkeypatch.setattr(webhook, "send_text_message", lambda tok, psid, text: sent.append(text))
     monkeypatch.setattr(webhook, "download_image", fake_download)
-    monkeypatch.setattr(webhook, "get_bot_reply", fake_bot_reply)
+    monkeypatch.setattr(webhook, "run_turn", fake_run_turn)
     return db, sent, calls
 
 

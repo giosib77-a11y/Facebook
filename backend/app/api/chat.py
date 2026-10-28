@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.core.ratelimit import rate_limit
 from app.core.supabase_client import get_service_client
 from app.models.chat import TestChatRequest, TestChatResponse
-from app.services.bot import get_bot_reply, parse_reply
+from app.services.graph import run_turn
 
 router = APIRouter(tags=["bot (dev)"])
 
@@ -52,10 +52,8 @@ def test_chat(payload: TestChatRequest):
     )
 
     try:
-        reply, _ = parse_reply(
-            get_bot_reply(
-                shop, products, payload.message, [t.model_dump() for t in payload.history]
-            )
+        result = run_turn(
+            shop, products, payload.message, [t.model_dump() for t in payload.history]
         )
     except RuntimeError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
@@ -63,5 +61,5 @@ def test_chat(payload: TestChatRequest):
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"ბოტის შეცდომა: {e}")
 
     return TestChatResponse(
-        reply=reply, products_in_context=len(products), model=settings.llm_model
+        reply=result.text, products_in_context=len(products), model=settings.llm_model
     )

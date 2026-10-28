@@ -13,8 +13,8 @@ from app.config import get_settings
 from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
 from app.core.tiers import DAILY_ABUSE_CAP, limits_for
-from app.services.bot import get_bot_reply, parse_reply
 from app.services.facebook import download_image, send_text_message, verify_signature
+from app.services.graph import run_turn
 
 router = APIRouter(tags=["messenger webhook"])
 logger = logging.getLogger("app")
@@ -386,9 +386,8 @@ def _process_events(data: dict) -> None:
             history = _load_history(sc, shop["id"], str(sender_id))
             handoff = False
             try:
-                reply, handoff = parse_reply(
-                    get_bot_reply(shop, products, text, history, images=images)
-                )
+                result = run_turn(shop, products, text, history, images=images)
+                reply, handoff = result.text, result.handoff
             except Exception:
                 logger.exception("ბოტის პასუხი ვერ შეიქმნა (shop=%s)", shop.get("id"))
                 reply = "ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."

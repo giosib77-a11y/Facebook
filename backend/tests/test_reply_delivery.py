@@ -8,6 +8,7 @@ import logging
 import pytest
 
 import app.api.webhook as webhook
+from app.services.graph import TurnResult
 
 PAGE_ID = "1234567890"
 SHOP_ID = "22222222-2222-2222-2222-222222222222"
@@ -31,16 +32,16 @@ def env(monkeypatch, service_db):
     monkeypatch.setattr(webhook, "send_text_message", lambda tok, psid, text: sent.append(text))
     monkeypatch.setattr(webhook, "download_image", lambda url, timeout=8: None)
     monkeypatch.setattr(
-        webhook, "get_bot_reply",
-        lambda shop, products, text, history, images=None: bot["reply"],
+        webhook, "run_turn",
+        lambda shop, products, text, history, images=None, **kw: TurnResult(bot["reply"]),
     )
     return db, sent, bot
 
 
-def _run(obj="page"):
+def _run(obj="page", text="გამარჯობა"):
     webhook._process_events({"object": obj, "entry": [{
         "id": PAGE_ID,
-        "messaging": [{"sender": {"id": PSID}, "message": {"text": "გამარჯობა"}}],
+        "messaging": [{"sender": {"id": PSID}, "message": {"text": text}}],
     }]})
 
 

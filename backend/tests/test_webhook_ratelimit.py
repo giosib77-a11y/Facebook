@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.api.webhook as webhook
+from app.services.graph import TurnResult
 
 PAGE_ID = "1234567890"
 SHOP_ID = "22222222-2222-2222-2222-222222222222"
@@ -34,11 +35,11 @@ def env(monkeypatch, service_db):
         SimpleNamespace(time=real_time.time, monotonic=lambda: clock["t"]),
     )
 
-    def fake_bot_reply(shop, products, text, history, images=None):
+    def fake_run_turn(shop, products, text, history, images=None, **kw):
         bot_calls.append(text)
-        return "llm reply"
+        return TurnResult("llm reply")
 
-    monkeypatch.setattr(webhook, "get_bot_reply", fake_bot_reply)
+    monkeypatch.setattr(webhook, "run_turn", fake_run_turn)
     return db, sent, bot_calls, clock
 
 
