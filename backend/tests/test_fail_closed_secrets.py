@@ -17,7 +17,7 @@ from app.main import check_required_settings
 BODY = json.dumps({"object": "page", "entry": [{"id": "1", "messaging": []}]}).encode()
 
 ALL_NAMES = [
-    "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "GEMINI_API_KEY",
+    "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY",
     "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_TOKEN_ENCRYPTION_KEY", "CLIENT_IP_TRUSTED_HOPS",
 ]
 
@@ -29,7 +29,7 @@ def _prod(**kw) -> Settings:
 def _full(**over) -> dict:
     vals = dict(
         supabase_url="https://x.supabase.co", supabase_publishable_key="pk",
-        supabase_secret_key="sk", gemini_api_key="g", fb_app_secret="s",
+        supabase_secret_key="sk", fb_app_secret="s",
         fb_verify_token="v", fb_token_encryption_key=Fernet.generate_key().decode(),
         client_ip_trusted_hops=3,
     )
@@ -106,8 +106,13 @@ def test_webhook_get_verification_refuses_empty_verify_token(client, monkeypatch
 # ---- startup check ----
 def test_missing_secrets_lists_exact_names():
     assert _prod().missing_required_secrets() == ALL_NAMES
+    assert _prod(**_full(fb_app_secret="", supabase_secret_key=" ")).missing_required_secrets() == [
+        "SUPABASE_SECRET_KEY", "FB_APP_SECRET"]
+    # a blank legacy gemini key is no longer a required secret
     assert _prod(**_full(fb_app_secret="", gemini_api_key=" ")).missing_required_secrets() == [
-        "GEMINI_API_KEY", "FB_APP_SECRET"]
+        "FB_APP_SECRET"]
+    # an empty LLM provider key is not a startup-blocking secret (bot just stays disabled)
+    assert _prod(**_full(anthropic_api_key="", openai_api_key="")).missing_required_secrets() == []
 
 
 def test_all_secrets_set_is_empty():

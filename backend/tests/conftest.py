@@ -17,10 +17,17 @@ Settings.model_config["env_file"] = None
 for _name in (
     "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY",
     "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "ORIGIN_SECRET",
-    "GEMINI_API_KEY", "FB_APP_ID", "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_REDIRECT_URI",
+    "OPENAI_API_KEY", "FB_APP_ID", "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_REDIRECT_URI",
     "FB_LOGIN_CONFIG_ID", "FB_TOKEN_ENCRYPTION_KEY", "PUBLIC_BASE_URL", "ADMIN_USER_IDS",
 ):
     os.environ[_name] = ""
+# LLM: default test setup = configured bot (claude + dummy key). A test of a disabled bot
+# must override settings explicitly.
+os.environ["ANTHROPIC_API_KEY"] = "test-anthropic-key-not-real"
+os.environ["LLM_PROVIDER"] = "claude"
+# non-string settings / defaults: an empty string would override the default (or fail to parse)
+for _name in ("CLAUDE_MODEL", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS"):
+    os.environ.pop(_name, None)
 # default is now production (fail-closed); tests run in development explicitly.
 os.environ["APP_ENV"] = "development"
 

@@ -1,9 +1,10 @@
 """აპლიკაციის პარამეტრები — იკითხება .env-დან (pydantic-settings)."""
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from cryptography.fernet import Fernet
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # root .env და backend/.env — ორივეს ვცდილობთ წაკითხვას
@@ -52,10 +53,19 @@ class Settings(BaseSettings):
     origin_secret: str = Field("", repr=False)
     origin_secret_header: str = "x-origin-secret"
 
-    # Gemini (ბოტი — ნაბიჯი 4)
-    gemini_api_key: str = Field("", repr=False)
-    gemini_model: str = "gemini-2.5-flash"
-    gemini_timeout_seconds: float = 20.0  # ერთი Gemini მცდელობის timeout (S11-3)
+    # LLM (ბოტი): არჩეული provider + მისი key. key-ის გარეშე აპი მაინც ირთვება (პანელი მუშაობს),
+    # ბოტი კი ოპერატორის შეტყობინებით პასუხობს — იხ. llm_ready და main.warn_if_llm_disabled.
+    llm_provider: Literal["claude", "openai"] = "claude"
+    anthropic_api_key: str = Field("", repr=False)
+    openai_api_key: str = Field("", repr=False)
+    claude_model: str = "claude-haiku-5-5"
+    openai_model: str = "gpt-6-luna"
+    llm_timeout_seconds: float = Field(20.0, gt=0, le=20)  # ერთი LLM მცდელობის timeout
+
+    # ძველი provider — bot.py ჯერ იყენებს
+    gemini_api_key: str = Field("", repr=False)  # removed in S14-5
+    gemini_model: str = "gemini-2.5-flash"  # removed in S14-5
+    gemini_timeout_seconds: float = 20.0  # removed in S14-5
 
     # ბოტის საუბრის მეხსიერება — ბოლო N შეტყობინება, ბოლო H საათში (0 = გამორთული)
     bot_memory_messages: int = 20
@@ -90,12 +100,37 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator("llm_provider", mode="before")
+    @classmethod
+    def _normalize_llm_provider(cls, v):
+        # ცარიელი → default; უცნობი მნიშვნელობა → ValidationError (startup ყველა გარემოში ვარდება)
+        if isinstance(v, str):
+            v = v.strip().lower()
+            return v or "claude"
+        return v
+
     @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() in ("production", "prod")
 
+    @property
+    def llm_key_env_name(self) -> str:
+        return "ANTHROPIC_API_KEY" if self.llm_provider == "claude" else "OPENAI_API_KEY"
+
+    @property
+    def llm_model(self) -> str:
+        return self.claude_model if self.llm_provider == "claude" else self.openai_model
+
+    @property
+    def llm_ready(self) -> bool:
+        """არჩეული provider-ის key არაცარიელია (key-ის გარეშე ბოტი გამორთულია)."""
+        key = self.anthropic_api_key if self.llm_provider == "claude" else self.openai_api_key
+        return bool((key or "").strip())
+
     def missing_required_secrets(self) -> list[str]:
         """Production-ში სავალდებულო პარამეტრებიდან ცარიელ/არავალიდურთა ENV სახელები.
+
+        LLM provider-ის key აქ განზრახ არ შედის: მისი არქონა აპს არ აჩერებს (იხ. llm_ready).
 
         ⚠️ მხოლოდ სახელები — მნიშვნელობები არასდროს ბრუნდება/ილოგება.
         """
@@ -103,7 +138,6 @@ class Settings(BaseSettings):
             "SUPABASE_URL": self.supabase_url,
             "SUPABASE_PUBLISHABLE_KEY": self.supabase_publishable_key,
             "SUPABASE_SECRET_KEY": self.supabase_secret_key,
-            "GEMINI_API_KEY": self.gemini_api_key,
             "FB_APP_SECRET": self.fb_app_secret,
             "FB_VERIFY_TOKEN": self.fb_verify_token,
             "FB_TOKEN_ENCRYPTION_KEY": self.fb_token_encryption_key,

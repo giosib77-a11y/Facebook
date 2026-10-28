@@ -35,7 +35,18 @@ def check_required_settings(s) -> None:
         raise RuntimeError("Missing required production settings: " + ", ".join(missing))
 
 
+def warn_if_llm_disabled(s) -> None:
+    """არჩეული LLM provider-ის key-ის გარეშე აპი მაინც ირთვება (ბოტი გამორთულია) — მხოლოდ
+    გაფრთხილება ლოგში. ცვლადის სახელი იწერება, მნიშვნელობა — არასდროს."""
+    if not s.llm_ready:
+        logging.getLogger("app").warning(
+            "LLM disabled: %s is not set (LLM_PROVIDER=%s) — bot replies with the operator message",
+            s.llm_key_env_name, s.llm_provider,
+        )
+
+
 check_required_settings(settings)
+warn_if_llm_disabled(settings)
 
 app = FastAPI(
     title="ქართული მაღაზიების AI ბოტი — API",
