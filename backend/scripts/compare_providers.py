@@ -1,8 +1,9 @@
 """Blind comparison of the two LLM providers (Claude vs OpenAI) on 40 demo-shop questions.
 
-Each question goes through the same path as the bot (prompt.build_prompt -> llm.generate ->
-bot.parse_reply), once per provider, against a fictional shop from compare_questions.json.
-Nothing touches Supabase, Graph or llm_usage. Answers are written to compare_output.md with
+Each question goes through the production path (graph.run_turn: templates, tool loop, clean-up),
+once per provider, against a fictional shop from compare_questions.json; only the product photos
+come from local files. Tools run on the fictional data. Nothing touches Supabase, Graph or
+llm_usage (usage recording is switched off). Answers are written to compare_output.md with
 random A/B labels per question; the label -> provider mapping is in compare_key.json.
 
 Run (OWNER ONLY, real API calls and cost; both ANTHROPIC_API_KEY and OPENAI_API_KEY needed),
@@ -24,8 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import get_settings
-from app.services import llm, prompt
-from app.services.bot import parse_reply
+from app.services import bot, graph, llm, prompt
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_PATH = SCRIPT_DIR / "compare_questions.json"
@@ -34,7 +34,6 @@ OUTPUT_NAME = "compare_output.md"
 KEY_NAME = "compare_key.json"
 DEFAULT_SEED = 15
 DEFAULT_DELAY = 1.0
-MAX_REF_IMAGES = 12  # same cap as bot._fetch_product_images
 
 EMPTY_TEXT = "[empty answer]"
 
@@ -142,27 +141,30 @@ def load_data(path: Path = DATA_PATH) -> tuple[dict, list[dict], list[dict]]:
 # ---------------------------------------------------------------------------
 # Prompt / calls
 # ---------------------------------------------------------------------------
+def local_refs_loader(relevant: list[dict], images) -> list:
+    """graph refs_loader: product photos from local files instead of Storage (the cap and the
+    label are the bot's own)."""
+    refs = []
+    for p in relevant:
+        if not p.get("image"):
+            continue
+        if len(refs) >= bot.MAX_REF_IMAGES:
+            break
+        refs.append((bot.product_ref_label(p), load_image(p["image"])))
+    return refs
+
+
+def question_args(q: dict) -> tuple[str, list | None, list | None]:
+    """(message, history, images) of a question, as the webhook would hand them to the graph."""
+    images = [load_image(q["image"])] if q.get("image") else None
+    return q["message"], q.get("history"), images
+
+
 def build_question_prompt(shop: dict, products: list[dict], q: dict) -> prompt.Prompt:
-    """Same order as bot.get_bot_reply; product photos come from local files, not Storage."""
-    message = q["message"]
-    history = q.get("history")
-    images = None
-    refs = None
-    if q.get("image"):
-        images = [load_image(q["image"])]
-        ordered = sorted(products, key=prompt._sort_key)
-        relevant = prompt.select_relevant_products(ordered, message, history)
-        refs = []
-        for p in relevant:
-            if not p.get("image"):
-                continue
-            if len(refs) >= MAX_REF_IMAGES:
-                break
-            label = f"• {p.get('name', '?')} — {p.get('price', 0)}"
-            if p.get("sku"):
-                label += f" (SKU: {p['sku']})"
-            refs.append((label, load_image(p["image"])))
-    return prompt.build_prompt(shop, products, message, history, images, refs)
+    """The prompt the production graph builds for this question (--dry-run and the parity test)."""
+    message, history, images = question_args(q)
+    return graph.build_turn_prompt(
+        shop, products, message, history, images, refs_loader=local_refs_loader)
 
 
 def assign_labels(question_ids: list[str], seed: int) -> dict[str, dict[str, str]]:
@@ -196,12 +198,27 @@ def error_category(status) -> str:
     return "server" if status >= 500 else "client"
 
 
-def ask(provider: str, p: prompt.Prompt, shop_id: str) -> Answer:
-    """One provider call. Errors become `[error: <category>]` (never the class name or message:
-    they identify the provider); KeyboardInterrupt propagates."""
+def sum_usage(calls) -> llm.Usage:
+    """Usage of all LLM calls of one turn (0 calls on a template answer -> zeros)."""
+    total = llm.Usage()
+    for c in calls:
+        total.input_tokens += c.usage.input_tokens
+        total.output_tokens += c.usage.output_tokens
+        total.cache_read_tokens += c.usage.cache_read_tokens
+        total.cache_write_tokens += c.usage.cache_write_tokens
+    return total
+
+
+def ask(provider: str, shop: dict, products: list[dict], q: dict) -> Answer:
+    """One provider turn through graph.run_turn (no llm_usage rows). Errors become
+    `[error: <category>]` (never the class name or message: they identify the provider);
+    KeyboardInterrupt propagates."""
     started = time.perf_counter()
     try:
-        result = llm.generate(p, shop_id, provider=provider)
+        message, history, images = question_args(q)
+        result = graph.run_turn(
+            shop, products, message, history, images, provider=provider,
+            record_usage=False, refs_loader=local_refs_loader)
     except Exception as exc:
         status = getattr(exc, "status_code", None)
         name = type(exc).__name__
@@ -211,11 +228,11 @@ def ask(provider: str, p: prompt.Prompt, shop_id: str) -> Answer:
             error={"class": name, "status": status if isinstance(status, int) else None},
         )
     latency = time.perf_counter() - started
-    clean, handoff = parse_reply(result.text)
-    empty = not clean
+    usage = sum_usage(result.calls)
+    empty = not result.text
     return Answer(
-        text=EMPTY_TEXT if empty else clean, handoff=handoff, usage=result.usage,
-        latency_s=latency, cost_usd=estimate_cost(provider, result.usage), empty=empty,
+        text=EMPTY_TEXT if empty else result.text, handoff=result.handoff, usage=usage,
+        latency_s=latency, cost_usd=estimate_cost(provider, usage), empty=empty,
     )
 
 
@@ -368,7 +385,8 @@ def main(argv=None) -> int:
     try:
         shop, products, all_questions = load_data()
         questions = all_questions[: args.limit] if args.limit else all_questions
-        prompts = {q["id"]: build_question_prompt(shop, products, q) for q in questions}
+        prompts = ({q["id"]: build_question_prompt(shop, products, q) for q in questions}
+                   if args.dry_run else {})
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -408,21 +426,25 @@ def main(argv=None) -> int:
     # console next to [i/N] and reveal the provider; silence the "app" logger for the call loop.
     app_logger = logging.getLogger("app")
     null_handler = logging.NullHandler()
-    old_propagate = app_logger.propagate
+    # graph.py's "bot turn: ..." INFO line goes to stdout through the app's own handler, so the
+    # logger is disabled outright (handlers/propagate are restored below).
+    old_propagate, old_disabled = app_logger.propagate, app_logger.disabled
     app_logger.addHandler(null_handler)
     app_logger.propagate = False
+    app_logger.disabled = True
     try:
         for i, q in enumerate(questions, 1):
             print(f"[{i}/{len(questions)}] {q['id']}")
             answers[q["id"]] = {}
             for provider in llm.PROVIDERS:
-                answers[q["id"]][provider] = ask(provider, prompts[q["id"]], shop["id"])
+                answers[q["id"]][provider] = ask(provider, shop, products, q)
                 done += 1
                 if args.delay > 0 and done < total_calls:
                     time.sleep(args.delay)
     finally:
         app_logger.removeHandler(null_handler)
         app_logger.propagate = old_propagate
+        app_logger.disabled = old_disabled
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)

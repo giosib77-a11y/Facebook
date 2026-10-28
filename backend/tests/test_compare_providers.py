@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import llm, prompt
+from app.services import bot, graph, llm, prompt
 from scripts import compare_providers as cp
 
 SHOP_ID = "00000000-0000-4000-8000-000000000015"
@@ -40,6 +40,8 @@ class Env:
         self.claude_raise: Exception | None = None  # raised on every Claude call
         self.openai_empty = False
         self.text_override: str | None = None
+        self.tool_mode: str | None = None  # "human": request_human at once; "search": a search round first
+        self.openai_calls = 0
 
         def spy():
             self.service_client_calls += 1
@@ -72,17 +74,38 @@ class Env:
             raise TimeoutError("boom")
         if self.claude_raise is not None:
             raise self.claude_raise
+        content = [SimpleNamespace(type="text", text=text)]
+        name = self._tool_name(self.claude_calls)
+        if name:
+            content.append(SimpleNamespace(type="tool_use", id=f"c{self.claude_calls}", name=name,
+                                           input=self._tool_args(name)))
         return SimpleNamespace(
-            content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn",
+            content=content, stop_reason="tool_use" if name else "end_turn",
             usage=SimpleNamespace(input_tokens=1000, output_tokens=200, cache_read_input_tokens=4000,
                                   cache_creation_input_tokens=2000))
 
+    def _tool_name(self, nth_call):
+        """Tool the fake model calls on its n-th call (per provider), or None for a plain answer."""
+        if self.tool_mode == "human":
+            return "request_human"
+        if self.tool_mode == "search" and nth_call % 2 == 1:
+            return "search_products"
+        return None
+
+    @staticmethod
+    def _tool_args(name):
+        return {"reason": "other"} if name == "request_human" else {"query": "shirt"}
+
     def _openai_create(self, **kwargs):
         text = self._text("openai", kwargs)
+        self.openai_calls += 1
         if self.openai_empty:
             text = ""
+        name = self._tool_name(self.openai_calls)
+        output = [SimpleNamespace(type="function_call", call_id=f"o{self.openai_calls}", name=name,
+                                  arguments=json.dumps(self._tool_args(name)))] if name else []
         return SimpleNamespace(
-            output_text=text,
+            output_text=text, output=output,
             usage=SimpleNamespace(input_tokens=5000, output_tokens=200,
                                   input_tokens_details=SimpleNamespace(cached_tokens=4000, cache_write_tokens=0)))
 
@@ -138,9 +161,10 @@ def test_full_run(env, tmp_path):
 
 
 # (2) blind --------------------------------------------------------------------------------
-def test_output_is_blind(env, tmp_path):
+def test_output_is_blind(env, tmp_path, capsys):
     code, out = run(tmp_path)
     assert code == 0
+    assert "bot turn" not in capsys.readouterr().out  # graph.py's per-turn log line is silenced
     md, _ = read_outputs(out)
     low = md.lower()
     for word in (*FORBIDDEN, env.settings.claude_model.lower(), env.settings.openai_model.lower()):
@@ -262,14 +286,44 @@ def test_empty_answer(env, tmp_path):
     assert "- empty answers: 2" in md
 
 
-# (8) handoff token ------------------------------------------------------------------------
-def test_handoff_token_is_stripped(env, tmp_path):
-    env.text_override = "ერთ წამში, ოპერატორი დაგიკავშირდებათ 🙏 [[HANDOFF]]"
+# (8) handoff through the request_human tool -----------------------------------------------
+def test_request_human_tool_sets_handoff(env, tmp_path):
+    env.tool_mode = "human"
+    env.text_override = "ერთ წამში, ოპერატორი დაგიკავშირდებათ 🙏"
     code, out = run(tmp_path, "--limit", "1")
     assert code == 0
     md, _ = read_outputs(out)
     assert md.count("handoff: yes") == 2
-    assert "[[HANDOFF]]" not in md
+    assert len(env.requests) == 2  # request_human ends the turn: one LLM call per provider
+
+
+# (8b) usage / cost are summed over every LLM call of the turn ------------------------------
+def test_usage_is_summed_over_the_tool_loop(env, tmp_path):
+    env.tool_mode = "search"
+    code, out = run(tmp_path, "--limit", "1")
+    assert code == 0
+    _, key = read_outputs(out)
+    assert len(env.requests) == 4  # 2 LLM calls per provider (search round, then the answer)
+    assert key["totals"]["claude"]["output_tokens"] == 400
+    assert key["totals"]["claude"]["cost_usd"] == pytest.approx(2 * 0.00049)
+    assert key["totals"]["openai"]["input_tokens"] == 2000
+    assert key["totals"]["openai"]["cost_usd"] == pytest.approx(2 * 0.00024)
+    assert env.service_client_calls == 0  # record_usage=False: no llm_usage rows
+
+
+# (8c) template route: 0 LLM calls, zero cost -----------------------------------------------
+def test_template_answer_has_no_calls(env, tmp_path, monkeypatch):
+    shop, products, questions = cp.load_data()
+    greeting = {"id": "Q41", "category": "greeting", "message": "გამარჯობა", "expect": {"handoff": False}}
+    monkeypatch.setattr(cp, "load_data", lambda path=cp.DATA_PATH: (shop, products, [greeting]))
+    code, out = run(tmp_path)
+    assert code == 0
+    md, key = read_outputs(out)
+    assert env.requests == []
+    assert env.service_client_calls == 0
+    assert set(answers_of(md).values()) == {"გამარჯობა! 😊 რით შემიძლია დაგეხმაროთ?"}
+    assert key["totals"]["claude"]["cost_usd"] == 0 and key["totals"]["openai"]["input_tokens"] == 0
+    assert key["totals"]["claude"]["empty"] == 0
 
 
 # (9) --limit ------------------------------------------------------------------------------
@@ -303,7 +357,45 @@ def test_dry_run(monkeypatch, tmp_path, capsys):
 
 
 # (11) prompt parity with the bot path -----------------------------------------------------
-def test_prompt_parity():
+def test_prompt_parity_with_production_graph(monkeypatch):
+    """The prompt the script sends (captured at llm.generate through graph.run_turn) equals what
+    the production path builds for the same input; only the photo source (local files) differs."""
+    shop, products, questions = cp.load_data()
+    captured = []
+
+    def fake_generate(p, shop_id, provider=None, **kwargs):
+        captured.append((p, provider, kwargs))
+        return llm.LLMResult("ok", provider or "claude", "m", llm.Usage())
+
+    monkeypatch.setattr(llm, "get_service_client", lambda: pytest.fail("no DB access"))
+    monkeypatch.setattr(llm, "generate", fake_generate)
+
+    # production side: bot's own loader, fed by the same photos (stands in for Storage downloads)
+    by_name = {p["id"]: p for p in products}
+
+    def production_loader(relevant, images):
+        return [(bot.product_ref_label(p), cp.load_image(by_name[p["id"]]["image"]))
+                for p in relevant if p.get("image")][:bot.MAX_REF_IMAGES]
+
+    n_with_refs = 0
+    for q in questions:
+        before = len(captured)
+        cp.ask("claude", shop, products, q)
+        if len(captured) == before:
+            continue  # template route: no LLM call, no prompt (checked separately)
+        sent, provider, kwargs = captured[-1]
+        message, history, images = cp.question_args(q)
+        expected = graph.build_turn_prompt(
+            shop, products, message, history, images, refs_loader=production_loader)
+        assert sent == expected, q["id"]
+        assert provider == "claude"
+        assert sent == cp.build_question_prompt(shop, products, q)  # the --dry-run prompt
+        assert kwargs["tools"] and kwargs["force_text"] is False
+        n_with_refs += bool(images)
+    assert len(captured) == 40 and n_with_refs >= 1
+
+
+def test_prompt_shape():
     shop, products, questions = cp.load_data()
     ref_products = [p for p in products if p.get("image")]
     layer2s = set()
