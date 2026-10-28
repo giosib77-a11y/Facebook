@@ -1,7 +1,8 @@
 """LLM calls for the bot: Claude (default) / OpenAI — request building, bounded retry, usage.
 
 Takes the provider-agnostic Prompt from services/prompt.py and returns plain text + normalized
-token usage. The provider is chosen by Settings.llm_provider.
+token usage. The provider is chosen by Settings.llm_provider
+(or by generate(provider=...) — Stage 15 comparison script).
 
 Rules enforced here:
   - SDK retries are OFF (max_retries=0): both SDKs honour `retry-after` with no practical cap,
@@ -25,6 +26,8 @@ from app.config import get_settings
 from app.core.supabase_client import get_service_client
 
 logger = logging.getLogger("app")
+
+PROVIDERS = ("claude", "openai")
 
 MAX_OUTPUT_TOKENS = 800
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -231,10 +234,18 @@ def _is_transient(exc: BaseException) -> bool:
     return False
 
 
-def generate(prompt, shop_id) -> LLMResult:
+def generate(prompt, shop_id, provider: str | None = None) -> LLMResult:
     """One LLM answer for the prompt. At most one retry, only on transient errors and only if the
-    whole call still fits LLM_TOTAL_BUDGET_SECONDS. The last exception propagates."""
+    whole call still fits LLM_TOTAL_BUDGET_SECONDS. The last exception propagates.
+
+    provider=None -> Settings.llm_provider (the bot path). Otherwise "claude" | "openai" overrides it
+    for this call only (a copy of the settings; the cached object is never mutated); anything else
+    -> ValueError. The override provider's key and model are used, same readiness check and retry."""
     s = get_settings()
+    if provider is not None:
+        if provider not in PROVIDERS:
+            raise ValueError(f"unknown LLM provider: {provider!r}")
+        s = s.model_copy(update={"llm_provider": provider})
     if not s.llm_ready:
         raise RuntimeError(f"LLM key not configured: {s.llm_key_env_name}")
     call = _call_claude if s.llm_provider == "claude" else _call_openai

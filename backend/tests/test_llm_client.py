@@ -318,3 +318,118 @@ def test_openai_400_not_retried(monkeypatch):
     with pytest.raises(openai.BadRequestError):
         llm.generate(_prompt(), "s")
     assert h.attempts == 1
+
+
+# ---------------------------------------------------------------------------
+# generate(provider=...) override (Stage 15 comparison script)
+# ---------------------------------------------------------------------------
+OPENAI_TEST_KEY = "test-openai-key-not-real"
+
+
+class OverrideHarness(Harness):
+    """Harness with BOTH keys set and a separate counting factory per provider."""
+
+    def __init__(self, monkeypatch, default_provider, openai_key=OPENAI_TEST_KEY):
+        super().__init__(monkeypatch, default_provider)
+        self.settings = self.settings.model_copy(update={"openai_api_key": openai_key})
+        self.original_provider = default_provider
+        self.claude_factory_settings = []
+        self.openai_factory_settings = []
+        fake_client = SimpleNamespace(
+            messages=SimpleNamespace(create=self._create),
+            responses=SimpleNamespace(create=self._create),
+        )
+
+        def claude_factory(s):
+            self.claude_factory_settings.append(s)
+            return fake_client
+
+        def openai_factory(s):
+            self.openai_factory_settings.append(s)
+            return fake_client
+
+        monkeypatch.setattr(llm, "_anthropic_client", claude_factory)
+        monkeypatch.setattr(llm, "_openai_client", openai_factory)
+
+    def _create(self, **kwargs):
+        self.requests.append(kwargs)
+        duration, result = self.script.pop(0)
+        self.clock.now += duration
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def test_override_openai_over_claude_default(monkeypatch):
+    h = OverrideHarness(monkeypatch, "claude")
+    h.script = [(0.1, _openai_response("from gpt"))]
+    result = llm.generate(_prompt(), "shop-1", provider="openai")
+    assert result.text == "from gpt"
+    assert result.provider == "openai"
+    assert result.model == "gpt-6-luna"
+    assert h.attempts == 1
+    assert h.requests[0]["model"] == "gpt-6-luna"
+    assert "input" in h.requests[0]  # Responses API request shape, not Claude's "messages"
+    assert len(h.openai_factory_settings) == 1 and len(h.claude_factory_settings) == 0
+    assert h.openai_factory_settings[0].openai_api_key == OPENAI_TEST_KEY
+
+
+def test_override_claude_over_openai_default(monkeypatch):
+    h = OverrideHarness(monkeypatch, "openai")
+    h.script = [(0.1, _claude_response("from claude"))]
+    result = llm.generate(_prompt(), "shop-1", provider="claude")
+    assert result.text == "from claude"
+    assert result.provider == "claude"
+    assert result.model == "claude-haiku-5-5"
+    assert h.attempts == 1
+    assert h.requests[0]["model"] == "claude-haiku-5-5"
+    assert "messages" in h.requests[0]
+    assert len(h.claude_factory_settings) == 1 and len(h.openai_factory_settings) == 0
+    assert h.claude_factory_settings[0].anthropic_api_key == h.settings.anthropic_api_key
+
+
+@pytest.mark.parametrize("bad", ["gemini", "", "Claude", "OPENAI", " openai"])
+def test_override_unknown_provider_raises_value_error(monkeypatch, bad):
+    h = OverrideHarness(monkeypatch, "claude")
+    with pytest.raises(ValueError, match="unknown LLM provider"):
+        llm.generate(_prompt(), "s", provider=bad)
+    assert h.claude_factory_settings == [] and h.openai_factory_settings == []
+    assert h.attempts == 0
+
+
+def test_override_provider_without_key_raises_with_its_env_name(monkeypatch):
+    h = OverrideHarness(monkeypatch, "claude", openai_key="")  # default claude is ready
+    assert h.settings.llm_ready
+    with pytest.raises(RuntimeError, match="LLM key not configured: OPENAI_API_KEY"):
+        llm.generate(_prompt(), "s", provider="openai")
+    assert h.claude_factory_settings == [] and h.openai_factory_settings == []
+    assert h.attempts == 0
+
+
+def test_explicit_none_provider_uses_default(monkeypatch):
+    h = OverrideHarness(monkeypatch, "openai")
+    h.script = [(0.1, _openai_response("default path"))]
+    result = llm.generate(_prompt(), "s", provider=None)
+    assert result.provider == "openai" and result.text == "default path"
+    assert len(h.openai_factory_settings) == 1 and len(h.claude_factory_settings) == 0
+
+
+def test_override_does_not_mutate_cached_settings(monkeypatch):
+    h = OverrideHarness(monkeypatch, "claude")
+    h.script = [(0.1, _openai_response("x"))]
+    llm.generate(_prompt(), "s", provider="openai")
+    assert llm.get_settings() is h.settings
+    assert llm.get_settings().llm_provider == h.original_provider == "claude"
+    # the factory got a copy with the override, not the original object
+    assert h.openai_factory_settings[0] is not h.settings
+    assert h.openai_factory_settings[0].llm_provider == "openai"
+
+
+def test_override_path_retries_transient_error_once(monkeypatch):
+    h = OverrideHarness(monkeypatch, "claude")
+    h.script = [(0.1, _status_error(openai.RateLimitError, 429)), (0.1, _openai_response("second"))]
+    result = llm.generate(_prompt(), "s", provider="openai")
+    assert result.text == "second" and result.provider == "openai"
+    assert h.attempts == 2
+    assert h.clock.sleeps == [1.5]
+    assert len(h.claude_factory_settings) == 0
