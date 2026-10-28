@@ -5,8 +5,8 @@
 
 ## Overview
 Multi-tenant SaaS ქართული მაღაზიებისთვის: გამყიდველი რეგისტრირდება, ტვირთავს მარაგს და
-აკავშირებს Facebook გვერდს; Messenger/Instagram-ში მისულ კლიენტს AI ბოტი (Gemini)
-პასუხობს **მხოლოდ ამ მაღაზიის რეალურ მარაგზე** დაყრდნობით, ფოტოს ცნობს, აძლევს შესაკვეთ
+აკავშირებს Facebook გვერდს; Messenger/Instagram-ში მისულ კლიენტს AI ბოტი პასუხობს
+(production-ში ჯერ Gemini; **planned replacement (Stage 14):** Claude Haiku 5.5 default / OpenAI, `LLM_PROVIDER`-ით) **მხოლოდ ამ მაღაზიის რეალურ მარაგზე** დაყრდნობით, ფოტოს ცნობს, აძლევს შესაკვეთ
 ლინკს და საჭიროებისას ოპერატორზე გადართავს.
 სრული აღწერა: [README.md](README.md) §1, §5.
 
@@ -19,13 +19,18 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 13 — Frontend-ის ხარისხის შემოწმებები (ESLint + Vitest + CI)** (იხ. `PROGRESS.md`; Stage 10–12 დასრულებულია).
+**Stage 14 — LLM provider-ის შეცვლა: Gemini → Claude (default) / OpenAI, სამფენიანი cache-ზე მორგებული prompt, `llm_usage`**
+(იხ. `PROGRESS.md`; Stage 10–13 დასრულებულია). Stage 15–18 (შედარება, LangGraph, PDF-ცოდნა, ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
+სამუშაო მხოლოდ `agent-system`-ზე; `main`-ში merge არ იგეგმება, სანამ API key-ები არ იქნება.
 
 ## Scope
-### In scope (current stage)
-- აუდიტის მიგნებების გასწორება (security / tenant isolation / abuse / data integrity)
-- მინიმალური lint/test setup-ის შენარჩუნება და გაფართოება
+### In scope (current stage — Stage 14)
+- Gemini-ს სრული ამოღება (კოდი, `google-genai`, `GEMINI_*`, დოკუმენტაცია); provider — `anthropic` / `openai` SDK
+- prompt სამ ფენად (საერთო წესები / მაღაზია / საუბარი) prompt caching-ისთვის; usage-ის ჩაწერა `llm_usage`-ში
+- key-ის გარეშე: აპი ირთვება, ბოტი გამორთულია (ოპერატორის პასუხი + handoff)
+- ყველა ტესტი offline (mock client-ები, ქართული golden სცენარები)
 ### Out of scope (for now)
+- Stage 14-ში: LangGraph/tools, PDF-ის შეკუმშვა, ფოტოს აღწერა, provider-ების შედარება (Stage 15–18)
 - ახალი ფიჩერები — [ROADMAP.md](ROADMAP.md) (Instagram Live, web widget, ინტეგრაციები,
   ავტომატური billing, Redis/queue, CSP, admin pagination)
 
@@ -33,7 +38,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 1. რეგისტრაცია → მაღაზია → პროდუქტები (ხელით / Excel / CSV) → PDF-ცოდნა.
 2. Facebook OAuth connect → page token (დაშიფრული) → webhook subscribe.
 3. Meta webhook (`POST /webhook`, ხელმოწერით) → page_id → მაღაზია → ლიმიტები →
-   Gemini → Send API პასუხი (background task).
+   LLM (ახლა Gemini; Stage 14-დან Claude/OpenAI; key-ის გარეშე — ოპერატორის პასუხი) → Send API პასუხი (background task).
 4. საჯარო შეკვეთა (`POST /orders`) → სერვერი ითვლის ჯამს → შეკვეთა `new` სტატუსით; მარაგი **არ იკლებს** ((IP, shop)-ზე დღიური ლიმიტი).
 5. გამყიდველი მართავს შეკვეთებს: `new → processing` ატომურად აკლებს მარაგს (არასაკმარისზე 409); `processing/done → cancelled` აბრუნებს; `new`-ის გაუქმება მარაგს არ ეხება.
 6. პაკეტის მოთხოვნა (`upgrade_requests`) → ადმინი ხელით ადასტურებს.
@@ -52,7 +57,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 
 ## Data
 Supabase Postgres, ყველა ცხრილზე RLS; სქემა — `supabase/migrations/0001..0024`
-(სია: [README.md](README.md) §7).
+(სია: [README.md](README.md) §7). Stage 14: `0025_llm_usage.sql` (დაგეგმილი; `llm_usage` — მხოლოდ service_role).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`
 - `orders.items` — JSON პოზიციები; ფული — numeric
@@ -62,7 +67,9 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - **Meta Graph API** (`v21.0`) — OAuth, Send API, webhook, Instagram Messaging.
   Setup: [README.md](README.md) §10, [INSTAGRAM_SETUP.md](INSTAGRAM_SETUP.md),
   [APP_REVIEW_TEXTS.md](APP_REVIEW_TEXTS.md)
-- **Google Gemini** (`gemini-2.5-flash`) — ბოტის პასუხი, multimodal.
+- **Google Gemini** (`gemini-2.5-flash`) — ბოტის პასუხი, multimodal. **Planned replacement (Stage 14):**
+  **Anthropic Claude** (`claude-haiku-5-5`, SDK `anthropic`, default) ან **OpenAI** (`gpt-6-luna`, SDK `openai`) —
+  `LLM_PROVIDER=claude|openai`; Gemini სრულად იშლება (Decision Log 2026-10-28).
 - **Supabase** — DB, Auth, Storage.
 - **Render** — hosting, TLS; კლიენტის IP `X-Forwarded-For`-ის მარჯვენა hop-იდან (T17). Cloudflare ამჟამად არ გამოიყენება (origin-lock კოდში ოფციაა, `ORIGIN_SECRET` ცარიელია).
 
@@ -70,6 +77,8 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Complexity tier: მცირე SaaS, ერთი backend instance (modular monolith)
 - Frontend: React 19 + Vite **MPA** (8 გვერდი); `frontend/dist/` git-შია
 - Backend: FastAPI (Python 3.14), sync handlers + FastAPI BackgroundTasks
+- LLM: Gemini (`google-genai`) → planned replacement (Stage 14): `anthropic` / `openai` SDK, `services/prompt.py` +
+  `services/llm.py`; LangGraph — მხოლოდ Stage 16-ში
 - Database: Supabase Postgres + RLS + RPC-ები (EXECUTE მხოლოდ service_role-ს; `track_bot_customer` — DEFINER, stock RPC-ები — INVOKER)
 - Storage: Supabase Storage
 - Auth: Supabase Auth; backend ამოწმებს JWT-ს `auth.get_user()`-ით და DB-ს მომხმარებლის
@@ -96,13 +105,25 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - პროექტი **ლაივზეა**: `main`-ზე push = production deploy. push/merge მხოლოდ მფლობელის
   თანხმობით; სამუშაო ბრენჩი `agent-system`.
 - აგენტს **არ** აქვს უფლება: remote Supabase-ზე migration/ბრძანება, Meta API-ს გამოძახება,
-  Gemini რეალური key-ით, deploy, `.env`-ის წაკითხვა/შეცვლა.
-- ტესტები მხოლოდ ლოკალურად და იზოლირებულად (fake Supabase, mock Graph/Gemini).
+  Gemini / Anthropic / OpenAI რეალური key-ით, deploy, `.env`-ის წაკითხვა/შეცვლა.
+- ტესტები მხოლოდ ლოკალურად და იზოლირებულად (fake Supabase, mock Graph / LLM client-ები).
 - მიგრაციებს მფლობელი უშვებს ხელით (Supabase SQL Editor).
 - Render-ზე Node არ არის → frontend build ლოკალურად, `dist/` commit-ში.
-- Gemini — free tier (5 req/min); billing გაშვებამდე ჩასართავია.
+- Gemini — free tier (5 req/min) — Stage 14-ის deploy-მდე. Stage 14-ის შემდეგ: Anthropic-ის billing/spend limit
+  (Claude Haiku 5.5: $0.10 / $0.50 per MTok ≤100K-ტოკენიან request-ზე, >100K — $0.50 / $2.50 → prompt 100K-ს არასდროს უახლოვდება).
 - Meta-ს ანგარიშის რისკი — ალტერნატიული არხები ROADMAP-შია.
 - ბიუჯეტი ~35₾/თვე ([DEPLOYMENT.md](DEPLOYMENT.md)). ენა/რეგიონი — საქართველო, UI ქართულად.
+
+## API Contract
+სრული სია (47 endpoint): [README.md](README.md) §6 — ეს ერთადერთი წყაროა; აქ მხოლოდ საერთო წესები და Stage 14-ის ცვლილებები.
+- **შეცდომის საერთო ფორმატი:** FastAPI-ის `{"detail": "<ქართული ტექსტი>"}` (422-ზე — FastAPI-ის ვალიდაციის `detail` სია);
+  production-ში მოულოდნელი შეცდომა → 500 `{"detail": "სერვერის შიდა შეცდომა"}`; 413 → `{"detail": "მოთხოვნა ძალიან დიდია"}`.
+- **`POST /webhook`** (Meta) — უცვლელი: ხელმოწერა → 200 `{"status": "ok" | "ignored"}` დამუშავებამდე; 403 არასწორ ხელმოწერაზე;
+  400 არავალიდურ JSON-ზე. Stage 14: key-ის გარეშე კლიენტი იღებს ოპერატორის პასუხს და საუბარი `needs_attention`-ად ინიშნება.
+- **`POST /test-chat`** (dev only; production → 404) — request `{shop_id: uuid, message: str (min 1), history: [{role: "user"|"bot", content: str}]}`;
+  response 200 `{reply: str, products_in_context: int, model: str}`. Stage 14: `model` = არჩეული provider-ის მოდელი
+  (`CLAUDE_MODEL` / `OPENAI_MODEL`); არჩეული provider-ის key არ არის → **503** `{"detail": "<ENV_NAME> არ არის კონფიგურირებული"}`;
+  provider-ის შეცდომა → 502; მაღაზია ვერ მოიძებნა → 404; rate limit (15/წთ) → 429.
 
 ## Decision Log
 > კოდიდან და git-ის ისტორიიდან აღდგენილი გადაწყვეტილებები (თარიღი ≈ შესაბამისი commit).
@@ -125,6 +146,7 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Reason: ფასი, ქართული ენის ხარისხი, ფოტოს მხარდაჭერა.
 - Alternatives considered: სხვა LLM providers.
 - Why rejected: ფასი/ხარისხის თანაფარდობა; იხ. memory „Costs & pricing" (2.5 Flash retires 2026-10-16).
+- Status: **superseded → 2026-10-28** (Stage 14: Claude / OpenAI).
 
 ### 2026-07 — ლიმიტი = უნიკალური კლიენტი თვეში (არა შეტყობინება); per-account გამოწერა
 - Decision: `bot_customers` მრიცხველი + `track_bot_customer()` RPC; მფლობელის უმაღლესი პაკეტი.
@@ -220,6 +242,7 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - Context: `genai.Client` timeout-ის გარეშე იყო; ჩამოკიდებული მოთხოვნა webhook worker-ს იკავებდა და კლიენტი პასუხს ვერ იღებდა.
 - Decision: ერთი მცდელობის timeout `GEMINI_TIMEOUT_SECONDS` (default 20; `HttpOptions.timeout` მილიწამებშია, ვამრავლებთ 1000-ზე), ყველა retry-ს ჯამი `GEMINI_TOTAL_BUDGET_SECONDS`=45 (monotonic deadline; მცდელობის timeout = min(timeout, დარჩენილი)). 503/429-ზე retry თუ დარჩენილი >= sleep + 5 წმ; timeout-ის შემდეგ retry მხოლოდ თუ დარჩენილი >= sleep + სრული timeout-ფანჯარა. ბოლო შეცდომა იგდება → webhook-ის „ბოდიში…" fallback.
 - Alternatives considered: asyncio/thread-level მკაცრი ჭერი. Why rejected: SDK-ის timeout საკმარისია; დამატებითი სირთულე არ სჭირდება.
+- Status: **superseded → 2026-10-28** (SDK-ის `timeout` + `max_retries=1`; იგივე გარანტიები ახალი ტესტებით).
 
 ### 2026-10 — production fail-closed on missing secrets (S11-6)
 - Context: ცარიელი `FB_APP_SECRET`-ით webhook-ის/signed_request-ის/OAuth state-ის HMAC ცარიელი გასაღებით ითვლებოდა (გაყალბებადი), data-deletion კოდი კი ჩაშენებულ `"chatassist"` გასაღებზე ეცემოდა; `FB_TOKEN_ENCRYPTION_KEY` გამოტოვება პირველ connect-ზე ვლინდებოდა.
@@ -250,6 +273,82 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 - ვარაუდი (/auto): `/auto`-ს ფაზა 1ბ (DESIGN.md + Playwright setup) ამ stage-ში გამოტოვებულია — stage UI-ს/ვიზუალს არ ცვლის, მხოლოდ tooling-ია; ვიზუალის უცვლელობა მოწმდება `npm run build`-ით და `dist/`-ის diff-ის გადახედვით (ESLint-ის გასწორებისას). შეიცვლება: მფლობელს Playwright-ის smoke ტესტი სურს → ცალკე task მომდევნო stage-ში.
 - CI: frontend job — `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm test` → build → `dist` diff. სრული `npm audit` (dev-ის ჩათვლით) CI-ში არ არის (A-014: dev-dependency-ების high-ები production bundle-ში არ ხვდება).
 
+### 2026-10-28 — Gemini სრულად იცვლება: Claude (default) / OpenAI, პირდაპირი SDK-ებით; ეტაპები 14–18
+- Decision: Gemini-ს კოდი, `google-genai` და `GEMINI_*` ცვლადები სრულად იშლება (Stage 14). provider — `LLM_PROVIDER=claude|openai` (default `claude`); SDK-ები `anthropic` (`client.messages.create`) და `openai` — **არა** Claude Agent SDK. მოდელები env-ით: `CLAUDE_MODEL=claude-haiku-5-5`, `OPENAI_MODEL=gpt-6-luna`. ეტაპები (მფლობელის A–E): **14** — provider + სამფენიანი prompt + `llm_usage`; **15** — ბრმა შედარების სკრიპტი (იწერება, არ ეშვება); **16** — LangGraph გრაფი (preprocess → agent+tools → postprocess); **17** — PDF-ცოდნის შეკუმშვა + ძებნა; **18** — ფოტოს ტექსტური აღწერა. LangGraph Stage 14-ში **არ** შემოდის.
+- Reason: მფლობელის მოთხოვნა (ტოკენების მინიმიზაცია, LangGraph). ბოტს რეალური კლიენტები ჯერ არ ჰყავს → თანდათანობითი მიგრაცია / feature flag / Gemini-ს მესამე provider-ად დატოვება არ სჭირდება. `gemini-2.5-flash`-ის გათიშვის თარიღი (2026-10-16) უკვე გავიდა.
+- Alternatives considered: Gemini მესამე provider-ად; LangChain-ის chat model wrapper-ები; Claude Agent SDK.
+- Why rejected: მკვდარი კოდი და ტესტები; wrapper-ები `cache_control`-ის ბლოკების და ბაიტ-იდენტური prefix-ის ზუსტ კონტროლს ართულებს; Agent SDK agent loop-ია (ფაილები/shell), ჩატ-ბოტისთვის ზედმეტი.
+- როგორ შეიცვლება: ახალი provider = ერთი ფუნქცია `services/llm.py`-ში + `Literal`-ის გაფართოება. Stage 15-ის შედეგით default provider შეიძლება შეიცვალოს (მხოლოდ env).
+
+### 2026-10-28 — Prompt სამ ფენად, cache-ის წერტილებით (Stage 14)
+- Context: `build_system_prompt` ერთ ქართულ system prompt-ში აერთიანებდა წესებს, მაღაზიას და მარაგს, ხოლო >30 პროდუქტზე მარაგი ყოველ შეტყობინებაზე სხვანაირად იფილტრებოდა (`select_relevant_products`, `RETRIEVE_LIMIT=30`) → prefix ყოველთვის იცვლებოდა და cache შეუძლებელი იყო. webhook-ის `products` query `.order()`-ის გარეშეა → რიგი არადეტერმინისტულია.
+- Decision:
+  - **ფენა 1** (`prompt.LAYER1`, კონსტანტა, ინგლისურად, ყველა მაღაზიისთვის ერთი): ბოტის წესები (ახლანდელი 1–11-ის შინაარსი), ქართული ფრაზების მაგალითები და few-shot — ციტირებული ქართული ტექსტით (მაღაზიისგან დამოუკიდებელია). **არ** შეიცავს: მაღაზიის სახელს, ვალუტის მნიშვნელობას, შესაკვეთ ბმულს, ენის წესს, თარიღს — წესები მიუთითებს „ქვემოთ მოცემულ shop block-ზე". ≥512 ტოკენი (Claude-ის მინიმუმი; უფრო მოკლე ჩუმად არ იქეშება) — offline შემოწმება სიმბოლოებით (≥2600). Claude: `cache_control {"type":"ephemeral","ttl":"1h"}`.
+  - **ფენა 2** (`prompt.build_layer2(shop, products)`, დეტერმინისტული): სახელი, აღწერა, ვალუტა, ენის წესი (`bot_language`), შესაკვეთი ბმული, ცოდნა (PDF-ის ტექსტი, 20000 სიმბოლომდე — Stage 17-მდე), და **სრული მარაგი** `id`-ით დალაგებული, როცა პროდუქტი ≤ `RETRIEVE_LIMIT`; მეტზე — მხოლოდ შენიშვნა („relevant products are listed inside each customer message"). არ არის დამოკიდებული შეტყობინებაზე/ისტორიაზე/დროზე. Claude: `ttl 5m`. იცვლება მხოლოდ მაღაზიის მონაცემის/მარაგის ცვლილებისას (cache miss მისაღებია).
+  - **ფენა 3** (messages): ნორმალიზებული ისტორია + ბოლო user turn: (>30 პროდუქტზე) ამ შეტყობინების რელევანტური პროდუქტები → კლიენტის ფოტოები → საცნობარო ფოტოები → კლიენტის ტექსტი. Claude: top-level `cache_control={"type":"ephemeral"}` (automatic caching ბოლო ბლოკზე, 5m; 1h → 5m → automatic რიგი დასაშვებია; 3 breakpoint 4-დან).
+  - Claude request: `system=[{L1, 1h}, {L2, 5m}]`, `messages=[ისტორია…, ბოლო user]`. **OpenAI:** იგივე რიგი — L1 და L2 ერთ წამყვან `developer` შეტყობინებაში (ორი `input_text` ნაწილი), მერე ისტორია, მერე ბოლო turn; `prompt_cache_key="shop:<shop_id>"`. OpenAI cache-ავს მხოლოდ ≥1024-ტოკენიან prefix-ს — L1+L2 ჩვეულებრივ აღემატება; პატარა მაღაზიაზე შეიძლება არ დაიქეშოს (მისაღებია).
+  - ისტორიის ნორმალიზაცია: `user/bot` → `user/assistant`; ცარიელი ტექსტი იშლება; ერთი როლის თანმიმდევრული turn-ები ერთდება `\n\n`-ით; წამყვანი assistant turn-ები იშლება; ბოლო ყოველთვის user. DB-ში ისტორიის ფორმატი **არ იცვლება** (კლიენტის ნედლი ტექსტი, პროდუქტების ჩანართის გარეშე) → წინა turn-ები ბაიტ-იდენტურია და tail cache მუშაობს.
+  - L2/L3-ის დამხმარე წარწერები (მარაგის ხაზის ფორმატი: „in stock: N" / „out of stock" / „price on request", სათაურები) ინგლისურად; მაღაზიის მონაცემი — როგორც არის. ენის წესები (`auto/ka/en/ru`) ინგლისურად, ცხადი ინსტრუქციით („reply in natural conversational Georgian…").
+- Reason: Claude-ის cache = ზუსტი prefix (რიგი tools → system → messages; ნებისმიერი ბაიტის ცვლილება ყველაფერს მის შემდეგ აუქმებს; cache workspace-ზეა). ფენა 1 ყველა მაღაზიისთვის საერთოა (ერთი 1h ჩანაწერი), ფენა 2 — მაღაზიის, ფენა 3 — საუბრის. მფლობელის მოთხოვნა: საერთო წესები ინგლისურად.
+- Trade-off: დაბალ ტრაფიკზე 5m-იანი write (1.25×) შეიძლება წაკითხვის დანაზოგს აღემატებოდეს (შეტყობინებებს შორის >5 წთ) — Stage 15-ში `llm_usage`-ის რეალური მონაცემით გადაიხედება. ინგლისური წესები ქართული პასუხის ხარისხზე — Stage 15-ის შედარება.
+- Trade-off (ორკესტრატორი): ისტორია მოცურავე ფანჯარაა (`bot_memory_messages=20`, `webhook.py` `[-N:]`) → როცა საუბარი ფანჯარას ავსებს, ყოველ turn-ზე უძველესი შეტყობინება ამოვარდება, ფენა 3-ის prefix იცვლება და automatic cache მხოლოდ write-ს (1.25×) იხდის, read-ის გარეშე. მოკლე საუბრებზე (≤10 გაცვლა — Messenger-ის ტიპური შემთხვევა) cache მუშაობს; Stage 14-ში ეს მისაღებია და `llm_usage`-ით გაიზომება. Stage 16-ში („ბოლო 8 + შეჯამება") ფანჯარა **ბლოკებად** უნდა იჭრებოდეს (მაგ. 16-ზე → ბოლო 8 + განახლებული summary), რომ prefix ჭრებს შორის სტაბილური დარჩეს.
+- Alternatives considered: ერთი system prompt cache-ის გარეშე (ახლანდელი); სრული მარაგი ყოველთვის L2-ში (დიდ მარაგზე prompt იბერება); retrieval L2-ში (cache ყოველ შეტყობინებაზე ირღვევა).
+- როგორ შეიცვლება: Stage 16-ში tools ემატება — tool definitions prefix-ის ნაწილია (tools → system), ამიტომ ისინი სტატიკური და მაღაზიისგან დამოუკიდებელი უნდა იყოს (deploy-ზე ერთჯერადი cache miss).
+
+### 2026-10-28 — prompt-ის ზომის ჭერი `MAX_PROMPT_CHARS = 50_000` (არქიტექტორის დამატება, Stage 14)
+- Context: Claude Haiku 5.5-ის ფასი ხუთჯერ იზრდება, თუ request >100K ტოკენია (მთლიანი request). ახლანდელი clip-ებით ყველაზე უარესი შემთხვევა: L1 ~4K + აღწერა 1K + ცოდნა 20K + 30 პროდუქტი × ~0.96K ≈ 54K სიმბოლო + ისტორია (20 შეტყობინება × ≤~2K) ≈ 40K → ~95K სიმბოლო; ქართულზე ტოკენი/სიმბოლო თანაფარდობა დაუდასტურებელია (პესიმისტურად ~1) + 15-მდე სურათი (~1.6K ტოკენი თითო, ≈24K).
+- Decision: `prompt.build_prompt` ჯამურ ტექსტს (L1+L2+ისტორია+ბოლო turn) ზღუდავს 50 000 სიმბოლოთი — ზედმეტისას ისტორიას ძველიდან აჭრის (L1/L2/ბოლო turn ხელუხლებელია, ისტორია user-ით იწყება). პესიმისტური ჯამი ≈ 50K + 24K ≈ 74K < 100K. ტესტი worst-case მონაცემით.
+- როგორ შეიცვლება: Stage 15-ის რეალური `input_tokens`-ით ზღვარი დაზუსტდება; Stage 16 (8 შეტყობინება + summary), 17 (FAQ) და 18 (2–3 საცნობარო ფოტო) ზომას ამცირებს.
+
+### 2026-10-28 — მოდულები: `services/prompt.py` + `services/llm.py`; ორი provider = ორი ფუნქცია
+- Decision: `prompt.py` — ფენები, ისტორიის ნორმალიზაცია, retrieval (`select_relevant_products`, `RETRIEVE_LIMIT`, `order_link_for` გადმოდის `bot.py`-დან), provider-ნეიტრალური `Prompt` dataclass (`layer1`, `layer2`, `history`, `final` ნაწილები: text / image bytes+mime); სუფთა, offline. `llm.py` — `build_claude_request` / `build_openai_request` (სუფთა), client factory-ები `_anthropic_client` / `_openai_client`, `generate(prompt, shop_id) -> LLMResult(text, provider, model, usage)`, usage-ის ნორმალიზაცია, `record_usage`. `bot.py` — `get_bot_reply` (**აბრუნებს `str`-ს, როგორც ახლა**), `parse_reply`/`HANDOFF_TOKEN`, საცნობარო ფოტოების ჩამოტვირთვა. abstract base class / registry / factory კლასი არ არის.
+- Reason: სტანდარტი §27 (BaseProvider/Factory — მხოლოდ რეალური საჭიროებისას); `get_bot_reply`-ის სიგნატურის შენარჩუნება webhook-ს და `/test-chat`-ს და მათ ტესტებს ნაკლებად ცვლის.
+- Deviation from brief: usage-ს წერს `get_bot_reply` (`llm.record_usage`, service client), არა webhook — ის მაინც webhook-ის background task-ში ეშვება. შედეგი: `/test-chat` (dev) usage-საც წერს — მისაღებია.
+
+### 2026-10-28 — request-ის პარამეტრები: thinking გამორთული, sampling-ის გარეშე, 800 output; OpenAI — Responses API, `store=False`
+- Claude: `thinking={"type":"disabled"}` (დაშვებულია effort ≤ high-ზე; default `medium`, effort-ს არ ვაგზავნით), `max_tokens=800`; `temperature`/`top_p`/`top_k` **არასდროს** (non-default → 400); prefill არა (messages user-ით იწყება და მთავრდება); პასუხის ტექსტი — მხოლოდ `type == "text"` ბლოკები; `stop_reason == "refusal"` → ცარიელი ტექსტი → არსებული FA-12 fallback + handoff (Haiku-ზე server-side fallback არ არის).
+- OpenAI: `client.responses.create(model, input=[…], max_output_tokens=800, prompt_cache_key=…, store=False)`; sampling/reasoning პარამეტრები არ იგზავნება (gpt-6-luna-ს მხარდაჭერა დაუდასტურებელია — Open Questions). `store=False` — საუბარი OpenAI-ზე response ობიექტად არ ინახება (privacy). ტექსტი — `response.output_text`.
+- Risk: OpenAI-ზე reasoning-ტოკენები output-ის ლიმიტში ითვლება → ცარიელი/მოჭრილი პასუხი შესაძლებელია (როგორც Gemini 3.5-ზე) → FA-12 fallback. პირველი რეალური გამოძახება — Stage 15-ის სკრიპტით.
+- Alternatives considered: Chat Completions API. Why rejected: Responses — OpenAI-ის მიმდინარე API; თუ gpt-6-luna მას არ უჭერს მხარს, Stage 15-ში ერთი ფუნქცია იცვლება.
+- როგორ შეიცვლება: thinking/effort და output-ის ჭერი — Stage 15-ის შედეგით.
+
+### 2026-10-28 — timeout/retry: SDK-ის `timeout` + `max_retries=1`; custom retry loop იშლება
+- Decision: ორივე client — `timeout=LLM_TIMEOUT_SECONDS` (default 20, `gt=0, le=20`), `max_retries=1`, `api_key=` ცხადად Settings-იდან (SDK სხვა credential წყაროს რომ არ მოძებნოს). worst case ≈ 20 (1-ლი მცდელობა) + backoff (SDK-ის პირველი retry ~0.5–1 წმ) + 20 (2-ე) ≈ **41 წმ**. SDK retry-ს აკეთებს 408/409/429/5xx/კავშირის შეცდომაზე; ბოლო შეცდომა ვრცელდება → webhook-ის „ბოდიში…" fallback (უცვლელი).
+- `tests/test_gemini_timeout.py` იშლება Gemini-ს კოდთან ერთად — ეს არ არის „ტესტის წაშლა გასავლელად": იგივე გარანტიებს ფარავს ახალი ტესტები (client-ს გადაეცემა timeout/max_retries/api_key; `le=20` ვალიდაცია ჯამს ზღუდავს; შეცდომა → webhook fallback).
+- Caveat: SDK შესაძლოა `retry-after` header-ს ითვალისწინებდეს (429-ზე დაყოვნება 41 წმ-ს გადააჭარბებს) — S14-4 ამოწმებს დაინსტალირებული SDK-ის კოდში, Open Questions. httpx-ის timeout ფაზაზეა (Backlog-ის ძველი nit რჩება).
+
+### 2026-10-28 — Settings/startup: key-ის გარეშე აპი ირთვება, ბოტი გამორთულია
+- Decision: `llm_provider: Literal["claude","openai"] = "claude"` (before-validator: `strip().lower()`, ცარიელი → `claude`); **არავალიდური მნიშვნელობა → `ValidationError` startup-ზე ყველა გარემოში** (კონფიგურაციის შეცდომაა; Render წინა ვერსიას დატოვებს). `anthropic_api_key` / `openai_api_key` (`repr=False`), `claude_model`, `openai_model`, `llm_timeout_seconds`. properties: `llm_ready` (არჩეული provider-ის key არაცარიელია), `llm_model`, `llm_key_env_name`.
+- `GEMINI_API_KEY` ამოდის `missing_required_secrets()`-იდან; provider-ის key **არ** ემატება. startup: `warn_if_llm_disabled(settings)` (`main.py`) — WARNING მხოლოდ ცვლადის სახელით, ყველა გარემოში. დანარჩენი secrets-ის fail-closed უცვლელია.
+- `Settings.model_config` უკვე `extra="ignore"`-ია → Render-ზე დარჩენილი `GEMINI_*` startup-ს არ აგდებს (ტესტით).
+- Alternatives considered: provider-ის key fail-closed სიაში. Why rejected: მფლობელის მოთხოვნა — key-ის გარეშე პანელი უნდა მუშაობდეს.
+
+### 2026-10-28 — ბოტი key-ის გარეშე: over-limit-ის გზა (ოპერატორის პასუხი + `needs_attention`)
+- Decision: webhook-ში, over-limit-ის შემოწმების **შემდეგ** (წუთობრივი ლიმიტი, `track_bot_customer`, `DAILY_ABUSE_CAP`, თვიური ლიმიტი — უცვლელი; კლიენტი ითვლება): `not settings.llm_ready` → იგივე განშტოება, რაც over-limit: არსებული ტექსტი „მადლობა შეტყობინებისთვის! 🙏 ჩვენი ოპერატორი მალე დაგიკავშირდებათ." (კონსტანტად გამოიტანება, ქცევა უცვლელი), `_save_turn(..., needs_attention=True)`; LLM და ფოტოების ჩამოტვირთვა არ ხდება; WARNING (shop id + ცვლადის სახელი, PSID-ის გარეშე). `/test-chat` → 503.
+- spam: over-limit-ის მსგავსად ყოველ შეტყობინებაზე იგზავნება — ზღუდავს 6/წთ/PSID და `DAILY_ABUSE_CAP`; dedupe არ ემატება (გზა მხოლოდ კონფიგურაციის შეცდომისას მოქმედებს).
+- Alternatives considered: პასუხის გარეშე (კლიენტი ჩუმად იკარგება — FA-12-ის საწინააღმდეგო); dedupe ბოლო bot შეტყობინებით (მეტი კოდი იშვიათი შემთხვევისთვის).
+
+### 2026-10-28 — usage ცხრილი `public.llm_usage` (migration 0025)
+- Schema: `id uuid pk default gen_random_uuid()` (როგორც სხვა ცხრილებში), `shop_id uuid not null references public.shops(id) on delete cascade`, `provider text not null check (provider in ('claude','openai'))`, `model text not null`, `input_tokens` / `output_tokens` / `cache_read_tokens` / `cache_write_tokens integer not null default 0 check (>= 0)`, `created_at timestamptz not null default now()`; index `(shop_id, created_at)`. RLS ჩართული, **პოლისების გარეშე**; `revoke all … from public, anon, authenticated`; `grant select, insert … to service_role`. idempotent (`if not exists`).
+- სემანტიკა: `input_tokens` = **cache-ის გარეშე** შესული (Claude: `usage.input_tokens`; OpenAI: `input_tokens − cached_tokens`); `cache_read_tokens` (Claude: `cache_read_input_tokens`; OpenAI: `input_tokens_details.cached_tokens`); `cache_write_tokens` (Claude: `cache_creation_input_tokens` = 5m+1h ჯამი; OpenAI: 0); `output_tokens` (OpenAI-ზე reasoning-ის ჩათვლით); `None` → 0. ფასის შეფასებაში cache write 1.25×-ით ითვლება (1h write მხოლოდ L1-ზეა, საათში ≤1-ჯერ — უმნიშვნელო).
+- ჩაწერა: `llm.record_usage` service client-ით ყოველი წარმატებული გამოძახების შემდეგ (refusal/ცარიელი პასუხიც, თუ API-მ usage დააბრუნა); შეცდომა → `logger.warning`, პასუხი არ ფუჭდება; LLM არ გამოძახებულა → რიგი არ იწერება. PII არ ინახება.
+- Run order: **0025 backend deploy-მდე** (ახალი backend მასში წერს; ჩავარდნა მაინც არაფატალურია). მფლობელი უშვებს ხელით.
+- როგორ შეიცვლება: პანელში ჩვენება / per-tenant ხარჯის ჭერი / retention — Backlog (Stage 15-ის მონაცემის შემდეგ).
+
+### 2026-10-28 — dependencies ორ ნაბიჯად; lock — local venv-ის `pip freeze`-ით
+- Decision: S14-1 ამატებს `anthropic`, `openai` (`google-genai` რჩება → ტესტები მწვანეა), S14-7 შლის `google-genai`-ს და მხოლოდ მის transitive-ებს (Gemini-ს კოდის წაშლის შემდეგ). lock-ის ძველი წყარო (Render-ის build log) ახლა არ არის → `backend/.venv`-ში ინსტალაცია + `pip freeze` diff, ხელით შერწყმა (არსებული pin-ები არ იცვლება, თუ resolver არ მოითხოვს — report-ში), header-ში ჩანაწერი. სისრულე მოწმდება სუფთა venv-ით (`--no-deps` + `pip check`); Linux/3.14.3 resolution — Render-ის deploy-ზე. `anthropic` 1.x `httpx2`-ზეა (ახალი dependency).
+- Reason: ერთ task-ში წაშლა+დამატება შუალედურ მდგომარეობაში ტესტებს/კოდს გატეხავდა (Gemini-ს კოდი ჯერ `google-genai`-ს ეყრდნობა). brief-ისგან გადახვევა: shared ფაილი ორ task-შია, თანმიმდევრულად.
+
+### 2026-10-28 — ტესტები: dummy key + რეალური client-ების guard (Stage 14)
+- Decision: `tests/conftest.py` — `ANTHROPIC_API_KEY="test-anthropic-key-not-real"`, `OPENAI_API_KEY=""`, `LLM_PROVIDER="claude"` (ტესტების default = კონფიგურირებული ბოტი → webhook-ის არსებული ტესტები უცვლელად მუშაობს); `CLAUDE_MODEL`/`OPENAI_MODEL`/`LLM_TIMEOUT_SECONDS` env-იდან **იშლება** (`os.environ.pop`), არა ცარიელდება (ცარიელი სტრიქონი default-ს გადაფარავდა / float-ად ვერ გარდაიქმნება). autouse fixture `llm._anthropic_client`/`_openai_client`-ს ანაცვლებს `RuntimeError`-ით — fake-ის გარეშე ტესტი ქსელს ვერ მიაღწევს. key-ის გარეშე ქცევა — ცხადი `Settings(...)`/`model_copy`-ით.
+- Golden: ფენა 1-ის ტექსტი — `tests/fixtures/prompt_layer1.txt` (შედარება `\r\n`→`\n` ნორმალიზაციით — Windows checkout); 5 ქართული სცენარი (მისალმება, ფასი/მარაგი, ამოწურული, ოპერატორი → `[[HANDOFF]]`, ფოტო) ორივე provider-ზე canned პასუხებით; მფლობელის ტესტი (L1 და L2 ბაიტ-იდენტურია ორ სხვადასხვა შეტყობინებაზე) — `prompt`-ის დონეზეც და მთელ `get_bot_reply`-ზეც (request-ის `system`).
+- ტესტების მოსალოდნელი რაოდენობა Stage 14-ის შემდეგ: ≈ 274 − 8 + ~60 ≈ 320–330.
+
+### 2026-10-28 — დოკუმენტაცია, privacy, ფაზა 1ბ
+- Decision: README / CLAUDE.md / `.env.example` / DEPLOYMENT.md განახლდება Stage 14-ში; `frontend/privacy.html` (§4 subprocessor-ები, §9 გადაცემა) და `frontend/terms.html` (subprocessor-ების სია) — Google → Anthropic, OpenAI; `npm run build`, `dist/` იმავე commit-ში. ისტორიული დოკუმენტები (MONETIZATION, ROADMAP, AUDIT, CODE_REVIEW_*, REACT_MIGRATION) არ გადაიწერება — Backlog. `backend/scripts/compare_gemini_models.py` და `compare_gemini_output.md` იშლება (Stage 15 ახალ სკრიპტს წერს).
+- ვარაუდი (/auto): ფაზა 1ბ (DESIGN.md + Playwright) ამ stage-ში გამოტოვებულია — UI/ვიზუალი არ იცვლება, მხოლოდ ტექსტი ორ legal გვერდზე; შემოწმება — `dist` diff მხოლოდ ამ ორ ფაილში. შეიცვლება: თუ მფლობელს Playwright smoke სურს — ცალკე task.
+- ვარაუდი: privacy-ში OpenAI ჩამოთვლილია „ალტერნატიულ მომწოდებლად" (კოდში ჩართვადია env-ით); იურიდიული ფორმულირება — მფლობელის შესამოწმებელი (Open Questions).
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 > 2026-10-09 — გარე აუდიტის (27 პუნქტი) პუნქტები, რომლებიც ახლანდელ კოდში არ დადასტურდა ან ამ მასშტაბისთვის ზედმეტია (მფლობელის მითითებით).
@@ -277,4 +376,11 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 
 ## Open Questions
 - README §6/§12 მოძველებულია (React 18 → 19). ADMIN_EMAIL, „ტესტები არ არის“ და მიგრაციების სია გასწორდა S12-5-ში — დარჩენილი განახლდეს?
-- Gemini 2.5 Flash retires 2026-10-16 — გადაწყვეტილება გადადებულია (Backlog T12, Decision Log 2026-10); საგანგებო გეგმა Deploy plan-შია.
+- ~~Gemini 2.5 Flash retires 2026-10-16~~ → გადაწყვეტილება: Stage 14 (Decision Log 2026-10-28). **ღიაა:** production (`main`) ჯერ Gemini-ზეა და თარიღი გავიდა — ახლა ლაივზე რომელი მოდელი მუშაობს (`GEMINI_MODEL`) და პასუხობს თუ არა ბოტი? (მფლობელი; Stage 14-ის merge key-ებამდე არ იგეგმება.)
+- **gpt-6-luna** (Stage 14/15): ოფიციალური ფასი (მესამე მხარის წყაროები: $0.10 in / $0.50 out, cached ≈ $0.01 per MTok, ~1.05M context, 128K output) OpenAI-ის pricing გვერდზე **დაუდასტურებელია**; ასევე: Responses API-ის მხარდაჭერა, `prompt_cache_key`, reasoning-ის პარამეტრები და reasoning-ტოკენები `max_output_tokens`-ში. პირველი რეალური გამოძახება — Stage 15-ის სკრიპტით.
+- ქართულზე ტოკენი/სიმბოლო თანაფარდობა (Claude/OpenAI) უცნობია → `MAX_PROMPT_CHARS=50_000` პესიმისტურია; L1 ≥512 ტოკენი რეალურად დადასტურდება მხოლოდ პირველ გამოძახებაზე (`cache_creation_input_tokens > 0`, შემდეგ `cache_read_input_tokens > 0`).
+- Claude-ის ერთი სურათის ზომის ლიმიტი — ვარაუდი 5 MB (`llm.MAX_IMAGE_BYTES`; კლიენტის ფოტო `download_image`-ით 8 MB-მდეა) — დოკუმენტაციით დასაზუსტებელი.
+- `anthropic` / `openai` SDK `retry-after` header-ს ითვალისწინებს თუ არა `max_retries=1`-ზე (worst case > 41 წმ) — S14-4 ამოწმებს SDK-ის კოდში.
+- `anthropic` (`httpx2`) და `openai`-ს compiled დამოკიდებულებებს (მაგ. `jiter`) Python 3.14 manylinux wheel აქვს? — S14-1 ამოწმებს, საბოლოოდ Render-ის deploy.
+- Anthropic-ის workspace: cache workspace-ზეა — production-ისთვის ცალკე workspace + spend limit? data retention (privacy.html-ის ფორმულირება Anthropic/OpenAI-ზე) — მფლობელი.
+- 5m cache write-ის ეკონომიკა დაბალ ტრაფიკზე (1.25× write vs 0.1× read) — Stage 15-ში `llm_usage`-ით.
