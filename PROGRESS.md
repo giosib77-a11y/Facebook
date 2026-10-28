@@ -373,10 +373,11 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 
 ## Last Session
 - Date: 2026-10-28
-- Done: Stage 14-ის დაგეგმვა (არქიტექტორი): PROJECT.md (Current Stage, Decision Log 2026-10-28, API Contract, Open Questions), PROGRESS.md (S14-1…S14-9, Stage 14 — Deploy plan, Upcoming stages 15–18; Stage 13 → `## Stage 13 — Done`). კოდი არ შეცვლილა.
-- Verification: — (მხოლოდ დოკუმენტები)
-- Known issues / blockers: იხ. `## Blockers` (key-ები, gpt-6-luna-ს ფასი, 0025).
-- Next: S14-1, S14-2, S14-3, S14-9 (დამოუკიდებელი) → S14-4 → S14-5 → S14-6 → S14-7 → S14-8.
+- Done: **Stage 14 დასრულდა (offline)** — S14-1…S14-13 (plan `65ee945`; commit-ები `b31dc63`, `f662e4d`, `336a5d6`, `0b657a0`, `25ec755`, `d91a5d2`, `f8a1b06`, `532db41`, `21fcf70`; finish-check `5da578a`; fix round 1: `5b868d1`, `26dcfcb`, `acebe04`, `95232f6`; re-check `faf268d`). Gemini სრულად ამოღებულია; Claude (default) / OpenAI; სამფენიანი prompt; `llm_usage` (0025); key-ის გარეშე ბოტი გამორთულია.
+- Verification (საბოლოო, tester): pip check ✅; ruff ✅; compileall ✅; pytest **438 passed**; frontend lint 0 error / 5 warning (ძველი, Backlog); `npm test` 29/29; build → `dist` სუფთა; `git status` სუფთა. finish-check: code-reviewer 3 should-fix + security 1 (აწეული) → გასწორდა და მიზნობრივად გადამოწმდა (0 ღია critical/should-fix).
+- Unverified: რეალური Anthropic/OpenAI გამოძახება (cache hit, ქართული ხარისხი, L1 ≥512 ტოკენი, gpt-6-luna-ს პარამეტრები, OpenAI `input_tokens`-ის სემანტიკა) — key-ების შემდეგ (Deploy plan ნაბიჯი 6 / Stage 15); 0025 რეალურ Postgres-ზე; Linux-ზე lock-ის რეზოლუცია (Render deploy); privacy/terms ბრაუზერში (მხოლოდ ტექსტი).
+- Known issues / blockers: იხ. `## Blockers` (key-ები, gpt-6-luna-ს ფასი, 0025 ხელით); nit-ები — Backlog „Stage 14".
+- Next: მფლობელი — `ANTHROPIC_API_KEY` → Deploy plan (0025 → env → merge/deploy → შემოწმება → `GEMINI_*` წაშლა). შემდეგი stage — 15 (ბრმა შედარება), `/auto` ახალი დავალებით.
 
 ### წინა სესია
 - Date: 2026-10-27
