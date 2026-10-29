@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import get_settings
-from app.services import bot, graph, llm, prompt
+from app.services import bot, graph, llm, prompt, vision
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_PATH = SCRIPT_DIR / "compare_questions.json"
@@ -94,6 +94,13 @@ def load_image(name: str) -> tuple[bytes, str]:
     raise ValueError(f"image is neither PNG nor JPEG: {name}")
 
 
+def _check_description(item: dict, key: str, where: str) -> None:
+    """Optional photo description: a string of at most vision.DESCRIPTION_MAX_CHARS."""
+    value = item.get(key) if isinstance(item, dict) else None
+    if value is not None and (not isinstance(value, str) or len(value) > vision.DESCRIPTION_MAX_CHARS):
+        raise ValueError(f"{where}: {key} must be a string of at most {vision.DESCRIPTION_MAX_CHARS} chars")
+
+
 def load_data(path: Path = DATA_PATH) -> tuple[dict, list[dict], list[dict]]:
     """compare_questions.json -> (shop, products, questions); minimal validation."""
     try:
@@ -113,6 +120,7 @@ def load_data(path: Path = DATA_PATH) -> tuple[dict, list[dict], list[dict]]:
     for p in products:
         if not isinstance(p, dict) or not p.get("id") or not p.get("name"):
             raise ValueError("every product needs an id and a name")
+        _check_description(p, "image_description", f"product {p['id']}")
         if p.get("image"):
             try:
                 load_image(p["image"])
@@ -128,6 +136,7 @@ def load_data(path: Path = DATA_PATH) -> tuple[dict, list[dict], list[dict]]:
             raise ValueError(f"{qid}: category and message are required")
         if not isinstance(q.get("expect"), dict):
             raise ValueError(f"{qid}: expect is required")
+        _check_description(q, "photo_description", qid)
         if q.get("image"):
             try:
                 load_image(q["image"])
@@ -163,8 +172,12 @@ def question_args(q: dict) -> tuple[str, list | None, list | None]:
 def build_question_prompt(shop: dict, products: list[dict], q: dict) -> prompt.Prompt:
     """The prompt the production graph builds for this question (--dry-run and the parity test)."""
     message, history, images = question_args(q)
+    # Production describes the customer photo (inside run_turn) only for a big described catalogue;
+    # here the hand-written description stands in for it, under the same condition.
+    description = q.get("photo_description") if images and graph.wants_photo_description(products) else None
     return graph.build_turn_prompt(
-        shop, products, message, history, images, refs_loader=local_refs_loader)
+        shop, products, message, history, images, refs_loader=local_refs_loader,
+        photo_description=description)
 
 
 def assign_labels(question_ids: list[str], seed: int) -> dict[str, dict[str, str]]:

@@ -17,7 +17,8 @@
       "quantity": 12,
       "sku": "TS-RED-01",
       "description": "ბამბის კლასიკური მაისური, ფერი წითელი, ზომები S, M, L, XL.",
-      "image": "prod_tshirt.png"
+      "image": "prod_tshirt.png",
+      "image_description": "EN: A plain red short-sleeved t-shirt without any print, shown flat from the front.\nKA: მაისური, წითელი"
     },
     {
       "id": "d02",
@@ -25,7 +26,9 @@
       "price": 35,
       "quantity": 6,
       "sku": "TS-RED-02",
-      "description": "ფართო ჭრის ბამბის მაისური, ფერი წითელი, ზომები M, L, XL."
+      "description": "ფართო ჭრის ბამბის მაისური, ფერი წითელი, ზომები M, L, XL.",
+      "image": "prod_tshirt.png",
+      "image_description": "EN: A plain red short-sleeved t-shirt without any print, shown flat from the front.\nKA: მაისური, წითელი"
     },
     {
       "id": "d03",
@@ -50,7 +53,8 @@
       "quantity": 8,
       "sku": "JN-CLS-05",
       "description": "პირდაპირი ჭრის ლურჯი ჯინსი, ზომები 30, 32, 34, 36.",
-      "image": "prod_jeans.png"
+      "image": "prod_jeans.png",
+      "image_description": "EN: A pair of blue jeans with straight legs, plain denim blue, shown flat from the front.\nKA: ჯინსი, ლურჯი, შარვალი"
     },
     {
       "id": "d06",
@@ -58,7 +62,9 @@
       "price": 85,
       "quantity": 5,
       "sku": "JN-SLM-06",
-      "description": "მოხდენილი ჭრის მუქი ლურჯი ჯინსი, ზომები 30, 32, 34."
+      "description": "მოხდენილი ჭრის მუქი ლურჯი ჯინსი, ზომები 30, 32, 34.",
+      "image": "prod_jeans.png",
+      "image_description": "EN: A pair of blue jeans with straight legs, plain denim blue, shown flat from the front.\nKA: ჯინსი, ლურჯი, შარვალი"
     },
     {
       "id": "d07",
@@ -83,7 +89,8 @@
       "quantity": 0,
       "sku": "JK-BLK-09",
       "description": "გარდამავალი სეზონის შავი ქურთუკი ელვით, ზომები M, L, XL.",
-      "image": "prod_jacket.png"
+      "image": "prod_jacket.png",
+      "image_description": "EN: A plain black jacket with an opening down the middle, shown flat from the front.\nKA: ქურთუკი, შავი"
     },
     {
       "id": "d10",
@@ -91,7 +98,9 @@
       "price": 249,
       "quantity": 3,
       "sku": "JK-PUF-10",
-      "description": "თბილი ზამთრის პუფერი ქუდით, ფერი მწვანე, ზომები L, XL."
+      "description": "თბილი ზამთრის პუფერი ქუდით, ფერი მწვანე, ზომები L, XL.",
+      "image": "prod_jacket.png",
+      "image_description": "EN: A plain black jacket with an opening down the middle, shown flat from the front.\nKA: ქურთუკი, შავი"
     },
     {
       "id": "d11",
@@ -116,7 +125,8 @@
       "quantity": 9,
       "sku": "SH-SPT-13",
       "description": "მსუბუქი სარბენი ბოტასი, ფერი თეთრი, ზომები 40, 41, 42, 43, 44, 45.",
-      "image": "prod_sneakers.png"
+      "image": "prod_sneakers.png",
+      "image_description": "EN: A sports shoe with a white and light grey upper and a thick dark grey sole, side view.\nKA: ბოტასი, თეთრი, ნაცრისფერი"
     },
     {
       "id": "d14",
@@ -124,7 +134,9 @@
       "price": 210,
       "quantity": 4,
       "sku": "SH-LTH-14",
-      "description": "ნატურალური ტყავის კლასიკური ფეხსაცმელი, ფერი ყავისფერი, ზომები 41, 42, 43."
+      "description": "ნატურალური ტყავის კლასიკური ფეხსაცმელი, ფერი ყავისფერი, ზომები 41, 42, 43.",
+      "image": "prod_sneakers.png",
+      "image_description": "EN: A shoe with a white and light grey upper and a thick dark grey sole, side view.\nKA: ფეხსაცმელი, თეთრი, ნაცრისფერი"
     },
     {
       "id": "d15",
@@ -569,6 +581,7 @@
       "category": "photo",
       "message": "",
       "image": "cust_tshirt.png",
+      "photo_description": "EN: A plain red short-sleeved t-shirt without any print, shown flat from the front.\nKA: მაისური, წითელი",
       "expect": {
         "handoff": false,
         "note": "ფოტოზე წითელი მაისურია: მაღაზიაში ორი წითელი მაისურია (25 ლარი კლასიკური, 35 ლარი ოვერსაიზი). სწორი პასუხი ცნობს მაისურს და ასახელებს ვარიანტებს ან აზუსტებს."
@@ -579,6 +592,7 @@
       "category": "photo",
       "message": "ეს რა ღირს?",
       "image": "cust_jeans.png",
+      "photo_description": "EN: A pair of blue jeans with straight legs, plain denim blue, shown flat from the front.\nKA: ჯინსი, ლურჯი, შარვალი",
       "expect": {
         "handoff": false,
         "note": "ფოტოზე ლურჯი ჯინსია: ახლოსაა კლასიკური ჯინსი (79 ლარი) და სლიმ ჯინსი (85 ლარი). სწორი პასუხი ფასს ეფუძნება მარაგს, ფოტოზე დარწმუნებით არ ამტკიცებს, რომელია, ან აზუსტებს.",
@@ -590,6 +604,7 @@
       "category": "photo",
       "message": "ეს გაქვთ?",
       "image": "cust_cap.png",
+      "photo_description": "EN: A plain green baseball cap with a curved peak, side view.\nKA: ქუდი, ბეისბოლკა, მწვანე",
       "expect": {
         "handoff": false,
         "note": "ფოტოზე მწვანე ქუდია (ბეისბოლკა). მაღაზიაში მხოლოდ შავი ბეისბოლკა (30 ლარი) და შავი ზამთრის ქუდი (28 ლარი) არის. სწორი პასუხი არ ამბობს, რომ ზუსტად ეს გვაქვს, და შეიძლება არსებული ვარიანტები შესთავაზოს."
@@ -600,6 +615,7 @@
       "category": "photo",
       "message": "ზომები გაქვთ?",
       "image": "cust_jacket.png",
+      "photo_description": "EN: A plain black jacket with an opening down the middle, shown flat from the front.\nKA: ქურთუკი, შავი",
       "expect": {
         "handoff": false,
         "note": "ფოტოზე შავი ქურთუკია, რომელიც მაღაზიის ამოწურულ შავ ქურთუკს (189 ლარი) ჰგავს. სწორი პასუხი ამბობს, რომ ამჟამად მარაგში არ არის, ზომებით არ ამშვიდებს."

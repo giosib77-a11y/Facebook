@@ -99,8 +99,32 @@ def test_products(data):
     assert sum(1 for p in products if p["quantity"] == 0) >= 3
     assert sum(1 for p in products if p["price"] == 0) == 1
     with_image = [p for p in products if "image" in p]
-    assert len(with_image) == 4
+    assert len(with_image) == 8
     assert any(p["quantity"] == 0 for p in with_image)
+
+
+def _check_description_format(text, where):
+    assert isinstance(text, str) and len(text) <= 500, where
+    lines = text.split("\n")
+    assert len(lines) == 2, where
+    assert lines[0].startswith("EN: ") and lines[1].startswith("KA: "), where
+    assert lines[0][4:].strip() and lines[1][4:].strip(), where
+
+
+def test_photo_products_have_descriptions(data):
+    for p in data["products"]:
+        if "image" in p:
+            _check_description_format(p.get("image_description"), p["id"])
+        else:
+            assert "image_description" not in p, p["id"]
+
+
+def test_customer_photos_have_descriptions(data):
+    for q in data["questions"]:
+        if q["category"] == "photo":
+            _check_description_format(q.get("photo_description"), q["id"])
+        else:
+            assert "photo_description" not in q, q["id"]
 
 
 def test_shop(data):

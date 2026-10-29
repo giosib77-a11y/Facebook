@@ -141,7 +141,7 @@ def test_full_run(env, tmp_path):
     code, out = run(tmp_path, "--seed", "15")
     assert code == 0
     md, key = read_outputs(out)
-    assert len(env.requests) == 80
+    assert len(env.requests) == 88  # 80 answers + 8 photo-description calls (4 photo questions x 2)
     assert len(re.findall(r"^## Q\d\d · ", md, re.MULTILINE)) == 40
     for qid in all_ids():
         assert f"### {qid} — A" in md and f"### {qid} — B" in md
@@ -156,7 +156,8 @@ def test_full_run(env, tmp_path):
             assert request["model"] == "claude-haiku-5-5"
         else:
             assert request["model"] == "gpt-6-luna"
-            assert request["prompt_cache_key"] == f"shop:{SHOP_ID}"
+            if "Photo to describe" not in json.dumps(request, ensure_ascii=False):
+                assert request["prompt_cache_key"] == f"shop:{SHOP_ID}"
     assert env.service_client_calls == 0
 
 
@@ -195,9 +196,10 @@ def test_cost_estimates(env, tmp_path):
     md, key = read_outputs(out)
     assert "$0.000490" in md and "$0.000240" in md
     assert "UNVERIFIED" in md.split("## Q01")[0]
-    assert key["totals"]["claude"]["cost_usd"] == pytest.approx(40 * 0.00049)
-    assert key["totals"]["openai"]["cost_usd"] == pytest.approx(40 * 0.00024)
-    assert key["totals"]["openai"]["input_tokens"] == 40 * 1000  # normalized to uncached
+    # 40 answers + 4 photo-description calls per provider, all summed
+    assert key["totals"]["claude"]["cost_usd"] == pytest.approx(44 * 0.00049)
+    assert key["totals"]["openai"]["cost_usd"] == pytest.approx(44 * 0.00024)
+    assert key["totals"]["openai"]["input_tokens"] == 44 * 1000  # normalized to uncached
     assert key["prices_match_models"] == {"claude": True, "openai": True}
 
 
@@ -311,6 +313,23 @@ def test_usage_is_summed_over_the_tool_loop(env, tmp_path):
     assert env.service_client_calls == 0  # record_usage=False: no llm_usage rows
 
 
+# (8b2) Stage 18: the photo-description call inside run_turn is summed with the rest ---------
+def test_photo_description_usage_is_summed(env, tmp_path, monkeypatch):
+    shop, products, questions = cp.load_data()
+    photo = next(q for q in questions if q["id"] == "Q37")
+    monkeypatch.setattr(cp, "load_data", lambda path=cp.DATA_PATH: (shop, products, [photo]))
+    code, out = run(tmp_path)
+    assert code == 0
+    _, key = read_outputs(out)
+    assert len(env.requests) == 4  # per provider: the description call, then the answer
+    describe = [r for _, r in env.requests if "Photo to describe" in json.dumps(r, ensure_ascii=False)]
+    assert len(describe) == 2
+    assert key["totals"]["claude"]["output_tokens"] == 400
+    assert key["totals"]["claude"]["cost_usd"] == pytest.approx(2 * 0.00049)
+    assert key["totals"]["openai"]["input_tokens"] == 2000
+    assert env.service_client_calls == 0
+
+
 # (8c) template route: 0 LLM calls, zero cost -----------------------------------------------
 def test_template_answer_has_no_calls(env, tmp_path, monkeypatch):
     shop, products, questions = cp.load_data()
@@ -370,6 +389,17 @@ def test_prompt_parity_with_production_graph(monkeypatch):
     monkeypatch.setattr(llm, "get_service_client", lambda: pytest.fail("no DB access"))
     monkeypatch.setattr(llm, "generate", fake_generate)
 
+    # the photo-description call of run_turn: the fake answers with the question's description
+    current = {}
+    described = []
+
+    def fake_complete(system, text, shop_id, *, max_tokens, provider=None, deadline=None, images=None):
+        assert images, "the description call carries the customer photo"
+        described.append(current["id"])
+        return llm.LLMResult(current["photo_description"], provider or "claude", "m", llm.Usage())
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+
     # production side: bot's own loader, fed by the same photos (stands in for Storage downloads)
     by_name = {p["id"]: p for p in products}
 
@@ -380,19 +410,66 @@ def test_prompt_parity_with_production_graph(monkeypatch):
     n_with_refs = 0
     for q in questions:
         before = len(captured)
+        current.clear()
+        current.update(q)
         cp.ask("claude", shop, products, q)
         if len(captured) == before:
             continue  # template route: no LLM call, no prompt (checked separately)
         sent, provider, kwargs = captured[-1]
         message, history, images = cp.question_args(q)
         expected = graph.build_turn_prompt(
-            shop, products, message, history, images, refs_loader=production_loader)
+            shop, products, message, history, images, refs_loader=production_loader,
+            photo_description=q.get("photo_description") if images else None)
         assert sent == expected, q["id"]
         assert provider == "claude"
         assert sent == cp.build_question_prompt(shop, products, q)  # the --dry-run prompt
         assert kwargs["tools"] and kwargs["force_text"] is False
         n_with_refs += bool(images)
-    assert len(captured) == 40 and n_with_refs >= 1
+    assert len(captured) == 40 and n_with_refs == 4
+    assert described == ["Q37", "Q38", "Q39", "Q40"]  # once per photo question, never on text
+
+
+def ref_labels(p):
+    """Labels of the product reference photos of a prompt (the text part before each image
+    after the customer's own photo)."""
+    return [p.final[i - 1]["text"] for i, x in enumerate(p.final) if x["type"] == "image"][1:]
+
+
+def question(qid):
+    shop, products, questions = cp.load_data()
+    return shop, products, next(q for q in questions if q["id"] == qid)
+
+
+@pytest.mark.parametrize("qid,expected", [
+    ("Q37", ("• წითელი მაისური — 25", "• წითელი მაისური ოვერსაიზი — 35")),
+    ("Q38", ("• კლასიკური ჯინსი — 79", "• სლიმ ჯინსი — 85")),
+    ("Q40", ("• შავი ქურთუკი — 189", "• ზამთრის პუფერი — 249")),
+])
+def test_photo_question_ranks_the_matching_product_first(qid, expected):
+    shop, products, q = question(qid)
+    labels = ref_labels(cp.build_question_prompt(shop, products, q))
+    assert labels and labels[0].startswith(expected)
+
+
+def test_dry_run_reports_four_images_on_photo_questions(monkeypatch, tmp_path, capsys):
+    Env(monkeypatch, anthropic_api_key="", openai_api_key="")
+    assert run(tmp_path, "--dry-run")[0] == 0
+    out = capsys.readouterr().out
+    for qid in ("Q37", "Q38", "Q39", "Q40"):
+        assert re.search(rf"^{qid} photo: .* images 4$", out, re.MULTILINE), qid
+
+
+@pytest.mark.parametrize("key,item", [("image_description", "product"), ("photo_description", "question")])
+@pytest.mark.parametrize("bad", [123, "x" * 501])
+def test_load_data_rejects_bad_descriptions(tmp_path, key, item, bad):
+    data = json.loads(cp.DATA_PATH.read_text(encoding="utf-8"))
+    target = data["products"][0] if item == "product" else next(
+        q for q in data["questions"] if q.get("image"))
+    target[key] = bad
+    path = tmp_path / "q.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match=key):
+        cp.load_data(path)
 
 
 def test_prompt_shape():
@@ -408,13 +485,13 @@ def test_prompt_shape():
         assert chars <= prompt.MAX_PROMPT_CHARS
         images = [x for x in p.final if x["type"] == "image"]
         if q.get("image"):
-            assert len(images) == 1 + len(ref_products)
+            assert len(images) == 1 + min(len(ref_products), bot.MAX_REF_IMAGES)
             data, mime = cp.load_image(q["image"])
             assert images[0]["data"] == data and images[0]["mime"] == "image/png"
-            texts = [x["text"] for x in p.final if x["type"] == "text"]
-            for rp in ref_products:
-                assert any(t.startswith(f"• {rp['name']} — {rp['price']}") and f"(SKU: {rp['sku']})" in t
-                           for t in texts)
+            labels = ref_labels(p)
+            assert len(labels) == min(len(ref_products), bot.MAX_REF_IMAGES)
+            allowed = {bot.product_ref_label(rp) for rp in ref_products}
+            assert len(set(labels)) == len(labels) and set(labels) <= allowed
         else:
             assert images == []
     assert len(layer2s) == 1
