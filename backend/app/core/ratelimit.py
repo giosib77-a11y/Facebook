@@ -115,6 +115,22 @@ def _hit(bucket: str, key: str, limit: int, window: int) -> None:
     dq.append(now)
 
 
+def allow(bucket: str, key: str, limit: int, window: int) -> bool:
+    """იგივე sliding window, რაც `_hit`-ში (იგივე `_HITS`), ოღონდ HTTP 429-ის ნაცვლად bool:
+    ლიმიტზე → False (არაფერი ემატება), სხვაგვარად timestamp ემატება → True. handler-იდან
+    გამოსაძახებლად, როცა ლიმიტის გადაცილება მოთხოვნას არ უნდა აჩერებდეს (მაგ. ფოტოს აღწერა)."""
+    register_window(bucket, window)
+    now = time.monotonic()
+    _sweep(now)
+    dq = _HITS[bucket][key]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        return False
+    dq.append(now)
+    return True
+
+
 def rate_limit(bucket: str, limit: int, window: int = 60):
     """FastAPI dependency-ს აბრუნებს: `limit` მოთხოვნა `window` წამში, თითო IP-ზე.
 
