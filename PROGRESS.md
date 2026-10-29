@@ -573,6 +573,15 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - გამყიდველის მიერ FAQ-ის ხელით რედაქტირება (ჩაწერადი სვეტი + ვალიდაცია) — მოთხოვნის შემთხვევაში.
 - B-14 (ცოდნა ფაქტობრივად საჯაროა) — უცვლელი; UI-ში გაფრთხილება ისევ Backlog-შია.
 
+### Stage 18 finish-check (nit, 2026-10-29)
+> code-reviewer 0 critical / 0 should-fix / 4 nit; security-auditor 0 / 0 / 1 nit. გასწორების რაუნდი არ დასჭირდა.
+- backfill: pagination არ არის (PostgREST max-rows 1000) — >1000 პროდუქტზე `--shop`-ის გარეშე 1000-ს მიღმა მყოფი პროდუქტები არასდროს ჩანს, მუდმივად ჩავარდნილი ფოტოები `--limit`-ის ფანჯრის თავში რჩება; fix: სერვერზე ფილტრი (`image_description is null`, `image_url not null`) + `.range()` ციკლი, ან README §9: „>1000 პროდუქტზე — `--shop`-ით".
+- README §5.2: „ნაკლებზე ყველა საცნობარო ფოტო ისედაც ეტევა" უზუსტოა — `wants_photo_description` **აღწერილ** პროდუქტებს ითვლის; backfill-მდე (0–3 აღწერილი) 3 ფოტო ირჩევა შეტყობინების ტექსტით/`_sort_key`-ით; §6 `PUT /products/{id}` „(ფოტოს შეცვლისას იგივე აღწერა)" → „აღწერა ახლდება / სუფთავდება".
+- `vision._column_missing` პროცესის სიცოცხლის ბოლომდე: deploy 0028-მდე → პირველი save flag-ს რთავს → 0028-ის შემდეგ აღწერები restart-მდე გამორთულია; docs: „0028-ის deploy-ის შემდეგ გაშვებისას backend გადატვირთე".
+- `describe_product_image` key-ის გარეშე ჯერ ფოტოს ჩამოტვირთავს (≤15 წმ) და rate-limit slot-ს ხარჯავს → `llm_ready`-ის შემოწმება download-მდე.
+- `save_image_description(image_url=None)` (ფოტოს მოხსნა) URL-ფილტრის გარეშე → ორი პარალელური PUT-ის (მოხსნა + ახალი ფოტო) იშვიათ race-ზე ახალი ფოტოს აღწერა შეიძლება წაიშალოს (ძველი აღწერა ახალ ფოტოს არასდროს ებმის); fix: `.is_("image_url", "null")`.
+- ❓ ფოტოიანი product save sync handler-ში ≤~35 წმ (download ≤15 + LLM ≤20) — threadpool; 30/სთ/მაღაზია ზღუდავს; დატვირთვის მეტრიკებით გადასახედი.
+
 ### Stage 18 (დაგეგმვისას, 2026-10-29)
 - UI: პროდუქტის ფორმაში ფოტოს აღწერის ჩვენება („ბოტი ხედავს: …"), რედაქტირება და ხელახლა გენერაცია (frontend task, `npm run build` + `dist`; ამისთვის `ProductOut`-ს `image_description` ან ცალკე endpoint; რედაქტირებისას — ჩაწერადი გზა backend-ით, ვალიდაციით). ახლა აღწერა მხოლოდ ექსპორტში ჩანს.
 - აღწერა background-ში (`BackgroundTasks`), თუ ფოტოიანი save რეალურად ხშირად >~10 წმ-ია; ან per-attempt timeout-ის override `complete`-ში.
@@ -608,11 +617,18 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 
 ## Run State
 - Stage: Stage 18 — ფოტოები: პროდუქტის ფოტოს აღწერა (0028) + ≤3 საცნობარო ფოტო კლიენტის ფოტოზე
-- Finish-check this stage: not run
+- Finish-check this stage: done (code-reviewer 0/0/4 nit, security 0/0/1 nit → Backlog „Stage 18 finish-check"; გასწორება არ დასჭირდა)
 - Fix rounds this stage: 0/2
 - Failed attempts: —
 
 ## Last Session
+- Date: 2026-10-29
+- Done: **Stage 18 დასრულდა (offline) — Stage 15–18 სერია დასრულებულია.** S18-1…S18-8 (plan `86a4fdb`; `6349570`, `196b158`, `7f2b7cd`, `5f9220d`, `bb9dc7e`, `2b7a8f6`, `e618f1f`, `4d14288`). პროდუქტის ფოტოს ტექსტური აღწერა create/update-ზე (საკუთარი Storage, ≤500 EN+KA, 30/სთ/მაღაზია) → `products.image_description` (0028); კლიენტის ფოტოზე აღწერის წინასწარი გამოძახება (>3 აღწერილზე, 12 წმ, არსად ინახება) → `rank_products` → ≤3 საცნობარო ფოტო (იყო 12; 12 ფოტოიან მაღაზიაზე 13 → 4 სურათი); backfill სკრიპტი (მხოლოდ მფლობელი); შედარების სკრიპტი ფოტო-პარიტეტით.
+- Verification (ორკესტრატორი): pip check ✅, pip-audit 0; ruff/compileall `app tests scripts` ✅; pytest **1739 passed**; frontend lint 0 error / 5 warning, test 29/29, build → `dist` უცვლელი (frontend Stage 15–18-ში არ შეცვლილა). finish-check: 0 critical / 0 should-fix.
+- Unverified: რეალური Vision/LLM აღწერის ხარისხი და ლატენტობა; 0028 რეალურ Postgres-ზე; backfill რეალურ ბაზაზე; sync product save-ის ხანგრძლივობა Render-ზე.
+- Next: მფლობელი — key-ები (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) → Stage 15-ის შედარების სკრიპტი → Decision Log; შემდეგ Deploy plan (0025 → 0026 → 0027 → 0028 → env → merge/deploy → backfill). `## Blockers`.
+
+### Stage 17-ის სესია
 - Date: 2026-10-29
 - Done: **Stage 17 დასრულდა (offline)** — S17-1…S17-8 (plan `78a6745`; `80190a0`, `091b60d`, `006e430`, `688a0c5`, `40b6ad2`, `53325bd`, `989c04d`; finish-check `7c94900`; fix round 1 `b016729`). PDF ატვირთვისას FAQ (ერთი `llm.complete`, ≤3000, მოჭრილი ხაზის გარეშე) → `shops.knowledge_faq` (0027) → L2; FAQ-ის გარეშე Stage 16-ის L2 ბაიტ-იდენტურად; PDF-ის ჭერი 50K; `search_knowledge` — ხაზოვანი chunk-ები + ქართული ფუძეები; ატვირთვა 10/სთ/IP; ცხრილი არ დამატებულა.
 - Verification (ორკესტრატორი): pip check ✅, pip-audit 0; ruff/compileall ✅; pytest **1554 passed**; frontend lint 0 error / 5 warning, test 29/29, build → `dist` უცვლელი. re-check (code-reviewer): S17-8 fixed.
