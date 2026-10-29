@@ -1,5 +1,6 @@
 """Data checks for the Stage 15 provider-comparison fixture (scripts/compare_questions.json)."""
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -107,6 +108,19 @@ def test_shop(data):
     assert shop["currency"] == "GEL"
     assert shop["bot_language"] == "auto"
     assert shop["knowledge"].strip()
+
+
+def test_knowledge_faq(data):
+    shop = data["shop"]
+    faq = shop["knowledge_faq"]
+    assert faq.strip()
+    assert len(faq) <= prompt.KNOWLEDGE_FAQ_MAX_CHARS
+    lines = [ln for ln in faq.splitlines() if ln.strip()]
+    assert len(lines) >= 2 and len(lines) % 2 == 0
+    for i, ln in enumerate(lines):
+        assert ln.startswith("Q: " if i % 2 == 0 else "A: "), ln
+    for num in re.findall(r"\d+", faq):
+        assert num in shop["knowledge"], f"invented number: {num}"
 
 
 def test_no_provider_names_in_text():
