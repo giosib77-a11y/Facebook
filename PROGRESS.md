@@ -391,6 +391,8 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - `bot.py` `get_settings` import `noqa`-თი — მხოლოდ `test_golden_conversations.py:64`-ის patch-ისთვის; golden-იდან `bot`-ის ამოღება → import-ის წაშლა. `prompt._sort_key` private-ია, მაგრამ graph.py იყენებს → public სახელი. `graph.MAX_TOOL_ROUNDS` მხოლოდ ტესტში.
 - README §2/§3/§14/§15 მოძველებული (React 18, Python 3.11+, „ბოტი Gemini", „Frontend ტესტები არ არის"); §9 შედარების ხარჯი („< $0.10") tool-loop-ით შეიძლება მეტი იყოს.
 
+- Fix round 1 re-check (nit, 2026-10-29): `graph.py` `from langsmith import tracing_context` — `langsmith` პირდაპირი import-ია, `requirements.txt`-ში კი მხოლოდ `langgraph` (transitive, lock-ში pin-ით) → ერთი ხაზი `requirements.txt`-ში; `webhook._save_turn`-ის პირობითი update, რომელმაც 0 რიგი შეცვალა, ჩუმადაა → INFO „compaction skipped: newer turn" (race-ის სიხშირე / ❓ რეალურ PostgREST-ზე `eq("updated_at", iso+00:00)` რომ არ დაემთხვეს — compaction არასდროს ჩაიწერება და ყოველ agent turn-ზე ერთი summary გამოძახება დაიხარჯება → **პირველი deploy-ის შემდეგ შესამოწმებელი**: 18+ შეტყობინებიან საუბარზე `messages` 8-მდე უნდა შემცირდეს); legacy tracing env-ის pop ყოველ turn-ზე (ერთხელ საკმარისია).
+
 ### Stage 16 (დაგეგმვისას, 2026-10-28)
 - **LangGraph → plain Python** (არქიტექტორის რეკომენდაცია, Decision Log „LangGraph თუ plain Python"): თუ მფლობელი დაეთანხმება — `graph.py`-ის wiring plain ციკლით + lock-იდან ~12–16 პაკეტის ამოღება (S14-7-ის მეთოდით, სუფთა venv-ით).
 - მე-4 Claude breakpoint ბოლო `tool_result`-ის ბოლოს (turn-ის შიგნით 2–4 გამოძახება ბოლო turn-ს cache-იდან წაიკითხავს; განსაკუთრებით ფოტოიან turn-ზე) — `llm_usage`-ის ციფრებით (write 1.25× vs read 0.1×).
@@ -431,6 +433,13 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 - Failed attempts: —
 
 ## Last Session
+- Date: 2026-10-29
+- Done: **Stage 16 დასრულდა (offline)** — S16-1…S16-13 (plan `290e316`; `7be3d3e`, `3e58687`, `d7014fb`, `e5023c2`, `a20c04a`, `7501abb`, `7149de4`, `d156a03`, `3f75a3a`, `cf4db5f`; finish-check `ecff1b2`; fix round 1: `100dd45`, `ff62d88`, `cfd5c54`). LangGraph 1.2.18 (GO) გრაფი: preprocess (შაბლონები ka/en/ru) → agent + 4 tool (≤4 გამოძახება, 45 წმ) → postprocess (`clean_reply`); `request_human` ანაცვლებს `[[HANDOFF]]`-ს; ისტორია 16 → ბოლო 8 + summary (0026; შენახვის შემდეგ, პირობითი update); tracing იძულებით გამორთული; შედარების სკრიპტი production-ის გრაფით.
+- Verification (ორკესტრატორი): pip check ✅, pip-audit 0; ruff/compileall `app tests scripts` ✅; pytest **1468 passed**; frontend lint 0 error / 5 warning, `npm test` 29/29, build → `dist` უცვლელი. re-check: code-reviewer 3/3 fixed, security 2/2 fixed, ახალი critical/should-fix 0.
+- Unverified: რეალური Claude/OpenAI tool calling (gpt-6-luna `store=False` + function_call-ების ხელახლა გაგზავნა, Haiku `tool_choice: none`), cache-ის რეალური ქცევა tools-ით; 0026 რეალურ Postgres-ზე; PostgREST `eq("updated_at")` ტოლობა; შაბლონების ფრაზები/ტონი (მფლობელი); LangGraph-ის ცივი import (~2.7 წმ) Render-ზე.
+- Next: Stage 17 (PDF-ცოდნა: შეკუმშვა + ძებნა).
+
+### Stage 15-ის სესია
 - Date: 2026-10-28
 - Done: **Stage 15 დასრულდა (offline; სკრიპტი არ გაშვებულა)** — S15-1…S15-6 (plan `dd48156`; `497912c`, `346bf82`, `d35b50f`, `df23279`; finish-check `c82f5bb`; fix round 1 `babde48`, round 2 `733cc26`). `llm.generate(provider=)`; `backend/scripts/compare_providers.py` + 40 შეკითხვა + 8 სინთეტიკური PNG; ბრმა A/B output (provider-ნეიტრალური შეცდომები, `app` logger გაჩუმებული) + `compare_key.json` (gitignored); README §9.
 - Verification (ორკესტრატორი): pip check ✅; ruff/compileall `app tests scripts` ✅; pytest **473 passed**; frontend lint 0 error / 5 warning (ძველი), `npm test` 29/29, build → `dist` უცვლელი.
