@@ -124,13 +124,47 @@ def _search_products(query: str, ctx: ToolContext) -> str:
     return f'Products matching "{shown}" ({len(matches)} of {len(products)} in the catalogue):\n{lines}'
 
 
+def _line_chunks(para: str) -> list[str]:
+    """A long paragraph (pypdf returns a whole page as one paragraph with single newlines):
+    lines packed greedily into <= window chunks; a line is never cut unless it is itself too long."""
+    chunks: list[str] = []
+    cur = ""
+    for line in para.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if len(line) > _KNOWLEDGE_WINDOW:
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            for i in range(0, len(line), _KNOWLEDGE_WINDOW):
+                chunks.append(line[i:i + _KNOWLEDGE_WINDOW])
+        elif cur and len(cur) + 1 + len(line) > _KNOWLEDGE_WINDOW:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 def _knowledge_chunks(knowledge: str) -> list[str]:
     chunks: list[str] = []
     for para in re.split(r"\n\s*\n", knowledge):
         para = para.strip()
-        for i in range(0, len(para), _KNOWLEDGE_WINDOW):
-            chunks.append(para[i:i + _KNOWLEDGE_WINDOW])
+        if len(para) <= _KNOWLEDGE_WINDOW:
+            if para:
+                chunks.append(para)
+        else:
+            chunks.extend(_line_chunks(para))
     return chunks
+
+
+def _stem(token: str) -> str:
+    """Rough Georgian stem: drop the last 2 letters of a long token (case endings), keep >= 4.
+    მიწოდება / მიწოდების -> მიწოდე, თბილისში / თბილისი -> თბილის. A heuristic, not morphology."""
+    return token[:max(4, len(token) - 2)] if len(token) >= 6 else token
 
 
 def _search_knowledge(query: str, ctx: ToolContext) -> str:
@@ -138,11 +172,11 @@ def _search_knowledge(query: str, ctx: ToolContext) -> str:
     knowledge = ctx.shop.get("knowledge")
     if not isinstance(knowledge, str) or not knowledge.strip():
         return "The shop has no knowledge document."
-    tokens = prompt.query_tokens(query)
+    terms = {_stem(t) for t in prompt.query_tokens(query)}
     scored = []
     for pos, chunk in enumerate(_knowledge_chunks(knowledge)):
         low = chunk.lower()
-        score = sum(1 for t in tokens if t in low)
+        score = sum(1 for t in terms if t in low)
         if score:
             scored.append((-score, pos, chunk))
     if not scored:

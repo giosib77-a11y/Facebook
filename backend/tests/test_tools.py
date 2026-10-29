@@ -235,6 +235,101 @@ def test_search_knowledge_empty_results():
         assert out.content == "The shop has no knowledge document." and not out.is_error
 
 
+# --- S17-5: line-based chunks + Georgian stems ----------------------------------------------
+def _knowledge_ctx(knowledge):
+    return ToolContext(shop={**SHOP_A, "knowledge": knowledge}, products=[])
+
+
+def _body(out):
+    return out.split("\n", 1)[1]
+
+
+KA_KNOWLEDGE = "\n\n".join([
+    "მიწოდების პირობები: თბილისში 5 ლარი.",
+    "პროდუქტის გარანტიის ვადა 2 წელია.",
+    "დაბრუნება შესაძლებელია 14 დღის განმავლობაში.",
+])
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("მიწოდება", "მიწოდების პირობები: თბილისში 5 ლარი."),   # nominative query, genitive text
+    ("გარანტია", "პროდუქტის გარანტიის ვადა 2 წელია."),
+    ("დაბრუნება", "დაბრუნება შესაძლებელია 14 დღის განმავლობაში."),
+])
+def test_search_knowledge_georgian_stem_matches_other_case_forms(query, expected):
+    out = ok("search_knowledge", {"query": query}, _knowledge_ctx(KA_KNOWLEDGE))
+    assert _body(out) == expected
+
+
+def test_search_knowledge_georgian_locative_query_matches_nominative_text():
+    knowledge = "მიწოდება თბილისი და რეგიონები: 5 ლარი.\n\nდაბრუნება 14 დღე."
+    out = ok("search_knowledge", {"query": "თბილისში"}, _knowledge_ctx(knowledge))
+    assert _body(out) == "მიწოდება თბილისი და რეგიონები: 5 ლარი."
+
+
+@pytest.mark.parametrize("token, stem", [
+    ("ლარი", "ლარი"),            # < 6 chars: unchanged
+    ("დღეები", "დღეე"),           # 6 chars: len - 2 = 4
+    ("მიწოდება", "მიწოდე"),       # 8 chars -> 6
+    ("მიწოდების", "მიწოდებ"),
+    ("warranty", "warran"),
+    ("short", "short"),
+])
+def test_stem_rule(token, stem):
+    assert tools._stem(token) == stem
+
+
+def test_search_knowledge_stem_does_not_match_unrelated_words():
+    out = execute("search_knowledge", {"query": "მიწოდება"}, _knowledge_ctx("დაბრუნება 14 დღე.\n\nგარანტია 2 წელი."))
+    assert out.content == "No matching information in the shop knowledge."
+
+
+def test_search_knowledge_long_paragraph_keeps_whole_lines():
+    lines = [f"line{i:02d} " + "w" * 98 for i in range(30)]  # 105 chars each, one paragraph, no blank lines
+    marked = 7  # starts at offset 742, so the old 800-char window cut it in the middle
+    lines[marked] = lines[marked][:-10] + "zetamarker"
+    assert len(lines[marked]) == 105
+    out = ok("search_knowledge", {"query": "zetamarker"}, _knowledge_ctx("\n".join(lines)))
+    body = _body(out)
+    assert lines[marked] in body.split("\n")
+    assert len(body) <= 800 and "\n---\n" not in body
+    assert all(line in lines for line in body.split("\n"))  # no line is cut
+
+
+def test_knowledge_chunks_rules():
+    window = tools._KNOWLEDGE_WINDOW
+    short = "a" * 300
+    assert tools._knowledge_chunks(f"{short}\n\n{short}b\n \n{short}c") == [short, short + "b", short + "c"]
+    para = "\n".join(f"{i:02d}" + "x" * 98 for i in range(20))  # 20 lines of 100 chars, 1999 chars
+    chunks = tools._knowledge_chunks(para)
+    assert all(len(c) <= window for c in chunks)
+    assert "\n".join(chunks) == para  # nothing lost, nothing cut, order kept
+    assert [len(c) for c in chunks] == [706, 706, 605]  # 7 + 7 + 6 lines (an 8th line would make 807)
+    long_line = "y" * 1700
+    assert tools._knowledge_chunks(f"head\n{long_line}\ntail") == ["head", "y" * 800, "y" * 800, "y" * 100, "tail"]
+
+
+def test_search_knowledge_finds_a_marker_deep_in_a_50000_char_document():
+    head = [f"Filler line {i:05d} about nothing at all." for i in range(1220)]
+    text = "\n".join(head)
+    assert 48_000 < len(text) < 49_500
+    text += "\nThe quokka clause: free quokka returns.\n"
+    text += "\n".join(f"Tail line {i:05d} about nothing." for i in range(100))
+    text = text[:50_000]
+    assert len(text) == 50_000 and text.index("quokka") > 48_000
+    out = ok("search_knowledge", {"query": "quokka"}, _knowledge_ctx(text))
+    assert "The quokka clause: free quokka returns." in out
+    assert len(out) <= TOOL_RESULT_MAX_CHARS
+
+
+def test_search_knowledge_stem_never_reaches_the_other_shops_knowledge():
+    shop_b = {**SHOP_B, "knowledge": "ექსკლუზიური გარანტიის პირობები: 99 წელი."}
+    assert "99 წელი" in ok("search_knowledge", {"query": "გარანტია"}, ToolContext(shop=shop_b, products=[]))
+    shop_a = {**SHOP_A, "knowledge": "მიწოდება თბილისში 5 ლარი."}
+    out = ok("search_knowledge", {"query": "გარანტია"}, ToolContext(shop=shop_a, products=[]))
+    assert out == "No matching information in the shop knowledge." and "99" not in out
+
+
 # --- order_link / request_human ------------------------------------------------------------
 def test_order_link_equals_prompt_order_link():
     assert execute("order_link", {}, ctx_a()) == ToolOutcome("Order link: " + prompt.order_link_for(SHOP_A))

@@ -428,6 +428,76 @@ def test_tool_results_stay_within_the_turn_budget(h):
     assert result.text == "Enough"
 
 
+def _request_chars(request) -> tuple[int, list[str]]:
+    """Every text the model receives in one request: system / message text, tool_use input (as JSON),
+    tool results, and the tool declarations (as JSON). Returns (total, the pieces)."""
+    pieces = []
+    if "system" in request:  # Claude
+        pieces += [b["text"] for b in request["system"]]
+        for m in request["messages"]:
+            for b in m["content"]:
+                if b["type"] == "text":
+                    pieces.append(b["text"])
+                elif b["type"] == "tool_use":
+                    pieces.append(json.dumps(b["input"]))
+                elif b["type"] == "tool_result":
+                    pieces.append(b["content"])
+    else:  # OpenAI
+        for item in request["input"]:
+            if item.get("type") == "function_call":
+                pieces.append(item["arguments"])
+            elif item.get("type") == "function_call_output":
+                pieces.append(item["output"])
+            elif isinstance(item["content"], str):
+                pieces.append(item["content"])
+            else:
+                pieces += [p["text"] for p in item["content"] if p["type"] == "input_text"]
+    pieces.append(json.dumps(request["tools"]))
+    return sum(len(p) for p in pieces), pieces
+
+
+def test_worst_case_turn_requests_stay_bounded_and_never_carry_the_whole_knowledge(h):
+    # S17-5: maximal products, 50 000-char knowledge WITHOUT a FAQ (the fallback is the worse case),
+    # 40 x 2000 history, 2000-char message, 3 rounds x 3 search_knowledge calls of 3000-char results.
+    huge = "x" * 100_000
+    paragraphs = [f"Delivery rule {i:03d}: " + "d" * 770 for i in range(62)]
+    paragraphs.append("zzmarker49k " + "m" * 770)  # matches no search: it must never reach a request
+    knowledge = "\n\n".join(paragraphs)
+    assert 49_000 < len(knowledge) <= 50_000
+    shop = {**SHOP, "name": huge, "description": "d" * 1_000_000, "knowledge": knowledge}
+    products = [{"id": f"{i:03d}", "name": huge, "sku": huge, "description": huge, "price": 10, "quantity": 1}
+                for i in range(30)]
+    history = []
+    for i in range(20):
+        history.append({"role": "user", "content": f"u{i} " + "q" * 1996})
+        history.append({"role": "bot", "content": f"b{i} " + "a" * 1996})
+    query = "delivery " + "q" * 191  # 200 chars
+    preamble = "p" * 200
+    h.script = [
+        h.calls(*[(f"r{r}c{i}", "search_knowledge", {"query": query}) for i in range(3)], text=preamble)
+        for r in range(3)
+    ]
+    h.script.append(h.text("Final"))
+    result = graph.run_turn(shop, products, "m" * 2000, history)
+    assert result.text == "Final" and len(h.requests) == 4
+    assert result.tools_used == ["search_knowledge"] * 9
+
+    bound = (prompt.MAX_PROMPT_CHARS + len(json.dumps(tools.TOOL_SPECS))
+             + graph.TURN_TOOL_CHARS_BUDGET + 2_000)
+    totals = []
+    for request in h.requests:
+        total, pieces = _request_chars(request)
+        totals.append(total)
+        assert total <= bound, (total, bound)
+        assert not any("zzmarker49k" in p for p in pieces)  # past the 20000-char clip, not matched
+        assert not any(knowledge[:30_000] in p for p in pieces)  # the full text is never sent
+    # the real numbers (documented in the Stage 17 report)
+    assert max(totals) == totals[-1]  # the last request carries the whole in-turn transcript
+    outputs = h.tool_outputs(h.requests[3])
+    assert len(outputs) == 9 and sum(len(o["content"]) for o in outputs
+                                     if not o["content"].startswith("Result omitted")) <= graph.TURN_TOOL_CHARS_BUDGET
+
+
 # ---------------------------------------------------------------------------
 # (8) bad tool calls become error results, the loop goes on, no DB access by tools
 # ---------------------------------------------------------------------------
