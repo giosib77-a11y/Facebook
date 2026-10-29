@@ -19,12 +19,17 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 16 — ბოტის გრაფი: preprocess (შაბლონები LLM-ის გარეშე) → agent + tools → postprocess; ისტორია ბლოკებად + summary**
-(იხ. `PROGRESS.md`; Stage 10–15 დასრულებულია, Stage 14/15 — offline, deploy/გაშვება key-ებს ელოდება). Stage 17–18 (PDF-ცოდნა, ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
+**Stage 17 — PDF-ცოდნა: ატვირთვისას ერთხელ მოკლე FAQ (L2-ში 20000-იანი clip-ის ნაცვლად) + ძებნა სრულ ტექსტში (`search_knowledge`); migration 0027**
+(იხ. `PROGRESS.md`; Stage 10–16 დასრულებულია, Stage 14–16 — offline, deploy/გაშვება key-ებს ელოდება). Stage 18 (ფოტოები) — `PROGRESS.md` `## Upcoming stages`.
 სამუშაო მხოლოდ `agent-system`-ზე; `main`-ში merge არ იგეგმება, სანამ API key-ები არ იქნება. ყველაფერი offline, fake client-ებით.
 
 ## Scope
-### In scope (current stage — Stage 16)
+### In scope (current stage — Stage 17)
+- `services/knowledge.py`: `build_faq(shop_id, text)` — ატვირთვისას **ერთი** `llm.complete` → მოკლე FAQ (≤3000 სიმბოლო, `Q:`/`A:` ხაზები, PDF = DATA); არასდროს აგდებს; usage → `llm_usage`
+- `api/shops.py`: `upload_knowledge` — FAQ სინქრონულად (≤40 წმ), ერთი service update `{knowledge, knowledge_filename, knowledge_faq}`; FAQ-ის ჩავარდნა → ატვირთვა მაინც ინახება (`knowledge_faq = null`); `clear_knowledge` FAQ-საც შლის; ლიმიტი 10 ატვირთვა/სთ; PDF-ის ტექსტის ჭერი 20 000 → 50 000 (`pdf_extract.MAX_CHARS`)
+- `prompt.py` L2: FAQ ანაცვლებს 20000-იან clip-ს; FAQ-ის გარეშე — Stage 16-ის L2 ბაიტ-იდენტურად; L1 წესები 9 / 13 (ძებნა FAQ-ში არარსებულ დეტალზე); `MAX_PROMPT_CHARS` უცვლელი (60 000), worst-case ტესტები
+- `tools.py` `search_knowledge`: ხაზებით chunk-ები + ქართული ფუძეები (მეხსიერებაში, ცხრილის გარეშე); migration `0027` (`shops.knowledge_faq`); შედარების სადემონსტრაციო მაღაზიას ხელით დაწერილი FAQ; README / CLAUDE.md
+### Stage 16-ის scope (დასრულებული, ისტორია)
 - `services/graph.py`: `preprocess → agent ⟲ tools → postprocess`, `run_turn(...) -> TurnResult`; wiring — LangGraph, თუ S16-1 = GO, თორემ plain Python (იგივე node-ები). LLM-ის გამოძახება მხოლოდ `llm.py`-ით (LangChain chat model-ები — არა)
 - `llm.py`: tool calling ორივე provider-ზე (Claude `tool_use`/`tool_result`, OpenAI `function_call`/`function_call_output`), turn-ის deadline, `complete()` summary-სთვის
 - `services/tools.py`: `search_products`, `search_knowledge`, `order_link` (read-only, მხოლოდ state-იდან) + `request_human` (ანაცვლებს `[[HANDOFF]]`-ს → `needs_attention`)
@@ -32,6 +37,7 @@ Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდ�
 - `services/memory.py` + migration `0026` (`bot_conversations.summary`): ისტორია 16-ზე მეტისას → ბოლო 8 + summary (ერთი დამატებითი გამოძახება, პასუხის გაგზავნის შემდეგ)
 - webhook + `/test-chat` → `run_turn`; `get_bot_reply` / `parse_reply` / `[[HANDOFF]]` იშლება; შედარების სკრიპტი იმავე გზით (`run_turn`, provider-ის override, DB-ის გარეშე)
 ### Out of scope (for now)
+- Stage 17-ში: `knowledge_chunks` ცხრილი / Postgres FTS / pg_trgm / embeddings (Decision Log 2026-10-29); FAQ background-ში; frontend (FAQ-ის სტატუსი/გადახედვა — Backlog); არსებული მაღაზიების FAQ-ის backfill სკრიპტი; `MAX_PROMPT_CHARS`-ის შემცირება; ფოტოს აღწერა (Stage 18); default provider-ის ცვლილება
 - Stage 16-ში: L2-ის ცვლილება (მარაგი/ცოდნა რჩება), PDF-ის chunk-ები / FAQ (Stage 17), ფოტოს აღწერა (Stage 18), default provider-ის ცვლილება, frontend (privacy-ის ტექსტი — Open Questions), Stage 14/15-ის Backlog nit-ები (გარდა Stage 15 (c) — S16-9)
 - ახალი ფიჩერები — [ROADMAP.md](ROADMAP.md) (Instagram Live, web widget, ინტეგრაციები,
   ავტომატური billing, Redis/queue, CSP, admin pagination)
@@ -63,6 +69,10 @@ Supabase Postgres, ყველა ცხრილზე RLS; სქემა �
 Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) — `bot_conversations.summary text` (nullable): ძველი შეტყობინებების
 მოკლე შეჯამება; წერს მხოლოდ backend (service_role, როგორც `messages`), გამყიდველი კითხულობს საკუთარს 0008-ის select პოლისით;
 ახალი grant/პოლისი არ არის. backend მის გარეშეც მუშაობს (summary გამორთულია, WARNING).
+Stage 17: `0027_shops_knowledge_faq.sql` (დაგეგმილი) — `shops.knowledge_faq text` (nullable): PDF-ის ტექსტის მოკლე FAQ (≤3000, LLM-ით, ერთხელ
+ატვირთვისას); null = FAQ არ არის (ბოტი — ცოდნის პირველი 20 000 სიმბოლო). წერს მხოლოდ backend (service client, `upload_knowledge`/`clear_knowledge`,
+როგორც `knowledge` — 0022); `authenticated`-ს ცხრილის დონის UPDATE არ აქვს → ახალი grant/revoke/პოლისი არ სჭირდება. სრული ტექსტი (≤50 000)
+რჩება `shops.knowledge`-ში; ცალკე chunk-ების ცხრილი **არ არის** (ძებნა მეხსიერებაში). backend სვეტის გარეშეც მუშაობს (FAQ გამორთულია, WARNING).
 - `shops` (owner_id → auth.users) 1—N `products`, `orders`, `bot_customers`,
   `bot_conversations`, `upgrade_requests`
 - `orders.items` — JSON პოზიციები; ფული — numeric
@@ -84,7 +94,7 @@ Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) —
 - Backend: FastAPI (Python 3.14), sync handlers + FastAPI BackgroundTasks
 - LLM: Gemini (`google-genai`) → planned replacement (Stage 14): `anthropic` / `openai` SDK, `services/prompt.py` +
   `services/llm.py`; Stage 16: `services/graph.py` (+ `tools.py`, `replies.py`, `memory.py`) — wiring LangGraph-ით (S16-1 GO) ან plain Python;
-  LLM-ის გამოძახება ყოველთვის `llm.py`-ით (Decision Log 2026-10-28, Stage 16)
+  LLM-ის გამოძახება ყოველთვის `llm.py`-ით (Decision Log 2026-10-28, Stage 16); Stage 17: `services/knowledge.py` (FAQ ერთხელ, ატვირთვისას)
 - Database: Supabase Postgres + RLS + RPC-ები (EXECUTE მხოლოდ service_role-ს; `track_bot_customer` — DEFINER, stock RPC-ები — INVOKER)
 - Storage: Supabase Storage
 - Auth: Supabase Auth; backend ამოწმებს JWT-ს `auth.get_user()`-ით და DB-ს მომხმარებლის
@@ -134,6 +144,8 @@ Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) —
   შეტყობინებაზე (მაგ. „გამარჯობა") `reply` = შაბლონი LLM-ის გამოძახების გარეშე (503-ის შემოწმება მანამდე რჩება); `reply` markdown-ისგან
   გასუფთავებულია; handoff (`request_human`) პასუხში არ ჩანს (როგორც ახლა `[[HANDOFF]]`); turn-ის ბიუჯეტის ამოწურვა (`TimeoutError`) → 502.
 - **`POST /webhook`** — Stage 16: გარე ქცევა უცვლელია; handoff-ის წყარო `[[HANDOFF]]` ნიშნის ნაცვლად `request_human` tool call ან ოპერატორის შაბლონია → `needs_attention`.
+- **`POST /shops/{id}/knowledge`** (multipart `file`: `.pdf`, ≤10 MB; Bearer) — **Stage 17: response უცვლელია** — 200 `ShopOut` (`knowledge` და `knowledge_faq` არ ბრუნდება; `knowledge_filename` — ნიშანი). სტატუსები უცვლელი: 400 (არა-`.pdf` / ცარიელი / >10 MB / PDF ვერ წაიკითხა / ტექსტი არ აქვს), 403 (free პაკეტი — LLM-მდე), 404 (მაღაზია არ არის ან სხვისია), + ახალი **429** `{"detail": "ბევრი მოთხოვნა მოვიდა — სცადეთ ცოტა ხანში."}` (+ `Retry-After`; 10 მოთხოვნა/სთ IP-ზე). შიგნით: ტექსტი ≤50 000 სიმბოლო + FAQ ერთი LLM გამოძახებით (≤40 წმ; მოთხოვნა ≤~45 წმ); FAQ-ის ჩავარდნა / key-ის გარეშე → მაინც 200 (`knowledge_faq = null`); ხელახალი ატვირთვა ტექსტს და FAQ-ს ერთად ცვლის.
+- **`DELETE /shops/{id}/knowledge`** — Stage 17: კონტრაქტი უცვლელი (200 `ShopOut`, 404); `knowledge`, `knowledge_filename` და `knowledge_faq` ერთად სუფთავდება; LLM არა.
 
 ## Decision Log
 > კოდიდან და git-ის ისტორიიდან აღდგენილი გადაწყვეტილებები (თარიღი ≈ შესაბამისი commit).
@@ -474,6 +486,45 @@ Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) —
 - latency: ტიპური შეტყობინება — 1 გამოძახება (როგორც ახლა); ძებნით — 2; worst case — turn-ის 45 წმ deadline (ერთი Stage 14-ის გამოძახების ჭერის ტოლი). Meta webhook-ს 200 დამუშავებამდე უბრუნდება (უცვლელი).
 - ხარჯი: tool spec-ები cached prefix-შია (L1-თან ერთად); ფოტოიან turn-ზე ყოველი დამატებითი გამოძახება სურათებს ხელახლა აგზავნის (≤15 × ~1.6K ტოკენი) — Backlog / Stage 18 (2–3 საცნობარო ფოტო). გაზომვა — `llm_usage` (მწკრივი გამოძახებაზე) და შედარების სკრიპტის `calls`.
 
+### 2026-10-29 — Stage 17: შენახვა — ერთი სვეტი `shops.knowledge_faq`; `knowledge_chunks` ცხრილი არ არის; PDF-ის ტექსტის ჭერი 20 000 → 50 000
+- Context: ესკიზში იყო `knowledge_chunks(shop_id, ord, text)` ცხრილი. კოდში: `pdf_extract.MAX_CHARS = 20000` → `shops.knowledge` ≤20 000 სიმბოლოა და L2-ში მთლიანად ხვდება (clip 20000); webhook და `/test-chat` მაღაზიას `select("*")`-ით კითხულობენ → ცოდნა ყოველ შეტყობინებაზე უკვე მეხსიერებაშია; `tools._search_knowledge` (Stage 16) მას მეხსიერებაში ჭრის (აბზაცები / 800-იანი ფანჯრები), DB-ის და ქსელის გარეშე.
+- Decision: ახალი ცხრილი **არა**. FAQ — ერთი nullable სვეტი `shops.knowledge_faq text` (0027). სრული ტექსტი რჩება `shops.knowledge`-ში, chunk-ები — მეხსიერებაში, ძებნის დროს (როგორც Stage 16). `pdf_extract.MAX_CHARS` 20 000 → **50 000**: ჭერის მიზეზი (prompt-ის დაცვა) FAQ-ით ქრება, ხოლო 50K პესიმისტურადაც (1 ტოკენი/სიმბოლო) FAQ-ის გენერაციის request-ს 100K ტოკენზე (5×-იანი ფასის ზღვარი) ბევრად ქვემოთ ტოვებს. `MAX_PAGES = 300` უცვლელი.
+- Reason: ცხრილს დასჭირდებოდა RLS/grant-ები, ორ ცხრილში ჩაწერა (re-upload-ზე არაატომური ჩანაცვლება), webhook-ში დამატებითი query ან tool-ში DB-ის მიმართვა (Stage 16-ის ინვარიანტი „tool-ები DB-ს არ მიმართავს" დაირღვეოდა) — რეალური მოგების გარეშე: 50K-ის chunk-ება მეხსიერებაში მიკროწამებია, Postgres-side ძებნა კი ქართულზე (FTS ლექსიკონი არ აქვს) მაინც `simple` / ILIKE / trigram, ანუ იგივე keyword ძებნა იქნებოდა.
+- Trade-off: `shops` მწკრივი ყოველ შეტყობინებაზე ≤50K სიმბოლოს ატარებს (ქართული UTF-8 ≈ ≤150 KB; ადრე ≤60 KB); admin-ის `select("*")` სიაც. Realistic Scale-ზე (ათეულობით მაღაზია) მისაღებია.
+- Alternatives considered: `knowledge_chunks` + pg_trgm / FTS `simple`; FAQ ცალკე ცხრილში; ჭერის 20K-ზე დატოვება (მაშინ FAQ მხოლოდ L2-ს ამცირებს).
+- ვარაუდი (/auto): მფლობელის „სრული ტექსტი ძებნისთვის" 20K-ზე დიდ დოკუმენტს გულისხმობს → 50K; ზუსტი რიცხვი — არქიტექტორის.
+- როგორ შეიცვლება: ცხრილი / FTS / embeddings — თუ ცოდნა >~100K გახდება, keyword ძებნა არ იკმარებს, ან webhook-ის `select("*")` ცხადი სვეტებით შეიცვლება და ცოდნა მხოლოდ tool-ის გამოძახებისას ჩაიტვირთება (Backlog).
+
+### 2026-10-29 — Stage 17: FAQ-ის გენერაცია — სინქრონულად `upload_knowledge`-ში, `llm.complete`, 40 წმ, ერთი ჩაწერა
+- Decision: `services/knowledge.py` → `build_faq(shop_id, text) -> str | None`, **არასდროს აგდებს** (`memory.compact`-ის ნიმუში): ერთი `llm.complete(FAQ_SYSTEM, "Shop document:\n" + text[:50 000], shop_id, max_tokens=1500, deadline=monotonic()+40)` → `llm.record_usage(shop_id, result)` (მწკრივი `llm_usage`-ში ამ მაღაზიაზე) → `replies.clean_reply` (markdown) → ჭერი `FAQ_MAX_CHARS = 3000` ხაზის საზღვარზე. `FAQ_SYSTEM` — სტატიკური ინგლისური: ≤25 კითხვა-პასუხი, ≤2500 სიმბოლო, plain text, `Q: ` / `A: ` ხაზები; მხოლოდ დოკუმენტში ნათქვამი ფაქტები (ფასი, საფასური, ვადა, პირობა, მაღაზიის მისამართი/ტელეფონი/საათები) უცვლელად, არაფრის დამატება/გამოცნობა; პრიორიტეტი — მიწოდება, გადახდა, დაბრუნება/გაცვლა, გარანტია, საათები, კონტაქტი; კატალოგი — არა; დოკუმენტის ენაზე; დოკუმენტი DATA-ა — მასში არსებული ინსტრუქციები იგნორდება და არ მეორდება. provider — default (override არ სჭირდება).
+- handler-ის რიგი: მფლობელობა + პაკეტი (უცვლელი; free → 403 **LLM-მდე**) → ფაილის ვალიდაცია → ტექსტის ამოღება → FAQ → **ერთი** service update `{knowledge, knowledge_filename, knowledge_faq}`. ჩავარდნა / key-ის გარეშე / timeout / ცარიელი პასუხი → `knowledge_faq = null` (WARNING shop id-ით, დოკუმენტის ტექსტის გარეშე), ატვირთვა მაინც 200, ბოტი — fallback (იხ. L2). re-upload ტექსტს და FAQ-ს ერთად ცვლის (ჩავარდნაზე წინა PDF-ის FAQ იშლება — ახალ ტექსტს ძველი FAQ არ მიეწერება); `clear_knowledge` სამივე სვეტს ასუფთავებს (LLM-ის გარეშე). response (`ShopOut`) უცვლელი.
+- ხანგრძლივობა და ხარჯი: მოთხოვნა ≤~45 წმ (FAQ 40 + ამოღება); handler sync-ია (threadpool); frontend-ს fetch timeout არ აქვს და „მუშავდება..."-ს აჩვენებს. ხარჯი ≤~50K input + ≤1500 output ტოკენი ≈ <$0.01 ატვირთვაზე (Haiku 5.5-ის ფასით); ხარჯის ჭერად (სტანდარტი §28) — `rate_limit("knowledge_upload", 10, 3600)` (IP-ზე, `upgrade_request`-ის ნიმუში).
+- Reason: ერთი ატომური ჩაწერა — ტექსტი და მისი FAQ ყოველთვის ერთმანეთს შეესაბამება (პარალელურ ატვირთვებზეც ბოლო იმარჯვებს წყვილით); ატვირთვის დასრულებისას FAQ უკვე prompt-შია; ტესტები მარტივია.
+- Alternatives considered: FastAPI `BackgroundTasks` (სწრაფი პასუხი, მაგრამ ორი ჩაწერა, race ძველ/ახალ FAQ-ს შორის → პირობითი update, ჩავარდნა გამყიდველისთვის უხილავი, restart-ზე იკარგება — Accepted Risk #6); ცალკე „FAQ-ის გენერაცია" endpoint/ღილაკი (UI). Why rejected: სირთულე მოგების გარეშე ამ მასშტაბზე.
+- Risk / ❓: `LLM_TIMEOUT_SECONDS ≤ 20` თითო მცდელობაზე — 1500 output ტოკენი Haiku-ზე ჩვეულებრივ ეტევა, დაუდასტურებელია (max_tokens-ზე ჭრილი პასუხი ხაზის საზღვარზე იჭრება; timeout → fallback); ~45 წმ-იანი მოთხოვნა Render-ზე/ბრაუზერში — პირველ რეალურ ატვირთვაზე. ხშირი ჩავარდნისას: per-attempt timeout-ის override `complete`-ში ან background (Backlog).
+- ვარაუდი (/auto): ზომები (3000 სიმბოლო / 1500 ტოკენი / 40 წმ / 25 წყვილი), ლიმიტი 10/სთ, `Q:`/`A:` ფორმატი — არქიტექტორის; მფლობელმა გადახედოს.
+
+### 2026-10-29 — Stage 17: L2 — FAQ ანაცვლებს 20000-იან clip-ს; FAQ-ის გარეშე — Stage 16-ის L2 ბაიტ-იდენტურად; `MAX_PROMPT_CHARS` რჩება 60 000
+- Decision: `prompt.build_layer2`: `knowledge_faq` (str, strip-ის შემდეგ არაცარიელი; clip `KNOWLEDGE_FAQ_MAX_CHARS = 3000`) → სექცია `SHOP KNOWLEDGE (short FAQ of the shop's document; search_knowledge searches the full document)` + FAQ; სხვა შემთხვევაში (გასაღები არ არის / `None` / ცარიელი / whitespace) — **ზუსტად Stage 16-ის სექცია** (`SHOP KNOWLEDGE (from the shop's document)` + ცოდნის პირველი 20 000 სიმბოლო; კონსტანტა `KNOWLEDGE_CLIP_CHARS = 20000`). L2 ისევ მხოლოდ shop + products-ზეა დამოკიდებული → cache დეტერმინისტულია (FAQ მაღაზიის მწკრივშია და მხოლოდ ატვირთვისას იცვლება).
+- L1 (მინიმალური): წესი 9 → „Answer only from the shop knowledge: the SHOP block, or the search_knowledge result when the detail is not in the SHOP block. If the answer is in neither, say that the operator will clarify it …" (ძველი „თუ SHOP block-ში არ არის → ოპერატორი" FAQ-ით ძებნას გამოტოვებინებდა); წესი 13 → „… the inventory and the shop knowledge (sometimes only a short FAQ of it) …". L1 ყველა მაღაზიისთვის ერთია → deploy-ზე ერთჯერადი cache miss; `TOOL_SPECS` უცვლელი.
+- fallback-ის მიზეზი: არსებული ცოდნიანი მაღაზიები (FAQ ხელახალ ატვირთვამდე არ აქვთ) და FAQ-ის ჩავარდნა ქცევას არ კარგავს (= Stage 16); მათი L2/cache prefix და არსებული ტესტები უცვლელია. უფრო მოკლე fallback (მაგ. 4000) ჭერს შეამცირებდა, მაგრამ არსებულ მაღაზიებს L2-დან ცოდნის უმეტესობას ჩუმად ჩამოაჭრიდა.
+- `MAX_PROMPT_CHARS = 60_000` **არ იცვლება**: უარესი შემთხვევა ისევ fallback-ია (20K); FAQ-იანი L2 ≤ fallback-იანისა (ტესტით). turn-ის ერთი request: ≤ `MAX_PROMPT_CHARS` + spec-ები (≤3K) + tool შედეგები (≤8K) + step-ების ტექსტი/არგუმენტები (≈≤2K) ≈ ≤73K სიმბოლო (S17-5-ის ტესტი 50K-იანი ცოდნით, ორივე provider) + სურათები — პესიმისტურადაც <100K ტოკენი ფოტოს გარეშე; ფოტოიან turn-ზე ზღვარი Stage 16-ის იგივეა.
+- როგორ შეიცვლება: როცა ყველა ცოდნიან მაღაზიას FAQ ექნება (re-upload / backfill) → fallback ~4000-მდე და `MAX_PROMPT_CHARS` ~45K-მდე (Backlog).
+
+### 2026-10-29 — Stage 17: `search_knowledge` — ხაზებით chunk-ები + ქართული „ფუძეები"; tenant isolation უცვლელი
+- Decision (მინიმალური, მხოლოდ `tools.py`): აბზაცი (ცარიელი ხაზებით) ≤800 — უცვლელად; >800 → მისი ხაზებიდან (`\n`) ხარბად აწყობილი ≤800-იანი chunk-ები (ხაზი არ იჭრება); >800-იანი ერთი ხაზი → 800-იანი ფანჯრები (როგორც ახლა). ქულა — query-ის ტოკენების ფუძეებით: ტოკენი ≥6 სიმბოლო → პირველი `max(4, len − 2)` (მიწოდება / მიწოდების → „მიწოდე", გარანტია / გარანტიის → „გარანტ", თბილისში / თბილისი → „თბილის"). ტოპ-3 (ქულა, მერე პოზიცია), შედეგის ფორმატი და ≤3000 — უცვლელი. `search_products`, `prompt.query_tokens`, `match_products`, `TOOL_SPECS` — უცვლელი.
+- Reason: FAQ-ის შემდეგ დეტალი ძირითადად ძებნით მოდის; pypdf გვერდს ერთ „აბზაცად" აბრუნებს (ერთი `\n`-ებით) → 800-იანი ფანჯარა ფაქტს შუაზე ჭრიდა; ქართული ბრუნვის ბოლოსართები substring დამთხვევას არღვევდა.
+- tenant isolation: ცოდნა მხოლოდ `ToolContext.shop`-იდან (webhook-მა `entry.id`-ით ჩატვირთა), DB/ქსელი არა — უცვლელი.
+- Alternatives considered: overlap-იანი ფანჯრები (დუბლირებული excerpt-ები ტოპ-3-ში); Postgres FTS / pg_trgm (ცხრილი/RPC — იხ. „შენახვა"); embeddings (vector DB, dependency, ხარჯი).
+- ვარაუდი (/auto): ფუძის წესი უხეში ევრისტიკაა (მოკლე ფუძეზე false positive შესაძლოა) — რეალური ლოგებით გადაიხედება.
+
+### 2026-10-29 — Stage 17: migration 0027, run order, frontend, შედარების სკრიპტი, privacy
+- `0027_shops_knowledge_faq.sql`: `alter table public.shops add column if not exists knowledge_faq text` + comment; **grant/revoke/policy არ არის**: `authenticated`-ს `shops`-ზე ცხრილის დონის INSERT/UPDATE არ აქვს (0015/0022), column grant მხოლოდ `name, description, currency, bot_language`-ზეა → ახალი სვეტი გამყიდველისთვის ჩაუწერადია (შემოწმება: `has_column_privilege('authenticated','public.shops','knowledge_faq','UPDATE') = f`); სვეტის დონის revoke ცხრილის დონის grant-ს მაინც ვერ გადაფარავდა, ამიტომ არ იწერება. SELECT — საკუთარი მაღაზიისა (RLS; ექსპორტშიც ჩანს — FAQ-ის ნახვის ერთადერთი გზა UI-ის გარეშე). ჩაწერა მხოლოდ backend-ით (service client, მფლობელობის RLS შემოწმების შემდეგ — 0022-ის ნიმუში).
+- Run order: 0027 → Stage 17-ის backend deploy (რეკომენდებული). კოდი სვეტის არარსებობას იტანს: ბოტი `select("*")`-ით FAQ-ს ვერ ხედავს → fallback; ატვირთვა/წაშლა — update-ის შეცდომა, რომლის ტექსტი `knowledge_faq`-ს შეიცავს (PostgREST PGRST204) → იგივე update ამ გასაღების გარეშე + ერთჯერადი WARNING პროცესზე; სხვა შეცდომა ვრცელდება (500, როგორც ახლა). ძველ backend-ს ახალი სვეტი არ აწუხებს.
+- Frontend **არ იცვლება** (`ShopOut` უცვლელი; „მუშავდება..." უკვე ჩანს; 8 HTML / `dist` ხელუხლებელი); FAQ-ის სტატუსი / გადახედვა / ხელახლა გენერაცია UI-ში — Backlog.
+- შედარების სკრიპტი: სადემონსტრაციო მაღაზიას (`compare_questions.json`) ემატება ხელით დაწერილი `knowledge_faq` (მხოლოდ მისივე `knowledge`-ის ფაქტები, LLM-ის გამოძახება სკრიპტში არა) → სკრიპტი production-ის FAQ-იან L2-ს ასახავს; `compare_providers.py` და პარიტეტის ტესტი უცვლელი (ორივე გზა ერთსა და იმავე shop dict-ს იღებს). სკრიპტს აგენტი არ უშვებს.
+- Privacy: FAQ მხოლოდ გამყიდველის PDF-იდანაა (კლიენტის PII არა); provider-ს იგივე ტექსტი მიდის, რაც ისედაც L2-ში მიდიოდა (ახლა ≤50K ერთხელ, ატვირთვისას). B-14 (ცოდნა ფაქტობრივად საჯაროა) უცვლელია — FAQ იგივე ცოდნის ქვესიმრავლეა; 50K-იანი ჭერი ძებნით ამოღებად ზედაპირს ზრდის (გამყიდველის საკუთარი, საჯაროდ ნაგულისხმევი ტექსტი).
+
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
 > 2026-10-09 — გარე აუდიტის (27 პუნქტი) პუნქტები, რომლებიც ახლანდელ კოდში არ დადასტურდა ან ამ მასშტაბისთვის ზედმეტია (მფლობელის მითითებით).
@@ -492,6 +543,7 @@ Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) —
 - **#19 PII retention/deletion policy** — არსებობს: privacy.html §6 (ანგარიში — აქტიურობის განმავლობაში, მოთხოვნისას 30 დღეში; საუბრები — ბოლო N შეტყობინება; შეკვეთები — სანამ გამყიდველი/მაღაზია არ წაშლის) და კოდი ემთხვევა (shop-ზე `on delete cascade` ყველა ცხრილზე, admin delete + Storage cleanup, Meta Data Deletion callback + `delete-data.html`). Meta App Review-ს callback ან ინსტრუქციის URL სჭირდება — ორივე არის. გადახედვა: ავტომატური ვადიანი წაშლის საჭიროება ან კანონის ცვლილება.
 - **#20 Gemini prompt-ში user/seller content** — კლიენტის ტექსტი ცალკე `user` turn-შია და არა system instruction-ში; system-ში მხოლოდ გამყიდველის საკუთარი მონაცემია (მხოლოდ საკუთარ ბოტს აზიანებს); ბოტს ქმედებები (tools) არ აქვს — მხოლოდ ტექსტი. PDF-ცოდნის ამოღება — Backlog B-14.
   - ⚠️ **გადაიხედება Stage 16-ში (2026-10-28; ჩანაწერის შეცვლა — მფლობელის გადაწყვეტილება):** ბოტს ემატება tools — 3 read-only (`search_products`, `search_knowledge`, `order_link` — მხოლოდ სერვერის state-ში უკვე ჩატვირთულ ამ მაღაზიის მონაცემზე, DB/ქსელის გარეშე, `shop_id` მოდელიდან არასდროს) + `request_human` (საუბარს `needs_attention`-ად ნიშნავს). prompt injection-ის worst case: ზედმეტი handoff (გამყიდველის ხმაური) ან ზედმეტი ძებნა (≤4 გამოძახება/შეტყობინება, 45 წმ). `search_knowledge` ცოდნის 20000-სიმბოლოიან clip-ს მიღმა ნაწილსაც აჩენს — B-14-ის ზედაპირს არ ზრდის (ცოდნა ისედაც საჯაროდ ითვლება).
+  - ⚠️ **Stage 17 (2026-10-29; ჩანაწერის შეცვლა — მფლობელის გადაწყვეტილება):** ცოდნის FAQ LLM-ით იქმნება გამყიდველის PDF-იდან (`knowledge.FAQ_SYSTEM` დოკუმენტს DATA-დ თვლის); PDF-ში ჩადებულმა ინსტრუქციამ შეიძლება FAQ-ის შინაარსზე იმოქმედოს — მხოლოდ საკუთარ ბოტს აზიანებს, FAQ L2-ში DATA-ა (როგორც ცოდნა ახლა), tool-ებს/DB-ს არ ეხება. PDF-ის ტექსტის ჭერი 50K-მდე იზრდება (B-14-ის ზედაპირი — გამყიდველის საკუთარი ტექსტი).
 - **#22 Gemini output structured schema-ს გარეშე** — პასუხი Messenger-ის თავისუფალი ტექსტია; ერთადერთი სტრუქტურა `[[HANDOFF]]` ნიშანია და `parse_reply` მას ამოწმებს; ცარიელ პასუხზე fallback + handoff (FA-12).
   - ⚠️ **გადაიხედება Stage 16-ში (2026-10-28):** `[[HANDOFF]]` და `parse_reply` იშლება; handoff = `request_human` tool call (სტრუქტურირებული, provider-ის tool API) ან ოპერატორის შაბლონი; ტექსტი `clean_reply`-ით სუფთავდება; FA-12 უცვლელი. ჩანაწერის განახლება — მფლობელი.
 - **#25 CSP header** — ROADMAP-შია (out of scope); frontend React-ია (escape-ით), user HTML არ რენდერდება. გადახედვა: მესამე მხარის script-ების დამატებისას.
@@ -516,3 +568,5 @@ Stage 16: `0026_bot_conversations_summary.sql` (დაგეგმილი) —
 - Stage 16, დასადასტურებელი პირველ რეალურ გამოძახებაზე (offline ვერ მოწმდება): OpenAI Responses `store=False` + `function_call` ხელახლა reasoning item-ების გარეშე → 400 ხომ არ არის gpt-6-luna-ზე (თუ კი — `include=["reasoning.encrypted_content"]` და reasoning item-ების გადაცემა); `strict: true` tool-ები gpt-6-luna-ზე; Claude Haiku 5.5-ზე `tool_choice: {"type": "none"}` და tools + 1h cache-ის ერთად მუშაობა (`cache_read_input_tokens` მე-2 გამოძახებაზე); რამდენ შეტყობინებაზე იძახებს მოდელი tool-ს „ზედმეტად" (`llm_usage`-ის მწკრივები / შეტყობინება).
 - ვარაუდი (Stage 16): შაბლონების ფრაზები (ka/en/ru) და ტექსტები, summary-ის სიგრძე (≤1200) და ჭრის ზღვრები (16 → 8) — არქიტექტორის; მფლობელმა გადახედოს ტონს.
 - privacy.html §6 („საუბრები — ბოლო N შეტყობინება"): Stage 16-დან იმავე მწკრივში ინახება ძველი შეტყობინებების მოკლე summary (PII-ის გარეშე ინსტრუქციით) — ფორმულირების განახლება საჭიროა? (frontend task, მფლობელის გადაწყვეტილება).
+- ვარაუდი (Stage 17, /auto — მფლობელმა გადახედოს): PDF-ის ტექსტის ჭერი 50 000 (ადრე 20 000); FAQ ≤3000 სიმბოლო / 1500 output ტოკენი / 40 წმ / ≤25 წყვილი `Q:`/`A:` ფორმატით; ლიმიტი 10 ატვირთვა/სთ IP-ზე; FAQ-ის გარეშე ბოტი ძველ 20000-იან ცოდნას იყენებს; `knowledge_chunks` ცხრილი არ არის; ქართული „ფუძის" წესი ძებნაში (Decision Log 2026-10-29, Stage 17).
+- Stage 17, დასადასტურებელი პირველ რეალურ ატვირთვაზე (offline ვერ მოწმდება): FAQ-ის ხარისხი ქართულ დოკუმენტზე (ფაქტები უცვლელად, არაფერი მოგონილი); 1500 ტოკენი 20 წმ-იან მცდელობაში ეტევა თუ არა; ~45 წმ-იანი მოთხოვნა Render-ზე; არსებული ცოდნიანი მაღაზიები — PDF-ის ხელახალი ატვირთვა თუ backfill სკრიპტი (Backlog)?
