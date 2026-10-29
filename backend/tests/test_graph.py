@@ -243,6 +243,21 @@ def test_long_message_with_a_greeting_goes_to_the_agent(h):
     assert result.route == "agent" and len(h.requests) == 1
 
 
+def test_greeting_word_inside_a_question_goes_to_the_agent(h):
+    h.script = [h.text("დიახ, გვაქვს")]
+    result = run("სალამი გაქვთ?")
+    assert result.route == "agent" and result.text == "დიახ, გვაქვს"
+    assert len(h.requests) == 1
+    last = h.requests[0]["messages" if h.flavour == "claude" else "input"][-1]
+    assert "სალამი გაქვთ?" in json.dumps(last, ensure_ascii=False)
+
+
+def test_plain_greeting_word_is_a_template_with_no_llm_call(h):
+    result = run("სალამი")
+    assert result.route == "template"
+    assert h.requests == [] and h.factory_calls == 0
+
+
 # ---------------------------------------------------------------------------
 # (2) one plain answer
 # ---------------------------------------------------------------------------

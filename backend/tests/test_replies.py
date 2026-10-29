@@ -136,6 +136,45 @@ def test_longer_messages_do_not_match(message):
     assert match_template(message, "ka") is None
 
 
+@pytest.mark.parametrize(
+    "message, intent",
+    [
+        ("სალამი", "greeting"),
+        ("სალამი!", "greeting"),
+        ("  გამარჯობა 😊 ", "greeting"),
+        ("Hello!", "greeting"),
+        ("привет", "greeting"),
+    ],
+)
+def test_whole_message_greeting_matches(message, intent):
+    m = match_template(message, "auto")
+    assert m is not None and m.intent == intent
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "სალამი გაქვთ?",
+        "სალამი რა ღირს?",
+        "გამარჯობა, წითელი მაისური გაქვთ?",
+        "hello do you have red shirts",
+        "привет есть ли футболки",
+        "სალამი 200 გრამი",
+        "მადლობა, კიდევ ერთი კითხვა მაქვს",
+        "ოპერატორი რა ღირს?",
+        "thanks, do you have this in blue?",
+        "спасибо, есть ли доставка?",
+        "ოპერატორი გაქვთ?",
+        "human size shoes do you have?",
+        "მადლობა რა ღირს?",
+        "operator, how much is it?",
+    ],
+)
+def test_phrase_combined_with_other_words_goes_to_the_agent(message):
+    assert match_template(message, "auto") is None
+    assert match_template(message, "ka") is None
+
+
 @pytest.mark.parametrize("message", ["", "   ", "😊", "!!!", None])
 def test_empty_message_does_not_match(message):
     assert match_template(message, "auto") is None
