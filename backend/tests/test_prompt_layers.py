@@ -573,3 +573,133 @@ def test_match_products_no_match_and_empty_inputs():
 def test_public_helper_aliases():
     assert P.product_line({"name": "A", "price": 5, "quantity": 1}, "GEL") == "- A — 5 GEL, in stock: 1"
     assert P.currency_of({"currency": None}) == "GEL" and P.currency_of({"currency": "USD"}) == "USD"
+
+
+# (12) Stage 18: image_description in search, extra_query / photo_query, rank_products
+_JEANS = {"id": "0020", "name": "Item 20", "price": 90, "quantity": 2,
+          "image_description": "EN: blue denim jeans, straight cut.\nKA: ჯინსი, ლურჯი"}
+
+
+def _catalogue_with_jeans(n=40):
+    return [dict(p) for p in _products(n)] + [dict(_JEANS, id="9999", name="Item 9999")]
+
+
+def test_match_products_finds_by_image_description_only():
+    products = [
+        {"id": "a", "name": "Item A", "description": "plain"},
+        {"id": "b", "name": "Item B", "image_description": "EN: blue denim jeans\nKA: ჯინსი, ლურჯი"},
+    ]
+    assert [p["id"] for p in match_products(products, "denim", 5)] == ["b"]
+    assert [p["id"] for p in match_products(products, "ჯინსი", 5)] == ["b"]
+    assert match_products(products, "satin", 5) == []
+    # the description of a product without image_description (None / missing) does not break the haystack
+    assert match_products([{"id": "c", "name": "N", "image_description": None}], "denim", 5) == []
+
+
+def test_select_relevant_products_extra_query_widens_a_generic_message():
+    products = _catalogue_with_jeans()
+    assert len(products) > RETRIEVE_LIMIT
+    generic = "ეს გაქვთ?"  # stopwords only -> without extra_query: the first 30 by order
+    without = P.select_relevant_products(products, generic)
+    assert without == P.select_relevant_products(products, generic, None, RETRIEVE_LIMIT, extra_query=None)
+    assert all(p["id"] != "9999" for p in without)
+    with_photo = P.select_relevant_products(products, generic, extra_query="blue denim jeans")
+    assert with_photo[0]["id"] == "9999"
+    assert len(with_photo) <= RETRIEVE_LIMIT
+    # empty / non-str extra_query behaves like None
+    assert P.select_relevant_products(products, generic, extra_query="") == without
+    assert P.select_relevant_products(products, generic, extra_query=123) == without
+    # small catalogue: all of them, extra_query irrelevant
+    small = _products(5)
+    assert P.select_relevant_products(small, "x", extra_query="denim") == small
+
+
+def test_build_prompt_photo_query_reaches_relevant_list_but_not_layer2():
+    products = _catalogue_with_jeans()
+    base = build_prompt(SHOP, products, "ეს გაქვთ?")
+    photo = build_prompt(SHOP, products, "ეს გაქვთ?", photo_query="blue denim jeans")
+    assert "Item 9999" not in _final_text(base)
+    assert "Item 9999" in _final_text(photo)
+    assert photo.layer1 == base.layer1 and photo.layer2 == base.layer2
+
+
+def test_build_prompt_photo_query_none_is_byte_identical_to_old_call():
+    cases = [
+        (_products(5), "hi", None),
+        (_products(40), "Item 33", [{"role": "user", "content": "Item 7"}, {"role": "bot", "content": "ok"}]),
+        (_catalogue_with_jeans(), "ეს გაქვთ?", None),
+    ]
+    for products, message, history in cases:
+        old = build_prompt(SHOP, products, message, history)
+        new = build_prompt(SHOP, products, message, history, photo_query=None)
+        assert (new.layer1, new.layer2, new.history, new.final) == (old.layer1, old.layer2, old.history, old.final)
+        assert build_prompt(SHOP, products, message, history, photo_query="").final == old.final
+
+
+def test_layer2_byte_identical_with_and_without_image_description():
+    for n in (12, RETRIEVE_LIMIT, RETRIEVE_LIMIT + 10):
+        plain = _products(n)
+        described = [dict(p, image_description=f"EN: blue denim jeans {p['id']}\nKA: ჯინსი, ლურჯი") for p in plain]
+        assert build_layer2(SHOP, described).encode("utf-8") == build_layer2(SHOP, plain).encode("utf-8")
+        assert "denim" not in build_layer2(SHOP, described)
+        # the product line itself never shows the description
+        assert "denim" not in P.product_line(described[0], "GEL")
+    # >30: the relevant-products part of the final turn does not show it either
+    p = build_prompt(SHOP, [dict(x, image_description="EN: zebra stripes") for x in _products(40)], "Item 3")
+    assert "zebra" not in _final_text(p)
+
+
+def test_rank_products_matched_first_by_score_then_sort_key():
+    products = [
+        {"id": "e", "name": "Plain socks"},
+        {"id": "c", "name": "Red cap"},
+        {"id": "a", "name": "Red shirt", "description": "cotton"},
+        {"id": "b", "name": "Blue shirt", "sku": "red-1"},
+        {"id": "d", "name": "Green socks"},
+        {"id": "f", "name": "Item f", "image_description": "EN: red cotton shirt"},
+    ]
+    # "red cotton shirt": f = 3, a = 3 (red, shirt, cotton), b = 2, c = 1, rest by _sort_key (d, e)
+    ranked = P.rank_products(products, "red cotton shirt")
+    assert [p["id"] for p in ranked] == ["a", "f", "b", "c", "d", "e"]
+    assert all(any(r is p for p in products) for r in ranked) and len(ranked) == len(products)
+
+
+def test_rank_products_independent_of_input_order_and_without_duplicates():
+    products = _catalogue_with_jeans(12)
+    expected = [p["id"] for p in P.rank_products(products, "blue denim jeans")]
+    assert expected[0] == "9999" and len(expected) == len(set(expected)) == len(products)
+    assert expected[1:] == sorted(expected[1:])  # nothing else matches -> _sort_key order (ids)
+    for seed in range(3):
+        shuffled = products[:]
+        random.Random(seed).shuffle(shuffled)
+        assert [p["id"] for p in P.rank_products(shuffled, "blue denim jeans")] == expected
+        assert [p["id"] for p in P.rank_products(list(reversed(shuffled)), "blue denim jeans")] == expected
+
+
+def test_rank_products_empty_query_and_empty_products():
+    products = list(reversed(_products(6)))
+    sorted_ids = [p["id"] for p in sorted(products, key=P._sort_key)]
+    for q in ("", None, "მინდა რა", "   "):  # empty / stopwords only
+        assert [p["id"] for p in P.rank_products(products, q)] == sorted_ids
+    assert P.rank_products([], "denim") == [] and P.rank_products(None, "denim") == []
+
+
+# (13) Stage 18: L1 rule 12 and the reference-photo header
+def test_layer1_rule12_mentions_up_to_three_and_search_products():
+    rule12 = next(ln for ln in LAYER1.splitlines() if ln.startswith("12. "))
+    assert "up to three" in rule12 and "search_products" in rule12
+    assert "If the shop's products have photos" not in rule12
+
+
+def test_reference_block_header_is_the_stage18_text():
+    refs = [("• Item 3 — 13", (b"ref1", "image/jpeg"))]
+    p = build_prompt(SHOP, _products(5), "this?", images=[(b"img", "image/jpeg")], product_refs=refs)
+    header = next(x["text"] for x in p.final if x["type"] == "text" and x["text"].startswith("🛍️"))
+    assert header == (
+        "🛍️ Reference photos of up to 3 inventory products that look closest to the customer's photo "
+        "follow (other products may have photos too). Compare them with the customer's photo. If one "
+        "matches (the same or a very similar item), name exactly that product with its price and stock. "
+        "If none matches, check the inventory by name and description, then describe what you see and "
+        "ask the customer to clarify:"
+    )
+    assert "{" not in header
