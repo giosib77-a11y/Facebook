@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -422,7 +422,8 @@ def _write_knowledge(shop_id: uuid.UUID, payload: dict):
     """ცოდნის ჩაწერა service client-ით (ერთი update, ფილტრი `id` კოდში). თუ migration 0027 ჯერ არ არის
     გაშვებული (შეცდომა `knowledge_faq` სვეტზე), იგივე update ამ გასაღების გარეშე — ატვირთვა მაინც ინახება.
     სხვა შეცდომა ვრცელდება როგორც ადრე (APIError → HTTP, `run`-ით). `run` production-ში ბაზის ტექსტს
-    ფარავს, ამიტომ სვეტის შეცდომას execute-ზე ვცნობთ, `run`-მდე."""
+    ფარავს, ამიტომ სვეტის შეცდომას execute-ზე ვცნობთ, `run`-მდე.
+    აბრუნებს `(res, faq_column_ok)`; `False` = სვეტი არ არის და ეს ჩაწერა მის გარეშე მოხდა."""
     missing: list[bool] = []
 
     def attempt(data: dict):
@@ -439,14 +440,35 @@ def _write_knowledge(shop_id: uuid.UUID, payload: dict):
         return run(SimpleNamespace(execute=execute))
 
     try:
-        return attempt(payload)
+        return attempt(payload), True
     except Exception:
         if not missing:
             raise
     if not _faq_column_warned[0]:
         _faq_column_warned[0] = True
         logger.warning("shops.knowledge_faq missing (migration 0027 not applied) - knowledge FAQ disabled")
-    return attempt({k: v for k, v in payload.items() if k != "knowledge_faq"})
+    return attempt({k: v for k, v in payload.items() if k != "knowledge_faq"}), False
+
+
+def _build_and_save_faq(shop_id: uuid.UUID, text: str) -> None:
+    """Background (upload-ის response-ის შემდეგ): FAQ → `knowledge_faq`. **არასდროს აგდებს**; ლოგში მხოლოდ
+    shop id და exception-ის კლასი. FAQ ინახება მხოლოდ თუ მაღაზიის ცოდნა ჯერ ისევ **იგივე ტექსტია**:
+    შუალედში ხელახალი ატვირთვა (სხვა ტექსტი) ან წაშლა (`knowledge = null`) ძველ FAQ-ს არ მიიღებს.
+    დარდება ტექსტის პირდაპირი შედარებით (წაკითხვა → შედარება → ჩაწერა), არა `updated_at`-ით: `shops`-ის
+    trigger (0001) ყოველ update-ზე, მათ შორის სახელის/აღწერის ცვლილებაზე, მას ცვლის და FAQ-ს უსაფუძვლოდ
+    დაბლოკავდა; 50K სიმბოლოიანი `knowledge` კი URL-ის ფილტრში არ ეტევა. შედარებიდან ჩაწერამდე რჩება
+    მილიწამების ფანჯარა; მასში ხელახლა ატვირთულ ტექსტს თავისი FAQ მაინც გადააწერს."""
+    try:
+        faq = build_faq(str(shop_id), text)  # არასდროს აგდებს; None → ჩაწერა არ სჭირდება (null უკვე ჩაწერილია)
+        if faq is None:
+            return
+        sc = get_service_client()
+        cur = sc.table("shops").select("knowledge").eq("id", str(shop_id)).limit(1).execute()
+        if not cur.data or cur.data[0].get("knowledge") != text:
+            return  # შუალედში სხვა ტექსტი ატვირთეს ან ცოდნა წაშალეს — ეს FAQ მოძველებულია
+        sc.table("shops").update({"knowledge_faq": faq}).eq("id", str(shop_id)).execute()
+    except Exception as exc:
+        logger.warning("knowledge FAQ save failed (shop=%s, %s)", shop_id, type(exc).__name__)
 
 
 @router.post(
@@ -456,12 +478,15 @@ def _write_knowledge(shop_id: uuid.UUID, payload: dict):
 )
 def upload_knowledge(
     shop_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
 ):
-    """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახება მაღაზიის ცოდნად (ბოტი იყენებს). Stage 17: ტექსტიდან
-    ერთი LLM გამოძახებით მოკლე FAQ იქმნება (`knowledge_faq`; ჩავარდნაზე `None`, ატვირთვა მაინც ინახება);
-    ყველაფერი ერთ ჩაწერაშია. ლიმიტი 10/საათში (IP-ზე), რადგან ატვირთვა LLM-ს ხარჯავს."""
+    """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახება მაღაზიის ცოდნად (ბოტი იყენებს) ერთი ჩაწერით
+    (`knowledge_faq = null`) და response მაშინვე ბრუნდება. Stage 17: ტექსტიდან მოკლე FAQ (`knowledge_faq`)
+    ერთი LLM გამოძახებით background-ში იქმნება და ინახება, თუ ცოდნა ჯერ ისევ იგივეა; მანამდე (ან
+    ჩავარდნაზე) ბოტი ძველებურად მუშაობს — ცოდნის პირველი 20 000 სიმბოლო. ლიმიტი 10/საათში (IP-ზე),
+    რადგან ატვირთვა LLM-ს ხარჯავს."""
     # PDF ცოდნა — მხოლოდ ფასიან პაკეტზე (ტიპის შემოწმება + მფლობელობა RLS-ით)
     shop = run(
         auth.client.table("shops").select("subscription_tier").eq("id", str(shop_id)).limit(1)
@@ -489,13 +514,15 @@ def upload_knowledge(
 
     # ჩაწერა service client-ით (0022: authenticated-ს knowledge* სვეტებზე UPDATE აღარ აქვს);
     # მფლობელობა ზემოთ auth.client-ის RLS select-ით უკვე დადასტურდა.
-    faq = build_faq(str(shop_id), text)  # არასდროს აგდებს; None → ძველი FAQ არ რჩება
-    res = _write_knowledge(
+    # knowledge_faq: None — ძველი დოკუმენტის FAQ ახალ ტექსტს არ რჩება
+    res, faq_column_ok = _write_knowledge(
         shop_id,
-        {"knowledge": text, "knowledge_filename": (file.filename or "")[:255], "knowledge_faq": faq},
+        {"knowledge": text, "knowledge_filename": (file.filename or "")[:255], "knowledge_faq": None},
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    if faq_column_ok:  # 0027 არ არის გაშვებული → FAQ-ის LLM გამოძახება აზრს მოკლებულია
+        background_tasks.add_task(_build_and_save_faq, shop_id, text)
     return res.data[0]
 
 
@@ -507,7 +534,7 @@ def clear_knowledge(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_
     owned = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not owned.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    res = _write_knowledge(
+    res, _ = _write_knowledge(
         shop_id, {"knowledge": None, "knowledge_filename": None, "knowledge_faq": None}
     )
     if not res.data:

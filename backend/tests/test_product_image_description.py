@@ -3,14 +3,21 @@
 
 Offline: fake Claude client, fake user/service Supabase (conftest), monkeypatched download - no network,
 no .env. The description is never part of an API response."""
+import asyncio
 import logging
+import uuid
 from types import SimpleNamespace
 
 import pytest
+from fastapi import BackgroundTasks
 from postgrest.exceptions import APIError
 
+from app.api import products
 from app.core import ratelimit
+from app.core.security import CurrentAuth
+from app.models.product import ProductCreate, ProductUpdate
 from app.services import facebook, llm, vision
+from conftest import USER_ID, FakeQuery, FakeResult
 
 SHOP = "22222222-2222-2222-2222-222222222222"
 OTHER_SHOP = "33333333-3333-3333-3333-333333333333"
@@ -63,6 +70,8 @@ class World:
         self.script: list = []  # a response or an Exception; empty -> the default description
         self.downloads: list[str] = []
         self.factory_calls = 0
+        self.on_call = None  # hook run inside the LLM call (simulates something happening meanwhile)
+        self.inserts_at_call: list[int] = []  # product inserts already done when the LLM was called
         self.settings = llm.get_settings()
         service_db.storage = FakeStorage()
         monkeypatch.setattr(llm, "get_settings", lambda: self.settings)
@@ -70,6 +79,9 @@ class World:
 
         def create(**kwargs):
             self.requests.append(kwargs)
+            self.inserts_at_call.append(len(service_db.calls_for("products", "insert")))
+            if self.on_call:
+                self.on_call()
             item = self.script.pop(0) if self.script else _claude_response()
             if isinstance(item, Exception):
                 raise item
@@ -192,10 +204,11 @@ def test_create_without_own_photo_makes_no_llm_call_and_no_update(client, world,
 def test_update_to_a_new_own_photo_saves_a_description_for_that_url(client, world):
     r = _update(client, world, OLD_URL, {"image_url": OWN_URL})
     assert r.status_code == 200, r.text
-    assert len(world.desc_updates) == 1
-    upd = world.desc_updates[0]
-    assert upd.payload == {"image_description": DESC}
-    assert _filters(upd) == [("eq", "id", PRODUCT), ("eq", "shop_id", SHOP), ("eq", "image_url", OWN_URL)]
+    # the old photo's description is cleared at once (it does not describe the new photo), then the new
+    # one is written by the background task; both only while the row still has the new photo
+    assert [u.payload for u in world.desc_updates] == [{"image_description": None}, {"image_description": DESC}]
+    for upd in world.desc_updates:
+        assert _filters(upd) == [("eq", "id", PRODUCT), ("eq", "shop_id", SHOP), ("eq", "image_url", OWN_URL)]
     assert len(world.requests) == 1
     assert "image_description" not in r.json()
     # the old photo is still removed from Storage (existing behaviour)
@@ -311,6 +324,118 @@ def test_describe_raising_unexpectedly_is_contained(client, world, monkeypatch, 
     assert r.status_code == 201, r.text
     assert "ValueError" in _warnings(caplog, "image description failed")[0].getMessage()
     assert "მაისური" not in _log_text(caplog)
+
+
+# ---------------------------------------------------------------------------
+# the description is a background task: the save returns first
+# ---------------------------------------------------------------------------
+def _auth(world):
+    return CurrentAuth(user_id=USER_ID, email="s@t.local", client=world.user_db)
+
+
+def _direct_create(world, tasks, image_url=OWN_URL):
+    world.user_db.responses[("shops", "select")] = [{"id": SHOP}]
+    world.db.responses[("products", "insert")] = [_row(image_url)]
+    payload = ProductCreate(shop_id=SHOP, name="x", price=1, quantity=1, image_url=image_url)
+    return products.create_product(payload, tasks, _auth(world))
+
+
+def test_create_handler_returns_before_any_download_or_llm_call(world):
+    """Called directly: when the handler returns, no photo was fetched and the LLM did not run;
+    the description is a queued task that runs after the response."""
+    tasks = BackgroundTasks()
+    out = _direct_create(world, tasks)
+    assert out["id"] == PRODUCT
+    assert world.downloads == [] and world.requests == [] and world.desc_updates == []
+    assert len(tasks.tasks) == 1
+    asyncio.run(tasks())
+    assert world.downloads == [OWN_URL] and len(world.requests) == 1
+    assert [u.payload for u in world.desc_updates] == [{"image_description": DESC}]
+
+
+def test_update_handler_clears_now_and_queues_the_description(world):
+    world.user_db.responses[("products", "select")] = [{"shop_id": SHOP, "image_url": OLD_URL}]
+    world.user_db.responses[("products", "update")] = [_row(OWN_URL)]
+    tasks = BackgroundTasks()
+    products.update_product(uuid.UUID(PRODUCT), ProductUpdate(image_url=OWN_URL), tasks, _auth(world))
+    assert world.requests == [] and world.downloads == []
+    assert [u.payload for u in world.desc_updates] == [{"image_description": None}]  # old text gone at once
+    assert len(tasks.tasks) == 1
+    asyncio.run(tasks())
+    assert [u.payload for u in world.desc_updates] == [{"image_description": None}, {"image_description": DESC}]
+
+
+def test_llm_runs_only_after_the_product_is_inserted(client, world):
+    assert _create(client, world, OWN_URL).status_code == 201
+    assert world.inserts_at_call == [1]
+
+
+@pytest.mark.parametrize("url", [None, "https://cdn.example.com/x.jpg", f"{PUBLIC}/{OTHER_SHOP}/x.jpg"])
+def test_no_background_task_for_a_missing_or_foreign_photo(world, url):
+    tasks = BackgroundTasks()
+    _direct_create(world, tasks, url)
+    assert tasks.tasks == []
+
+
+def test_no_background_task_when_the_hourly_limit_is_hit(world, caplog):
+    for _ in range(products.IMAGE_DESCRIBE_PER_HOUR):
+        assert ratelimit.allow("image_describe", SHOP, products.IMAGE_DESCRIBE_PER_HOUR, 3600)
+    tasks = BackgroundTasks()
+    with caplog.at_level(logging.WARNING):
+        out = _direct_create(world, tasks)
+    assert out["id"] == PRODUCT  # the product is saved regardless
+    assert tasks.tasks == []  # nothing scheduled, so nothing runs later
+    assert len(_warnings(caplog, "image description skipped: hourly limit")) == 1
+    # the next shop is unaffected
+    assert ratelimit.allow("image_describe", OTHER_SHOP, products.IMAGE_DESCRIBE_PER_HOUR, 3600)
+
+
+def test_the_limit_is_counted_when_scheduling_not_when_running(world):
+    tasks = BackgroundTasks()
+    _direct_create(world, tasks)
+    assert len(ratelimit._HITS["image_describe"][SHOP]) == 1  # counted before the background task ran
+
+
+class StatefulProducts(FakeQuery):
+    """products updates are applied to one in-memory row, honouring the eq filters like Postgres would."""
+
+    def execute(self):
+        if self.table == "products" and self.op == "update":
+            self._db.calls.append(self)
+            row = self._db.row
+            if all(row.get(c) == v for kind, c, v in self.filters if kind == "eq"):
+                row.update(self.payload)
+                return FakeResult([dict(row)])
+            return FakeResult([])
+        return super().execute()
+
+
+@pytest.fixture
+def row_db(world):
+    world.db.row = {"id": PRODUCT, "shop_id": SHOP, "image_url": OWN_URL, "image_description": None}
+    world.db.table = lambda name: StatefulProducts(world.db, name)
+    return world.db
+
+
+def test_background_description_lands_when_the_photo_is_unchanged(client, world, row_db):
+    assert _create(client, world, OWN_URL).status_code == 201
+    assert row_db.row["image_description"] == DESC
+
+
+def test_photo_changed_during_the_background_run_gets_no_stale_description(client, world, row_db, caplog):
+    world.on_call = lambda: row_db.row.update(image_url=f"{PUBLIC}/{SHOP}/newer.png")
+    with caplog.at_level(logging.WARNING):
+        assert _create(client, world, OWN_URL).status_code == 201
+    assert len(world.requests) == 1  # the description of the first photo was generated ...
+    assert row_db.row["image_description"] is None  # ... but not written onto the row of the newer photo
+    assert world.desc_updates[-1].payload == {"image_description": DESC}
+    assert ("eq", "image_url", OWN_URL) in _filters(world.desc_updates[-1])
+
+
+def test_product_gone_during_the_background_run_writes_nothing(client, world, row_db):
+    world.on_call = lambda: row_db.row.update(id="55555555-5555-5555-5555-555555555555")
+    assert _create(client, world, OWN_URL).status_code == 201
+    assert row_db.row["image_description"] is None
 
 
 # ---------------------------------------------------------------------------

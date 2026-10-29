@@ -3,7 +3,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from postgrest.exceptions import APIError
 
 from app.core import ratelimit
@@ -74,23 +74,40 @@ def _remove_image(path: str, shop_id) -> None:
         logger.warning("product image removal failed for shop %s", shop_id)
 
 
-def _refresh_image_description(product_id, shop_id, image_url, *, clear: bool) -> None:
-    """პროდუქტის ფოტოს აღწერა (Stage 18) — პროდუქტი უკვე შენახულია, ამიტომ **არასდროს აგდებს**.
+def _describe_in_background(product_id, shop_id, image_url) -> None:
+    """Background (response-ის შემდეგ): ფოტო → აღწერა (ჩამოტვირთვა + LLM) → ჩაწერა. **არასდროს აგდებს**.
+    ჩაწერა `image_url`-ზე პირობითია (`save_image_description`): თუ ფოტო შუალედში შეიცვალა ან პროდუქტი
+    წაიშალა, მოძველებული აღწერა არ ჩაიწერება. ჩავარდნაზე არაფერი იწერება (აღწერა ისედაც null-ია)."""
+    try:
+        description = vision.describe_product_image(str(shop_id), image_url)
+        if description is not None:
+            vision.save_image_description(get_service_client(), product_id, shop_id, image_url, description)
+    except Exception as exc:
+        logger.warning("image description failed (shop=%s, %s)", shop_id, type(exc).__name__)
 
-    ამ მაღაზიის საკუთარი Storage ფოტო → აღწერა (30/სთ მაღაზიაზე) და ჩაწერა `image_url`-ზე
-    პირობითად. `clear=True` (update): ახალი ფოტო უაღწერო / მოხსნილია / გარეა → ძველი აღწერა
-    `null`-ით იცვლება LLM-ის გარეშე. `clear=False` (create): ჩავარდნაზე არაფერი (default null)."""
+
+def _refresh_image_description(
+    background_tasks: BackgroundTasks, product_id, shop_id, image_url, *, clear: bool
+) -> None:
+    """პროდუქტის ფოტოს აღწერა (Stage 18) — პროდუქტი უკვე შენახულია, ამიტომ **არასდროს აგდებს** და
+    response-ს არ აგვიანებს: LLM background task-ია, აქ მხოლოდ დაგეგმვაა.
+
+    `clear=True` (update, ფოტო შეიცვალა): ძველი ფოტოს აღწერა მაშინვე `null`-დება (ერთი DB ჩაწერა, LLM-ის
+    გარეშე; `image_url`-ზე პირობით) — ახალ ფოტოს ძველის აღწერა არ ეკუთვნის. ამ მაღაზიის საკუთარი Storage
+    ფოტო + ლიმიტი (30/სთ მაღაზიაზე, მოწმდება აქ, დაგეგმვისას) → background task. გარე/სხვა მაღაზიის ფოტოს
+    არ აღწერს. background-ის დასრულებამდე ბოტი ძველებურად მუშაობს (აღწერის გარეშე)."""
     try:
         if not shop_id or not vision.descriptions_enabled():
             return
-        description = None
-        if _own_image_path(image_url, shop_id):
-            if ratelimit.allow("image_describe", str(shop_id), IMAGE_DESCRIBE_PER_HOUR, 3600):
-                description = vision.describe_product_image(str(shop_id), image_url)
-            else:
-                logger.warning("image description skipped: hourly limit (shop=%s)", shop_id)
-        if description is not None or clear:
-            vision.save_image_description(get_service_client(), product_id, shop_id, image_url, description)
+        own = bool(_own_image_path(image_url, shop_id))
+        if clear:
+            vision.save_image_description(get_service_client(), product_id, shop_id, image_url, None)
+        if not own:
+            return
+        if ratelimit.allow("image_describe", str(shop_id), IMAGE_DESCRIBE_PER_HOUR, 3600):
+            background_tasks.add_task(_describe_in_background, product_id, shop_id, image_url)
+        else:
+            logger.warning("image description skipped: hourly limit (shop=%s)", shop_id)
     except Exception as exc:
         logger.warning("image description failed (shop=%s, %s)", shop_id, type(exc).__name__)
 
@@ -137,13 +154,17 @@ def _product_limit_left(auth, shop_id) -> int | None:
 
 
 @router.post("", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
-def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_current_auth)):
+def create_product(
+    payload: ProductCreate,
+    background_tasks: BackgroundTasks,
+    auth: CurrentAuth = Depends(get_current_auth),
+):
     """ამატებს პროდუქტს. INSERT გამყიდველს ჩამორთმეული აქვს (0015) და ჩაწერა
     service_role-ით ხდება (RLS-ის გარეშე), ამიტომ მფლობელობა აქ ცალკე მოწმდება —
     ლიმიტის ლოგიკამდე. სხვისი მაღაზია → 404.
 
-    Stage 18: `image_url`-ის მქონე პროდუქტს insert-ის შემდეგ სინქრონულად ემატება ფოტოს
-    აღწერა (ფოტოიანი save ≤~35 წმ; ჩავარდნა პროდუქტს არ აფუჭებს)."""
+    Stage 18: `image_url`-ის მქონე პროდუქტს ფოტოს აღწერა response-ის შემდეგ, background-ში ემატება
+    (ჩავარდნა პროდუქტს არ აფუჭებს)."""
     owns = run(auth.client.table("shops").select("id").eq("id", str(payload.shop_id)).limit(1))
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
@@ -158,7 +179,9 @@ def create_product(payload: ProductCreate, auth: CurrentAuth = Depends(get_curre
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "პროდუქტის შექმნა ვერ მოხერხდა")
     row = res.data[0]
     if row.get("image_url"):
-        _refresh_image_description(row.get("id"), row.get("shop_id"), row["image_url"], clear=False)
+        _refresh_image_description(
+            background_tasks, row.get("id"), row.get("shop_id"), row["image_url"], clear=False
+        )
     return row
 
 
@@ -399,14 +422,15 @@ def list_products(
 def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
+    background_tasks: BackgroundTasks,
     auth: CurrentAuth = Depends(get_current_auth),
 ):
     """ანახლებს პროდუქტს. RLS-ის გამო მხოლოდ საკუთარი პროდუქტი იცვლება;
     წინააღმდეგ შემთხვევაში 404 (ვერ მოიძებნა / არ არის თქვენი).
 
-    Stage 18: თუ `image_url` შეიცვალა — ძველი აღწერა იცვლება ახლით (საკუთარი ახალი ფოტო,
-    სინქრონულად, ≤~35 წმ) ან `null`-ით (ფოტო მოხსნილია / გარეა; LLM-ის გარეშე).
-    სხვა ველის ცვლილებაზე აღწერა არ იცვლება."""
+    Stage 18: თუ `image_url` შეიცვალა — ძველი აღწერა მაშინვე `null`-დება (LLM-ის გარეშე), ხოლო საკუთარი
+    ახალი ფოტოს აღწერა response-ის შემდეგ, background-ში ჩაიწერება. სხვა ველის ცვლილებაზე აღწერა
+    არ იცვლება."""
     data = payload.model_dump(mode="json", exclude_unset=True)
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "განსაახლებელი ველი არ მითითებულა")
@@ -430,7 +454,9 @@ def update_product(
             _remove_image(old_path, old.get("shop_id"))
     if "image_url" in data and (old or {}).get("image_url") != data["image_url"]:
         # shop_id — სერვერის მწკრივიდან (RLS update უკვე მფლობელობას ადასტურებს)
-        _refresh_image_description(row.get("id"), row.get("shop_id"), data["image_url"], clear=True)
+        _refresh_image_description(
+            background_tasks, row.get("id"), row.get("shop_id"), data["image_url"], clear=True
+        )
     return row
 
 

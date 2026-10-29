@@ -1,10 +1,15 @@
-"""S17-4: upload_knowledge / clear_knowledge - FAQ on upload, one write, missing-0027 tolerance,
-rate limit, PDF text cap. Fake Claude client + fake Supabase only - no network, no .env."""
+"""S17-4: upload_knowledge / clear_knowledge - the upload is saved with one write and returns at once;
+the FAQ is generated in a background task and saved only if the shop's document is still the same;
+missing-0027 tolerance, rate limit, PDF text cap. Fake Claude client + fake Supabase only - no network,
+no .env. (TestClient runs background tasks after the response, before `post()` returns.)"""
+import asyncio
+import io
 import logging
 import uuid
 from types import SimpleNamespace
 
 import pytest
+from fastapi import BackgroundTasks, UploadFile
 from fastapi.testclient import TestClient
 from postgrest.exceptions import APIError
 
@@ -45,9 +50,14 @@ class Fake:
     def __init__(self, monkeypatch, service_db):
         self.requests = []
         self.script = []
+        self.on_call = None  # hook run inside the LLM call (simulates something happening meanwhile)
+        self.updates_at_call = []  # how many shops updates had already run when the LLM was called
 
         def create(**kwargs):
             self.requests.append(kwargs)
+            self.updates_at_call.append(len(service_db.calls_for("shops", "update")))
+            if self.on_call:
+                self.on_call()
             item = self.script.pop(0)
             if isinstance(item, Exception):
                 raise item
@@ -73,6 +83,8 @@ def _setup(monkeypatch):
 def paid(user_db, service_db):
     user_db.responses[("shops", "select")] = [{"id": SHOP_ID, "subscription_tier": "standard"}]
     service_db.responses[("shops", "update")] = [shop_row(knowledge_filename="k.pdf")]
+    # what the background task reads back to check the document is still the same
+    service_db.responses[("shops", "select")] = [{"knowledge": DOC}]
 
 
 def _faq_warnings(caplog):
@@ -80,22 +92,48 @@ def _faq_warnings(caplog):
             if r.levelno == logging.WARNING and "shops.knowledge_faq missing" in r.getMessage()]
 
 
-# (1) happy path: FAQ + one write
+def _warnings(caplog, needle):
+    return [r for r in caplog.records if r.levelno == logging.WARNING and needle in r.getMessage()]
 
-def test_paid_upload_builds_faq_and_writes_once(client, user_db, service_db, fake, paid):
+
+FIRST_WRITE = {"knowledge": DOC, "knowledge_filename": "k.pdf", "knowledge_faq": None}
+
+
+# (1) happy path: one write now, the FAQ in the background
+
+def test_paid_upload_writes_once_then_saves_faq_in_background(client, user_db, service_db, fake, paid):
     fake.script = [FAQ1]
     r = client.post(URL, files=PDF)
     assert r.status_code == 200
     body = r.json()
     assert "knowledge" not in body and "knowledge_faq" not in body
     updates = service_db.calls_for("shops", "update")
-    assert len(updates) == 1
-    assert updates[0].payload == {"knowledge": DOC, "knowledge_filename": "k.pdf", "knowledge_faq": FAQ1}
+    assert len(updates) == 2
+    assert updates[0].payload == FIRST_WRITE  # the upload itself: FAQ null, no LLM waited for
     assert ("eq", "id", SHOP_ID) in updates[0].filters
+    assert updates[1].payload == {"knowledge_faq": FAQ1}
+    assert ("eq", "id", SHOP_ID) in updates[1].filters  # pinned to this shop
     assert user_db.calls_for("shops", "update") == []
     usage = service_db.calls_for("llm_usage", "insert")
     assert len(usage) == 1 and usage[0].payload["shop_id"] == SHOP_ID
     assert len(fake.requests) == 1
+    assert fake.updates_at_call == [1]  # the LLM ran only after the upload had been written
+
+
+def test_handler_returns_before_any_llm_call(user_db, service_db, fake, paid):
+    """Called directly (no TestClient): when the handler returns, the LLM has not run; the FAQ is a queued task."""
+    fake.script = [FAQ1]
+    tasks = BackgroundTasks()
+    auth = CurrentAuth(user_id=USER_ID, email="s@t.local", client=user_db)
+    out = app.api.shops.upload_knowledge(
+        uuid.UUID(SHOP_ID), tasks, UploadFile(file=io.BytesIO(b"%PDF-1.4"), filename="k.pdf"), auth)
+    assert out["id"] == SHOP_ID
+    assert fake.requests == []
+    assert [u.payload for u in service_db.calls_for("shops", "update")] == [FIRST_WRITE]
+    assert len(tasks.tasks) == 1
+    asyncio.run(tasks())  # now the response is "sent": run the background work
+    assert len(fake.requests) == 1
+    assert [u.payload for u in service_db.calls_for("shops", "update")][1:] == [{"knowledge_faq": FAQ1}]
 
 
 # (2) rejected before any LLM call / write
@@ -152,9 +190,11 @@ def test_llm_failure_still_saves_with_null_faq(client, service_db, fake, paid, c
         r = client.post(URL, files=PDF)
     assert r.status_code == 200
     updates = service_db.calls_for("shops", "update")
-    assert len(updates) == 1
-    assert updates[0].payload == {"knowledge": DOC, "knowledge_filename": "k.pdf", "knowledge_faq": None}
-    assert any("knowledge FAQ failed" in r.getMessage() for r in caplog.records)
+    assert len(updates) == 1  # the FAQ stays null: nothing more is written
+    assert updates[0].payload == FIRST_WRITE
+    failed = _warnings(caplog, "knowledge FAQ failed")
+    assert len(failed) == 1 and "RuntimeError" in failed[0].getMessage()
+    assert DOC not in "\n".join(r.getMessage() for r in caplog.records)
 
 
 # (4) re-upload replaces the FAQ; a failed re-generation does not keep the old one
@@ -166,7 +206,65 @@ def test_reupload_replaces_faq_and_failure_clears_it(client, service_db, fake, p
     fake.script = [RuntimeError("boom")] * 4
     assert client.post(URL, files=PDF).status_code == 200
     payloads = [c.payload for c in service_db.calls_for("shops", "update")]
-    assert [p["knowledge_faq"] for p in payloads] == [FAQ1, FAQ2, None]
+    # every upload first nulls the FAQ; the failed third one never gets a new FAQ, so the old one is gone
+    assert [p.get("knowledge_faq", "-") for p in payloads] == [None, FAQ1, None, FAQ2, None]
+    assert "knowledge" in payloads[0] and "knowledge" in payloads[2] and "knowledge" in payloads[4]
+
+
+# (4b) stale background result: the document changed while the LLM was working
+
+def test_reupload_during_generation_drops_the_stale_faq(client, service_db, fake, paid):
+    def another_upload_lands():
+        service_db.responses[("shops", "select")] = [{"knowledge": "A NEWER DOCUMENT"}]
+
+    fake.on_call = another_upload_lands
+    fake.script = [FAQ1]
+    assert client.post(URL, files=PDF).status_code == 200
+    assert len(fake.requests) == 1
+    assert [u.payload for u in service_db.calls_for("shops", "update")] == [FIRST_WRITE]  # no FAQ write
+
+
+def test_clear_during_generation_drops_the_stale_faq(client, service_db, fake, paid):
+    fake.on_call = lambda: service_db.responses.__setitem__(("shops", "select"), [{"knowledge": None}])
+    fake.script = [FAQ1]
+    assert client.post(URL, files=PDF).status_code == 200
+    assert [u.payload for u in service_db.calls_for("shops", "update")] == [FIRST_WRITE]
+
+
+def test_shop_gone_during_generation_drops_the_faq(client, service_db, fake, paid):
+    fake.on_call = lambda: service_db.responses.__setitem__(("shops", "select"), [])
+    fake.script = [FAQ1]
+    assert client.post(URL, files=PDF).status_code == 200
+    assert [u.payload for u in service_db.calls_for("shops", "update")] == [FIRST_WRITE]
+
+
+def test_editing_name_during_generation_does_not_block_the_faq(client, service_db, fake, paid):
+    # a settings edit bumps shops.updated_at (trigger) but leaves the document alone
+    fake.on_call = lambda: service_db.responses.__setitem__(
+        ("shops", "select"), [{"knowledge": DOC, "name": "Renamed", "updated_at": "2026-12-12T00:00:00Z"}])
+    fake.script = [FAQ1]
+    assert client.post(URL, files=PDF).status_code == 200
+    assert [u.payload for u in service_db.calls_for("shops", "update")][1:] == [{"knowledge_faq": FAQ1}]
+
+
+def test_faq_save_error_in_background_is_contained(client, service_db, fake, paid, caplog):
+    fake.on_call = lambda: service_db.errors.__setitem__(("shops", "update"), RuntimeError("secret " + DOC))
+    fake.script = [FAQ1]
+    with caplog.at_level(logging.WARNING):
+        r = client.post(URL, files=PDF)
+    assert r.status_code == 200  # the upload itself was already saved and answered
+    saved = _warnings(caplog, "knowledge FAQ save failed")
+    assert len(saved) == 1 and "RuntimeError" in saved[0].getMessage()
+    assert "secret" not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_faq_read_error_in_background_is_contained(client, service_db, fake, paid, caplog):
+    fake.on_call = lambda: service_db.errors.__setitem__(("shops", "select"), RuntimeError("db down"))
+    fake.script = [FAQ1]
+    with caplog.at_level(logging.WARNING):
+        assert client.post(URL, files=PDF).status_code == 200
+    assert len(_warnings(caplog, "knowledge FAQ save failed")) == 1
+    assert [u.payload for u in service_db.calls_for("shops", "update")] == [FIRST_WRITE]
 
 
 # (5) migration 0027 not applied
@@ -201,6 +299,7 @@ def test_missing_column_retries_without_faq_and_warns_once(client, service_db, f
     assert saved == [{"knowledge": DOC, "knowledge_filename": "k.pdf"}] * 2
     assert len(service_db.attempts) == 2  # each upload tried the full payload first
     assert len(_faq_warnings(caplog)) == 1
+    assert fake.requests == []  # column missing -> no background FAQ, so no LLM call (no wasted cost)
 
 
 def test_missing_column_postgrest_error_also_tolerated(client, service_db, fake, paid):
@@ -209,6 +308,7 @@ def test_missing_column_postgrest_error_also_tolerated(client, service_db, fake,
     fake.script = [FAQ1]
     assert client.post(URL, files=PDF).status_code == 200
     assert len(service_db.calls_for("shops", "update")) == 1
+    assert fake.requests == []
 
 
 def test_other_write_error_propagates(user_db, service_db, fake, paid):
@@ -262,7 +362,19 @@ def test_eleventh_upload_in_an_hour_is_429(client, service_db, fake, paid):
     codes = [client.post(URL, files=PDF).status_code for _ in range(11)]
     assert codes == [200] * 10 + [429]
     assert len(fake.requests) == 10
-    assert len(service_db.calls_for("shops", "update")) == 10
+    assert len(service_db.calls_for("shops", "update")) == 20  # 10 uploads + 10 background FAQ writes
+
+
+# (7b) until the background FAQ lands the bot keeps the old behaviour: the 20000-char knowledge clip
+
+def test_bot_prompt_without_faq_uses_the_old_knowledge_clip():
+    from app.services import prompt
+
+    shop = {"name": "S", "currency": "GEL", "knowledge": "x" * 30_000, "knowledge_faq": None}
+    layer2 = prompt.build_layer2(shop, [])
+    head, _, clip = layer2.partition("SHOP KNOWLEDGE (from the shop's document)\n")
+    assert clip.startswith("x" * 19_000) and len(clip) <= prompt.KNOWLEDGE_CLIP_CHARS + 2  # clipped, not 30000
+    assert "short FAQ" not in layer2
 
 
 # (8) PDF text cap
