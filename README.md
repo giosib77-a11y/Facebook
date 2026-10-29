@@ -159,7 +159,8 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │           ├── llm.py           Claude Messages API / OpenAI Responses API · retry · usage → `llm_usage`
 │           ├── facebook.py      Graph API · Send API · SSRF-დაცული download_image
 │           ├── import_products.py  Excel/CSV პარსერი (all-or-nothing)
-│           └── pdf_extract.py   PDF → ტექსტი (ბოტის ცოდნა)
+│           ├── knowledge.py     ცოდნის FAQ: PDF-ის ტექსტიდან ერთი LLM გამოძახებით (≤3000 სიმბოლო, არასდროს აგდებს შეცდომას)
+│           └── pdf_extract.py   PDF → ტექსტი (ბოტის ცოდნა, ≤50 000 სიმბოლო)
 │
 ├── frontend/                    React + Vite (MPA)
 │   ├── *.html                   8 entry: landing, index, admin, order, reset,
@@ -230,8 +231,10 @@ LangGraph გამოიყენება **მხოლოდ wiring-ად**
 
 **სამი ფენა prompt-ში** (cache-ის გამო სტაბილური ნაწილი წინ დგას):
 - **L1** — ინგლისურად დაწერილი საერთო წესები, ყველა მაღაზიისთვის იდენტური (Claude cache 1 სთ)
-- **L2** — მაღაზიის სტაბილური ბლოკი: სახელი, აღწერა, ვალუტა, ენის წესი, შეკვეთის ლინკი, ცოდნა, მარაგი (≤30 პროდუქტი სრულად) (cache 5 წთ)
+- **L2** — მაღაზიის სტაბილური ბლოკი: სახელი, აღწერა, ვალუტა, ენის წესი, შეკვეთის ლინკი, ცოდნის FAQ (ან FAQ-ს გარეშე — ცოდნის პირველი 20 000 სიმბოლო), მარაგი (≤30 პროდუქტი სრულად) (cache 5 წთ)
 - **L3** — საუბრის ისტორია + კლიენტის ბოლო შეტყობინება (ავტომატური cache)
+
+**PDF-ცოდნა და FAQ (Stage 17):** PDF-ის ატვირთვისას ტექსტი (≤50 000 სიმბოლო) ინახება სრულად, და ერთი LLM გამოძახებით მისგან იქმნება მოკლე FAQ (≤3000 სიმბოლო, `shops.knowledge_faq`, მიგრაცია `0027`). prompt-ში (L2) FAQ ხვდება; სრულ ტექსტში `search_knowledge` ეძებს (ხაზებად დაყოფილი ნაწყვეტები, ქართული ფუძეებით შედარება). თუ FAQ ვერ შეიქმნა (LLM-ის შეცდომა ან key-ის უქონლობა), ატვირთვა მაინც ინახება, FAQ ცარიელია და prompt-ში ძველებურად ცოდნის პირველი 20 000 სიმბოლო ემატება. ცოდნის წაშლა FAQ-საც შლის. **არსებული მაღაზიები FAQ-ს მხოლოდ PDF-ის ხელახალი ატვირთვის შემდეგ იღებენ.** `0027`-ის გარეშე backend მუშაობს: FAQ გამორთულია, ატვირთვა ინახება, ლოგში ერთი WARNING.
 
 `llm.py` იძახებს არჩეულ provider-ს (Claude Messages API / OpenAI Responses API), SDK-ის retry გამორთულია, აქვს საკუთარი ერთი retry (ჯამი ≤45 წმ) და ყოველი გამოძახების usage-ს (ტოკენები, cache read/write) წერს `llm_usage`-ში.
 
@@ -302,8 +305,8 @@ DB-ოპერაციები სრულდება **მომხმა�
 | POST | `/shops` | მაღაზიის შექმნა |
 | GET | `/shops/me` | ჩემი მაღაზიები |
 | PATCH | `/shops/{id}` | განახლება (სახელი, ენა, ბოტის ჩართვა…) |
-| POST | `/shops/{id}/knowledge` | PDF ატვირთვა → ბოტის ცოდნა |
-| DELETE | `/shops/{id}/knowledge` | ცოდნის წაშლა |
+| POST | `/shops/{id}/knowledge` | PDF ატვირთვა → ბოტის ცოდნა + FAQ (ერთი LLM გამოძახება, შეიძლება ~40 წმ-მდე გასტანოს). ლიმიტი: 10 ატვირთვა/საათში IP-ზე, გადაჭარბებისას **429** |
+| DELETE | `/shops/{id}/knowledge` | ცოდნის და FAQ-ის წაშლა |
 | GET | `/shops/{id}/usage` | პაკეტი + კლიენტების მრიცხველი |
 | GET | `/shops/{id}/analytics` | ბოტის ანალიტიკა (top-terms, შეკითხვები) |
 | GET | `/shops/{id}/attention` | „ყურადღება სჭირდება" საუბრები |
@@ -365,7 +368,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 
 | ცხრილი | რა ინახება |
 |---|---|
-| `shops` | მაღაზია, მფლობელი, პაკეტი, FB/IG ID-ები, დაშიფრული token, ცოდნა, ენა |
+| `shops` | მაღაზია, მფლობელი, პაკეტი, FB/IG ID-ები, დაშიფრული token, ცოდნა + `knowledge_faq` (0027, nullable), ენა |
 | `products` | სახელი, ფასი, მარაგი, აღწერა, SKU, ფოტო, აქტიურობა |
 | `orders` | კლიენტის შეკვეთა, პოზიციები (JSON), ჯამი, სტატუსი |
 | `upgrade_requests` | პაკეტის მოთხოვნები (manual billing) |
@@ -376,7 +379,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (26)
+### მიგრაციები (27)
 
 | # | რა |
 |---|---|
@@ -406,8 +409,9 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0024` | 🔒 `upgrade_requests`: INSERT/UPDATE/DELETE მოხსნილია `authenticated`-დან, პოლისი `ur_owner_insert` იშლება; partial UNIQUE — მაქს. ერთი pending მაღაზიაზე. გაუშვი backend-ის deploy-ის **შემდეგ** |
 | `0025` | 🔒 `llm_usage` — LLM usage-ის აღრიცხვა (RLS ჩართული, პოლისების გარეშე, მხოლოდ `service_role`). გაუშვი backend deploy-**მდე** |
 | `0026` | `bot_conversations.summary` (text, nullable) — ძველი შეტყობინებების შეკუმშული ვერსია (Stage 16). ახალი პოლისი/უფლება არ არის. იდემპოტენტურია. გაუშვი Stage 16-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — summary გამორთულია, ლოგში ერთი WARNING |
+| `0027` | `shops.knowledge_faq` (text, nullable) — PDF-ცოდნის მოკლე FAQ (Stage 17). `authenticated`-ს ამ სვეტზე UPDATE არ აქვს (ჩაწერა მხოლოდ backend-ით). იდემპოტენტურია. გაუშვი Stage 17-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — FAQ გამორთულია, ლოგში ერთი WARNING |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.

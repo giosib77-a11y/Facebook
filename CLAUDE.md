@@ -22,7 +22,7 @@
 - typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (ერთჯერადი გაშვება, watch-ის გარეშე; 1440 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 1544 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
 - test frontend: `cd frontend && npm test`
   (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; ტესტები `src/**/*.test.{js,jsx}` ფაილის გვერდით)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
@@ -39,7 +39,7 @@
   `get_service_client()` მხოლოდ იქ, სადაც სესია არ არის (webhook, საჯარო შეკვეთა, storage, admin) —
   და მაშინ ownership ჯერ `auth.client`-ით მოწმდება ან ფილტრი კოდშია ცხადად.
 - ახალი SECURITY DEFINER ფუნქცია → იმავე მიგრაციაში `REVOKE EXECUTE ... FROM public, anon, authenticated`.
-- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0027_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
+- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0028_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
 - Frontend-ის ცვლილება → `npm run build` და `dist/` იმავე commit-ში. 8 `.html` სახელი არ იცვლება (URL-კონტრაქტი).
 - `backend/scripts/compare_providers.py` (Stage 15) — აგენტი **არასდროს** უშვებს (არც `--dry-run`): რეალური API + ხარჯი; მხოლოდ მფლობელი (README §9); ტესტები — fake client-ებით.
 - commit-ის სტილი: `fix(scope): ... (ID)` — აუდიტის მიგნების ID ფრჩხილებში.
