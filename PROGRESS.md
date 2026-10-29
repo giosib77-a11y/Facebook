@@ -81,6 +81,14 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `CLAUDE.md`: test-ის ხაზი — ზუსტი რაოდენობა ბოლო `pytest -q`-დან; „შემდეგი მიგრაცია `0028_...sql`"; `## Commands` ფორმატი უცვლელი; ≤50 ხაზი; `.claude/`-ს არ ეხება.
   - done when: CLAUDE.md ≤50 ხაზი (რაოდენობა report-ში); README-ში 0027 და run order; key-ის მნიშვნელობა/ნიმუში არსად; საერთო done-when (pytest/ruff/compileall უცვლელად მწვანე).
 
+### Finish-check (Stage 17, 2026-10-29) — should-fix (fix round 1)
+> code-reviewer: 0 critical, 1 should-fix, 3 nit, 2 შესამოწმებელი; security-auditor: 0 critical, 0 should-fix, 2 nit. should-fix კოდში დადასტურდა (`knowledge.py:63` — `_fit(clean_reply(result.text))`, `stop_reason`/`output_tokens` არ მოწმდება). reviewer-ებმა `.venv` python ვერ გაუშვეს (hook) — ორკესტრატორმა: pytest 1544, ruff/compileall სუფთა.
+
+- [ ] **S17-8 — should-fix: max_tokens-ზე მოჭრილი FAQ-ის ბოლო (ნახევარი) ხაზი L2-ში ფაქტად ხვდება** · owner: backend-dev · files: `backend/app/services/knowledge.py`, `backend/tests/test_knowledge.py` · depends: —
+  - მიზეზი: `build_faq` არ ამოწმებს, პასუხი `FAQ_MAX_TOKENS`-ზე შეწყდა თუ არა; `_fit` ხაზზე ჭრის მხოლოდ >3000 სიმბოლოზე. ქართულ PDF-ზე 1500 ტოკენში 2500 სიმბოლო შეიძლება არ ეტეოდეს (OpenAI-ზე reasoning-იც ამ ჭერშია) → ბოლო ხაზი `A: რეგიონებში მიწოდება ღირს 1` („15 ლარი"-ს ნაცვლად) იწერება `knowledge_faq`-ში → L1 წესი 9 ბოტს ამ ბლოკიდან პასუხს ავალებს → კლიენტს მცდარი ფასი/პირობა (PROJECT.md: „ბოტი არ იგონებს … ფასს"). იგივე ადგილზე: 3000-ზე ჭრა შეიძლება `Q:` ხაზზე დასრულდეს `A:`-ის გარეშე.
+  - Fix (`llm.py`-ის შეცვლის გარეშე): თუ `result.usage.output_tokens >= FAQ_MAX_TOKENS` → ბოლო ხაზი მოაცილე (ნებისმიერ შემთხვევაში, სანამ `clean_reply`/`_fit`); ბოლოს (ორივე ჭრის შემდეგ) ბოლოში დარჩენილი წყვილის გარეშე `Q:` ხაზ(ებ)ი მოაცილე; შედეგი ცარიელია → `None` (WARNING `empty`).
+  - done when: ტესტები — (1) fake პასუხი `output_tokens=1500` და ნახევარი ბოლო ხაზით → შედეგში ბოლო ხაზი არ არის, წინა სრული წყვილები რჩება; (2) `output_tokens < 1500` → ბოლო ხაზი რჩება; (3) >3000-იანი პასუხი, რომლის ჭრა `Q:`-ზე მთავრდება → ის `Q:` ამოღებულია; (4) ერთადერთი (მოჭრილი) ხაზი → `None` + WARNING; ორივე provider-ზე (Claude `usage.output_tokens`, OpenAI `usage.output_tokens`); ძველ კოდზე (1) და (3) ვარდება; საერთო done-when (1544 + ახალი).
+
 ## Stage 16 — Done
 Stage 16 — ბოტის გრაფი: preprocess (შაბლონები, LLM-ის გარეშე) → agent + 4 tool → postprocess; ისტორია 16 → ბოლო 8 + summary (0026); LangGraph 1.2.18 (S16-1 GO) (მფლობელის მოთხოვნა, 2026-10-28; „Stage C"). ID-ები S16-n; commit: `S16-n: ...`.
 დამხურავი commit: `005312c` (საბოლოო: pytest 1468 passed, frontend 29/29). Finish-check: done (2 აწეული → S16-11…13); fix rounds 1/2.
@@ -463,6 +471,14 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - privacy.html §6-ის ფორმულირება summary-ზე (Open Questions; frontend task, `npm run build` + `dist`).
 - `/test-chat`-ის 502 `detail`-ში exception-ის ტექსტი (`f"ბოტის შეცდომა: {e}"`, dev-only) — Stage 16-მდეც ასე იყო.
 
+### Stage 17 finish-check (nit, 2026-10-29)
+- 0027-ის გარეშე „FAQ გამორთულია", მაგრამ `upload_knowledge` ყოველ ატვირთვაზე მაინც იძახებს `build_faq`-ს (ხარჯი + ≤40 წმ + `llm_usage` რიგი, შედეგი retry-ში იყრება); fix: `_faq_column_warned[0]`-ზე `build_faq` გამოტოვება, ან docs-ში ამის თქმა.
+- მოკლე დოკუმენტზე (≤3000 სიმბოლო) FAQ სრულ ტექსტს L2-ში ანაცვლებს (ფაქტები იკარგება, გამოძახება ფუჭია); fix: `len(text.strip()) <= FAQ_MAX_CHARS` → `None` გამოძახების გარეშე (fallback სრულ ტექსტს აჩვენებს).
+- `test_knowledge_upload.py::test_other_postgrest_error_is_400_without_retry` „without retry"-ს არ ამოწმებს → `len(service_db.calls_for("shops","update")) == 1`.
+- admin `shop_detail`/`update_shop` (`admin.py` ~354, ~387) `knowledge`-ს `pop`-ავს, `knowledge_faq`-ს — არა (`select("*")`); მხოლოდ ადმინი ხედავს — მინიმიზაციის თანმიმდევრულობა.
+- `shops._write_knowledge` სვეტის არარსებობას `"knowledge_faq" in str(exc)`-ით ცნობს — `str(APIError)` `details`-საც შეიცავს (შეიძლება filename) → hardening: `exc.code in ("PGRST204","42703")` + `message`-ში სვეტის სახელი (ახლა უვნებელია: მეორე update იგივე შეცდომით ვარდება → 400).
+- ❓ FAQ-ის request და 100K-ის ზღვარი: 50K ქართული სიმბოლო byte-level tokenizer-ზე შეიძლება >100K ტოკენი იყოს (ცენტების სხვაობა ატვირთვაზე) — პირველ რეალურ ატვირთვაზე `llm_usage.input_tokens`-ით გასაზომი; საჭიროებისას `FAQ_INPUT_MAX_CHARS`-ის შემცირება.
+
 ### Stage 17 (დაგეგმვისას, 2026-10-29)
 - UI: FAQ-ის სტატუსი („FAQ შეიქმნა / ვერ შეიქმნა"), გადახედვა და ხელახლა გენერაციის ღილაკი `BotTab.jsx`-ში (frontend task, `npm run build` + `dist`; ახლა FAQ მხოლოდ ექსპორტში ჩანს). ამისთვის `ShopOut`-ს `knowledge_faq_present: bool` ან ცალკე GET.
 - არსებული ცოდნიანი მაღაზიების FAQ: backfill სკრიპტი (მფლობელი უშვებს, key-ების შემდეგ) ან გამყიდველების თხოვნა PDF-ის ხელახლა ატვირთვაზე.
@@ -492,8 +508,8 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 
 ## Run State
 - Stage: Stage 17 — PDF-ცოდნა: FAQ ატვირთვისას (L2) + ძებნა სრულ ტექსტში (0027)
-- Finish-check this stage: not run
-- Fix rounds this stage: 0/2
+- Finish-check this stage: done (code-reviewer 0/1/3 nit; security 0/0/2 nit → S17-8; nit-ები Backlog „Stage 17 finish-check")
+- Fix rounds this stage: 1/2
 - Failed attempts: —
 
 ## Last Session
