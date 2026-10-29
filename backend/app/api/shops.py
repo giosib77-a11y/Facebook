@@ -5,6 +5,7 @@ import re
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ from app.core.tiers import (
 )
 from app.models.shop import ShopCreate, ShopOut
 from app.services.bot_limits import enforce_bot_limit
+from app.services.knowledge import build_faq
 from app.services.pdf_extract import extract_pdf_text
 
 router = APIRouter(prefix="/shops", tags=["shops"])
@@ -412,13 +414,54 @@ def shop_analytics(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
     }
 
 
-@router.post("/{shop_id}/knowledge", response_model=ShopOut)
+# Stage 17: "shops.knowledge_faq missing" გაფრთხილება — პროცესზე მაქსიმუმ ერთხელ
+_faq_column_warned = [False]
+
+
+def _write_knowledge(shop_id: uuid.UUID, payload: dict):
+    """ცოდნის ჩაწერა service client-ით (ერთი update, ფილტრი `id` კოდში). თუ migration 0027 ჯერ არ არის
+    გაშვებული (შეცდომა `knowledge_faq` სვეტზე), იგივე update ამ გასაღების გარეშე — ატვირთვა მაინც ინახება.
+    სხვა შეცდომა ვრცელდება როგორც ადრე (APIError → HTTP, `run`-ით). `run` production-ში ბაზის ტექსტს
+    ფარავს, ამიტომ სვეტის შეცდომას execute-ზე ვცნობთ, `run`-მდე."""
+    missing: list[bool] = []
+
+    def attempt(data: dict):
+        query = get_service_client().table("shops").update(data).eq("id", str(shop_id))
+
+        def execute():
+            try:
+                return query.execute()
+            except Exception as exc:
+                if "knowledge_faq" in str(exc):
+                    missing.append(True)
+                raise
+
+        return run(SimpleNamespace(execute=execute))
+
+    try:
+        return attempt(payload)
+    except Exception:
+        if not missing:
+            raise
+    if not _faq_column_warned[0]:
+        _faq_column_warned[0] = True
+        logger.warning("shops.knowledge_faq missing (migration 0027 not applied) - knowledge FAQ disabled")
+    return attempt({k: v for k, v in payload.items() if k != "knowledge_faq"})
+
+
+@router.post(
+    "/{shop_id}/knowledge",
+    response_model=ShopOut,
+    dependencies=[Depends(rate_limit("knowledge_upload", 10, 3600))],
+)
 def upload_knowledge(
     shop_id: uuid.UUID,
     file: UploadFile = File(...),
     auth: CurrentAuth = Depends(get_current_auth),
 ):
-    """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახება მაღაზიის ცოდნად (ბოტი იყენებს)."""
+    """ტვირთავ PDF-ს → ტექსტი ამოდის და ინახება მაღაზიის ცოდნად (ბოტი იყენებს). Stage 17: ტექსტიდან
+    ერთი LLM გამოძახებით მოკლე FAQ იქმნება (`knowledge_faq`; ჩავარდნაზე `None`, ატვირთვა მაინც ინახება);
+    ყველაფერი ერთ ჩაწერაშია. ლიმიტი 10/საათში (IP-ზე), რადგან ატვირთვა LLM-ს ხარჯავს."""
     # PDF ცოდნა — მხოლოდ ფასიან პაკეტზე (ტიპის შემოწმება + მფლობელობა RLS-ით)
     shop = run(
         auth.client.table("shops").select("subscription_tier").eq("id", str(shop_id)).limit(1)
@@ -446,10 +489,10 @@ def upload_knowledge(
 
     # ჩაწერა service client-ით (0022: authenticated-ს knowledge* სვეტებზე UPDATE აღარ აქვს);
     # მფლობელობა ზემოთ auth.client-ის RLS select-ით უკვე დადასტურდა.
-    res = run(
-        get_service_client().table("shops")
-        .update({"knowledge": text, "knowledge_filename": (file.filename or "")[:255]})
-        .eq("id", str(shop_id))
+    faq = build_faq(str(shop_id), text)  # არასდროს აგდებს; None → ძველი FAQ არ რჩება
+    res = _write_knowledge(
+        shop_id,
+        {"knowledge": text, "knowledge_filename": (file.filename or "")[:255], "knowledge_faq": faq},
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
@@ -458,16 +501,14 @@ def upload_knowledge(
 
 @router.delete("/{shop_id}/knowledge", response_model=ShopOut)
 def clear_knowledge(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
-    """შლის მაღაზიის ცოდნას (PDF-ინფოს)."""
+    """შლის მაღაზიის ცოდნას (PDF-ინფოს) და მისგან შექმნილ FAQ-ს (LLM-ის გარეშე)."""
     # მფლობელობა RLS-ით (auth.client); ჩაწერა service client-ით (0022: authenticated-ს
     # knowledge* სვეტებზე UPDATE აღარ აქვს), ამიტომ ფილტრი `id` კოდში ცხადია.
     owned = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not owned.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    res = run(
-        get_service_client().table("shops")
-        .update({"knowledge": None, "knowledge_filename": None})
-        .eq("id", str(shop_id))
+    res = _write_knowledge(
+        shop_id, {"knowledge": None, "knowledge_filename": None, "knowledge_faq": None}
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")

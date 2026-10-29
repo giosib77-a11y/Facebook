@@ -4,7 +4,10 @@ from itertools import islice
 
 from pypdf import PdfReader
 
-MAX_CHARS = 20000  # ბოტის prompt-ის დასაცავად ვზღუდავთ
+# Stage 17: prompt-ში FAQ ან პირველი 20000 სიმბოლო მიდის (prompt.py); სრული ტექსტი მხოლოდ
+# search_knowledge-ით იძებნება და upload-ზე ერთხელ იკუმშება FAQ-დ. 50K FAQ-ის მოთხოვნას
+# 100K ტოკენზე ქვემოთ ტოვებს.
+MAX_CHARS = 50_000
 # ⚠️ რევიუ P2-12: გვერდების ჭერი. ზომა (10MB) საკმარისი დაცვა არ არის —
 # სპეციალურად აწყობილი PDF ათასობით გვერდად იშლება და extract_text()-ი
 # CPU/მეხსიერებას ამოწურავს. ტექსტი ისედაც MAX_CHARS-ზე იჭრება.

@@ -72,7 +72,9 @@ def test_f2_pdf_stops_once_max_chars_exceeded(monkeypatch):
     big = "a" * 15000
     log, pages = fake_reader(monkeypatch, [big] * 10)
     text = pdf_extract.extract_pdf_text(b"%PDF")
-    assert log == pages[:2]  # 15000 + 2 + 15000 > MAX_CHARS → pages 3..10 never touched
+    # 15000-char pages: the running total first exceeds MAX_CHARS on page 4 → pages 5..10 never touched
+    assert len(big) * 3 + 4 <= pdf_extract.MAX_CHARS < len(big) * 4 + 6
+    assert log == pages[:4]
     assert text.endswith(SUFFIX)
     assert text == ("\n\n".join([big] * 10))[: pdf_extract.MAX_CHARS] + SUFFIX
 
@@ -112,7 +114,10 @@ def test_f7_knowledge_upload_with_real_pdf(client, user_db, service_db):
     )
     assert r.status_code == 200
     updates = service_db.calls_for("shops", "update")
-    assert updates[0].payload == {"knowledge": "Open daily 10-20", "knowledge_filename": "k.pdf"}
+    # conftest blocks the real LLM client → the FAQ is None, and the upload is still saved
+    assert updates[0].payload == {
+        "knowledge": "Open daily 10-20", "knowledge_filename": "k.pdf", "knowledge_faq": None,
+    }
 
     r = client.post(
         f"/shops/{SHOP_ID}/knowledge",

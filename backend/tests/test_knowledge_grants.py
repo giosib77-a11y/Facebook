@@ -38,7 +38,10 @@ def test_upload_owner_writes_via_service_client(client, user_db, service_db):
     assert r.status_code == 200
     updates = service_db.calls_for("shops", "update")
     assert len(updates) == 1
-    assert updates[0].payload == {"knowledge": "extracted", "knowledge_filename": "k.pdf"}
+    # conftest blocks the real LLM client → the FAQ is None, and the upload is still saved
+    assert updates[0].payload == {
+        "knowledge": "extracted", "knowledge_filename": "k.pdf", "knowledge_faq": None,
+    }
     assert ("eq", "id", SHOP_ID) in updates[0].filters  # service write is pinned to this shop
     assert user_db.calls_for("shops", "update") == []
 
@@ -71,6 +74,6 @@ def test_clear_owner_free_tier_writes_via_service_client(client, user_db, servic
     assert r.status_code == 200
     updates = service_db.calls_for("shops", "update")
     assert len(updates) == 1
-    assert updates[0].payload == {"knowledge": None, "knowledge_filename": None}
+    assert updates[0].payload == {"knowledge": None, "knowledge_filename": None, "knowledge_faq": None}
     assert ("eq", "id", SHOP_ID) in updates[0].filters  # service write is pinned to this shop
     assert user_db.calls_for("shops", "update") == []
