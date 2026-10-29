@@ -11,7 +11,9 @@ from app.config import get_settings  # noqa: F401  (tests/test_golden_conversati
 INLINE_IMAGE_BUDGET = 15 * 1024 * 1024  # კლიენტის + საცნობარო ფოტოები ერთ LLM მოთხოვნაში
 PRODUCT_REF_MAX_BYTES = 3 * 1024 * 1024  # თითო საცნობარო ფოტოზე
 PRODUCT_REF_WORKERS = 4
-MAX_REF_IMAGES = 12  # საცნობარო ფოტოების ჭერი ერთ LLM მოთხოვნაში
+# საცნობარო ფოტოების ჭერი ერთ LLM მოთხოვნაში. Stage 18: <=3 ყველაზე მსგავსი (ადრე 12); კანდიდატებს
+# graph არჩევს (prompt.rank_products) და რიგით აწვდის — აქ იღება პირველი <=MAX_REF_IMAGES საკუთარი ფოტო.
+MAX_REF_IMAGES = 3
 
 
 def product_ref_label(p) -> str:
@@ -23,7 +25,8 @@ def product_ref_label(p) -> str:
 
 
 def _fetch_product_images(products, customer_images=None, max_images: int = MAX_REF_IMAGES):
-    """რელევანტური პროდუქტების ფოტოებს ჩამოტვირთავს ვიზუალური შედარებისთვის.
+    """რანჟირებული (ყველაზე მსგავსი პირველი) პროდუქტების ფოტოებს ჩამოტვირთავს ვიზუალური შედარებისთვის:
+    იღება პროდუქტების მოცემული რიგით პირველი <= max_images ფოტოიანი.
 
     აბრუნებს [(label, (bytes, mime)), ...] — მხოლოდ იმ პროდუქტების, რომლებსაც
     ფოტო აქვთ (image_url). max_images — ჭერი (ხარჯი/სისწრაფე; ბევრი სურათი

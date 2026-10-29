@@ -15,7 +15,7 @@ import pytest
 
 import app.services.facebook as facebook
 from app.config import get_settings
-from app.services import graph, llm, prompt, replies, tools
+from app.services import bot, graph, llm, prompt, replies, tools
 from app.services.prompt import _sort_key
 from tests.conftest import FakeSupabase
 
@@ -698,7 +698,7 @@ def test_reference_candidates_use_the_prompt_sort_order(hc, downloads):
     products = list(reversed(_photo_products(40)))  # DB order is not guaranteed
     hc.script = [hc.text("ok")]
     run("something generic", products=products, images=[(b"c", "image/jpeg")])
-    expected = [p["image_url"] for p in sorted(products, key=_sort_key)[:12]]
+    expected = [p["image_url"] for p in sorted(products, key=_sort_key)[:bot.MAX_REF_IMAGES]]
     assert sorted(downloads) == sorted(expected)  # downloads run in a thread pool: order is free
 
 

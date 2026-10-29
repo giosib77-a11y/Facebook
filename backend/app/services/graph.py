@@ -19,7 +19,7 @@ from typing import Any, Callable, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
-from app.services import bot, llm, replies, tools
+from app.services import bot, llm, replies, tools, vision
 from app.services import prompt as prompt_lib
 
 logger = logging.getLogger("app")
@@ -61,6 +61,7 @@ class TurnState(TypedDict):
     prompt: Any  # prompt_lib.Prompt | None (პირველ agent გამოძახებაზე იგება)
     steps: list
     calls: list
+    photo_calls: list  # Stage 18: კლიენტის ფოტოს აღწერის LLMResult (0 ან 1); agent-ის მთვლელებში არ ითვლება
     pending: list
     tool_chars: int
     tools_used: list
@@ -69,17 +70,30 @@ class TurnState(TypedDict):
     route: str
 
 
+def wants_photo_description(products) -> bool:
+    """Stage 18: კლიენტის ფოტოს აღწერის წინასწარი გამოძახება მხოლოდ მაშინ, როცა აღწერიან პროდუქტებს
+    > bot.MAX_REF_IMAGES (ნაკლებზე ყველა ფოტო ისედაც ეტევა)."""
+    described = sum(1 for p in products or [] if str(p.get("image_description") or "").strip())
+    return described > bot.MAX_REF_IMAGES
+
+
 def build_turn_prompt(shop, products, message, history=None, images=None, *, summary=None,
-                      refs_loader=None) -> prompt_lib.Prompt:
+                      refs_loader=None, photo_description=None) -> prompt_lib.Prompt:
     """Prompt ერთი turn-ისთვის. საცნობარო ფოტოები მხოლოდ კლიენტის ფოტოზე: კანდიდატები = ზუსტად ის
     ქვესიმრავლე, რასაც build_prompt ირჩევს, ამიტომ იგივე დალაგება (_sort_key) — DB-ის რიგითობა
-    გარანტირებული არ არის."""
+    გარანტირებული არ არის. Stage 18: photo_description (კლიენტის ფოტოს აღწერა) მხოლოდ რანჟირებასა და
+    >30 კატალოგის retrieval-ში მონაწილეობს (query_text), prompt-ში არ ჩადის; refs_loader ranked რიგით
+    იღებს პირველ <= MAX_REF_IMAGES ფოტოს. ფოტოს გარეშე photo_description იგნორდება."""
     refs = None
+    query = None
     if images:
+        query = vision.query_text(photo_description) or None
         ordered = sorted(products or [], key=prompt_lib._sort_key)
-        relevant = prompt_lib.select_relevant_products(ordered, message, history)
-        refs = (refs_loader or bot._fetch_product_images)(relevant, images)
-    return prompt_lib.build_prompt(shop, products, message, history, images, refs, summary=summary)
+        relevant = prompt_lib.select_relevant_products(ordered, message, history, extra_query=query)
+        ranked = prompt_lib.rank_products(relevant, " ".join(x for x in (message, query) if x))
+        refs = (refs_loader or bot._fetch_product_images)(ranked, images)
+    return prompt_lib.build_prompt(shop, products, message, history, images, refs, summary=summary,
+                                   photo_query=query)
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +113,22 @@ def agent_node(state: TurnState) -> dict:
     """ზუსტად ერთი llm.generate. usage იწერება მაშინვე (turn-ის შუაში შეცდომისასაც აღრიცხულია)."""
     shop = state["shop"]
     turn_prompt = state["prompt"]
+    photo_calls = state.get("photo_calls") or []
     if turn_prompt is None:  # ფოტოები ერთხელ, პირველ გამოძახებაზე
+        description = None
+        if state["images"] and wants_photo_description(state["products"]):
+            # Stage 18: ერთი წინასწარი გამოძახება; ჩავარდნა -> None (ტექსტური რანჟირება). აღწერა
+            # ლოკალური ცვლადია: state-ში, prompt-ში, ისტორიასა და ლოგში არ ხვდება.
+            description, photo_result = vision.describe_images(
+                shop["id"], state["images"],
+                deadline=min(state["deadline"], time.monotonic() + vision.PHOTO_BUDGET_SECONDS),
+                provider=state["provider"], record_usage=state["record_usage"],
+            )
+            if photo_result is not None:
+                photo_calls = [photo_result]
         turn_prompt = build_turn_prompt(
             shop, state["products"], state["message"], state["history"], state["images"],
-            summary=state["summary"], refs_loader=state["refs_loader"],
+            summary=state["summary"], refs_loader=state["refs_loader"], photo_description=description,
         )
     force_text = len(state["calls"]) == MAX_LLM_CALLS - 1
     result = llm.generate(
@@ -111,7 +137,7 @@ def agent_node(state: TurnState) -> dict:
     )
     if state["record_usage"]:
         llm.record_usage(shop["id"], result)
-    update = {"prompt": turn_prompt, "calls": [*state["calls"], result]}
+    update = {"prompt": turn_prompt, "calls": [*state["calls"], result], "photo_calls": photo_calls}
     if any(c.name == tools.HUMAN_TOOL for c in result.tool_calls):
         # request_human ამთავრებს turn-ს: სხვა call-ები იგნორდება, LLM აღარ იძახება
         text = result.text.strip() or replies.handoff_reply(shop.get("bot_language"))
@@ -201,14 +227,15 @@ def run_turn(shop, products, message, history=None, images=None, *, summary=None
     """ერთი შემოსული შეტყობინების დამუშავება. LLM-ის შეცდომა / TimeoutError / RuntimeError (key არ არის)
     ვრცელდება — webhook-ის fallback და /test-chat-ის 502/503 გამომძახებელშია.
 
-    refs_loader(relevant, images) -> [(label, (bytes, mime))]; default — bot._fetch_product_images.
+    refs_loader(ranked, images) -> [(label, (bytes, mime))]; default — bot._fetch_product_images.
+    TurnResult.calls: კლიენტის ფოტოს აღწერა (თუ იყო) პირველია, მერე agent-ის გამოძახებები.
     record_usage=False — შედარების სკრიპტისთვის (llm_usage არ იწერება)."""
     started = time.monotonic()
     state: TurnState = {
         "shop": shop, "products": products or [], "message": message, "history": history,
         "images": images, "summary": summary, "provider": provider, "record_usage": record_usage,
         "refs_loader": refs_loader, "deadline": started + TURN_BUDGET_SECONDS, "prompt": None,
-        "steps": [], "calls": [], "pending": [], "tool_chars": 0, "tools_used": [],
+        "steps": [], "calls": [], "photo_calls": [], "pending": [], "tool_chars": 0, "tools_used": [],
         "text": "", "handoff": False, "route": "agent",
     }
     # tracing ყოველთვის გამორთულია: context var env-ს (LANGSMITH_TRACING / LANGCHAIN_TRACING_V2) სჯობს,
@@ -218,11 +245,11 @@ def run_turn(shop, products, message, history=None, images=None, *, summary=None
         final = _GRAPH.invoke(state, config={"recursion_limit": _RECURSION_LIMIT})
     result = TurnResult(
         text=final["text"], handoff=final["handoff"], route=final["route"],
-        calls=final["calls"], tools_used=final["tools_used"],
+        calls=[*final["photo_calls"], *final["calls"]], tools_used=final["tools_used"],
     )
     logger.info(
-        "bot turn: route=%s calls=%d tools=%s handoff=%s %.1fs (shop=%s)",
-        result.route, len(result.calls), ",".join(result.tools_used) or "-", result.handoff,
-        time.monotonic() - started, shop.get("id"),
+        "bot turn: route=%s calls=%d photo=%d tools=%s handoff=%s %.1fs (shop=%s)",
+        result.route, len(result.calls), len(final["photo_calls"]), ",".join(result.tools_used) or "-",
+        result.handoff, time.monotonic() - started, shop.get("id"),
     )
     return result

@@ -44,10 +44,21 @@ def test_refs_fill_budget_without_customer_images(fake_download):
     sizes, _ = fake_download
     products = _products(sizes, [(f"p{i}", 2 * MB) for i in range(12)])
 
-    refs = bot._fetch_product_images(products, [])
+    refs = bot._fetch_product_images(products, [], max_images=12)
 
     assert _total(refs) <= bot.INLINE_IMAGE_BUDGET
     assert len(refs) == 7
+
+
+def test_default_ref_cap_is_three_in_given_order(fake_download):
+    sizes, calls = fake_download
+    products = _products(sizes, [(f"p{i}", MB) for i in range(12)])
+
+    refs = bot._fetch_product_images(products, [])
+
+    assert bot.MAX_REF_IMAGES == 3
+    assert [label.split(" — ")[0].removeprefix("• ") for label, _ in refs] == ["p0", "p1", "p2"]
+    assert len(calls) == 3  # only the top-3 are downloaded
 
 
 def test_refs_downloaded_with_per_ref_cap(fake_download):
