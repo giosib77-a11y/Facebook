@@ -20,20 +20,20 @@ PREFIX = "Shop document:\n"
 FAQ = "Q: How much is delivery in Tbilisi?\nA: 5 GEL, 1-2 days.\nQ: Can I return an item?\nA: Yes, within 14 days."
 
 
-def _claude_response(text=FAQ):
+def _claude_response(text=FAQ, output_tokens=5):
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=text)],
         stop_reason="end_turn",
-        usage=SimpleNamespace(input_tokens=10, output_tokens=5,
+        usage=SimpleNamespace(input_tokens=10, output_tokens=output_tokens,
                               cache_read_input_tokens=0, cache_creation_input_tokens=0),
     )
 
 
-def _openai_response(text=FAQ):
+def _openai_response(text=FAQ, output_tokens=7):
     return SimpleNamespace(
         output_text=text,
         output=[],
-        usage=SimpleNamespace(input_tokens=100, output_tokens=7,
+        usage=SimpleNamespace(input_tokens=100, output_tokens=output_tokens,
                               input_tokens_details=SimpleNamespace(cached_tokens=40)),
     )
 
@@ -200,6 +200,62 @@ def test_input_cap_keeps_the_beginning_and_drops_the_tail(env):
     knowledge.build_faq(SHOP, "HEAD-MARKER " + "d" * 60_000 + " TAIL-MARKER")
     text = _user_text(env.requests[0])
     assert "HEAD-MARKER" in text and "TAIL-MARKER" not in text
+
+
+# ---------------------------------------------------------------------------
+# S17-8: truncated answers (max_tokens) and unanswered trailing "Q:" lines
+# ---------------------------------------------------------------------------
+COMPLETE = "Q: Delivery in Tbilisi?\nA: 5 GEL.\nQ: Delivery to the regions?\nA: 15 GEL."
+
+
+def _provider_env(monkeypatch, provider):
+    env = Env(monkeypatch, provider)
+    return env, (_openai_response if provider == "openai" else _claude_response)
+
+
+@pytest.mark.parametrize("provider", ["claude", "openai"])
+def test_truncated_answer_loses_its_half_written_last_line(monkeypatch, provider):
+    env, response = _provider_env(monkeypatch, provider)
+    env.script = [response(COMPLETE + "\nQ: Delivery to the regions?\nA: Delivery to the regions costs 1",
+                           output_tokens=1500)]
+    assert knowledge.build_faq(SHOP, DOC) == COMPLETE  # previous complete pairs stay
+
+
+@pytest.mark.parametrize("provider", ["claude", "openai"])
+def test_answer_below_the_token_cap_keeps_its_last_line(monkeypatch, provider):
+    env, response = _provider_env(monkeypatch, provider)
+    env.script = [response(COMPLETE, output_tokens=1499)]
+    assert knowledge.build_faq(SHOP, DOC) == COMPLETE
+
+
+@pytest.mark.parametrize("provider", ["claude", "openai"])
+def test_cut_ending_on_a_question_drops_that_question(monkeypatch, provider):
+    env, response = _provider_env(monkeypatch, provider)
+    head = _multiline(2500)
+    answer = head + "\nQ: " + "q" * 100 + "\nA: " + "a" * 800  # the 3000-char cut lands right after the Q: line
+    assert len(answer) > 3000 and len(head + "\nQ: " + "q" * 100 + "\nA:") < 3000
+    env.script = [response(answer)]
+    out = knowledge.build_faq(SHOP, DOC)
+    assert out == head and out.splitlines()[-1].startswith("A:")
+
+
+@pytest.mark.parametrize("provider", ["claude", "openai"])
+def test_truncation_leaving_a_question_drops_it_too(monkeypatch, provider):
+    env, response = _provider_env(monkeypatch, provider)
+    env.script = [response(COMPLETE + "\nQ: Is there a warranty on the product and how", output_tokens=1500)]
+    assert knowledge.build_faq(SHOP, DOC) == COMPLETE
+    env.script = [response(COMPLETE + "\nQ: Warranty?\nA: Warranty is 2", output_tokens=1500)]
+    assert knowledge.build_faq(SHOP, DOC) == COMPLETE  # the half answer and its question both go
+
+
+@pytest.mark.parametrize("provider", ["claude", "openai"])
+def test_single_truncated_line_returns_none_with_warning(monkeypatch, caplog, provider):
+    env, response = _provider_env(monkeypatch, provider)
+    env.script = [response("Q: Delivery to the regions costs 1", output_tokens=1500)]
+    with caplog.at_level(logging.WARNING):
+        assert knowledge.build_faq(SHOP, DOC) is None
+    _assert_none_with_warning(caplog, "empty")
+    assert len(env.usage_rows) == 1  # tokens were spent
 
 
 # ---------------------------------------------------------------------------

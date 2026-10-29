@@ -47,6 +47,14 @@ def _fit(faq: str) -> str:
     return cut.rstrip()
 
 
+def _drop_unanswered(faq: str) -> str:
+    """Removes trailing "Q:" line(s) left without an "A:" by a cut (max_tokens or _fit)."""
+    lines = faq.rstrip().split("\n")
+    while lines and lines[-1].lstrip().startswith("Q:"):
+        lines.pop()
+    return "\n".join(lines).rstrip()
+
+
 def build_faq(shop_id, text) -> str | None:
     """-> the FAQ (<= FAQ_MAX_CHARS, plain text) or None. No usable text -> None without an LLM call.
     Any failure (no key, timeout, API error, empty answer) -> None + a WARNING with the shop id and the
@@ -60,7 +68,11 @@ def build_faq(shop_id, text) -> str | None:
             deadline=time.monotonic() + FAQ_BUDGET_SECONDS,
         )
         llm.record_usage(shop_id, result)
-        faq = _fit(replies.clean_reply(result.text))
+        faq = replies.clean_reply(result.text)
+        if result.usage.output_tokens >= FAQ_MAX_TOKENS:
+            # stopped at max_tokens: the last line is half-written ("... ღირს 1" instead of "15 ლარი")
+            faq = faq.rstrip().rpartition("\n")[0]
+        faq = _drop_unanswered(_fit(faq))
         if not faq:
             logger.warning("knowledge FAQ failed (shop=%s, %s)", shop_id, "empty")
             return None
