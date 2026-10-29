@@ -88,6 +88,22 @@ def _openai_client(s):
 # ---------------------------------------------------------------------------
 # Request building (pure)
 # ---------------------------------------------------------------------------
+def usable_image(data, mime) -> tuple[str, str] | None:
+    """One image -> (mime, base64) or None when it is skipped: not bytes / empty (silently),
+    unsupported mime or over MAX_IMAGE_BYTES (WARNING without URL/PSID). The single image filter of
+    generate() and complete()."""
+    mime = mime.strip().lower() if isinstance(mime, str) else ""
+    if not data or not isinstance(data, (bytes, bytearray)):
+        return None
+    if mime not in ALLOWED_IMAGE_MIMES:
+        logger.warning("LLM image skipped: unsupported mime type %r", mime[:40])
+        return None
+    if len(data) > MAX_IMAGE_BYTES:
+        logger.warning("LLM image skipped: too large (%d bytes)", len(data))
+        return None
+    return mime, base64.b64encode(bytes(data)).decode("ascii")
+
+
 def _usable_images_and_texts(final: list[dict]):
     """Final-turn parts -> [("text", str) | ("image", mime, b64)], skipping unsupported/oversized
     images (WARNING without URL/PSID). Never returns an empty list."""
@@ -98,18 +114,9 @@ def _usable_images_and_texts(final: list[dict]):
             if isinstance(text, str) and text:
                 out.append(("text", text))
         elif part.get("type") == "image":
-            data = part.get("data")
-            mime = part.get("mime")
-            mime = mime.strip().lower() if isinstance(mime, str) else ""
-            if not data or not isinstance(data, (bytes, bytearray)):
-                continue
-            if mime not in ALLOWED_IMAGE_MIMES:
-                logger.warning("LLM image skipped: unsupported mime type %r", mime[:40])
-                continue
-            if len(data) > MAX_IMAGE_BYTES:
-                logger.warning("LLM image skipped: too large (%d bytes)", len(data))
-                continue
-            out.append(("image", mime, base64.b64encode(bytes(data)).decode("ascii")))
+            image = usable_image(part.get("data"), part.get("mime"))
+            if image is not None:
+                out.append(("image", image[0], image[1]))
     if not out:
         out.append(("text", _EMPTY_FINAL_TEXT))
     return out
@@ -219,23 +226,49 @@ def build_openai_request(prompt, model: str, shop_id, *, tools=None, steps=None,
     return request
 
 
-def build_claude_complete_request(system: str, text: str, model: str, max_tokens: int) -> dict:
-    """Plain one-shot call (summary): no tools, no cache_control."""
+def _usable_images(images) -> list[tuple[str, str]]:
+    """complete(images=[(bytes, mime), ...]) -> [(mime, b64)] through the same filter as generate()."""
+    out = []
+    for item in images or []:
+        try:
+            data, mime = item
+        except (TypeError, ValueError):
+            continue
+        image = usable_image(data, mime)
+        if image is not None:
+            out.append(image)
+    return out
+
+
+def build_claude_complete_request(system: str, text: str, model: str, max_tokens: int, images=None) -> dict:
+    """Plain one-shot call (summary, FAQ, photo description): no tools, no cache_control.
+    images=[(bytes, mime)] (Stage 18): image blocks before the text; None / nothing usable -> text only."""
+    content = [
+        {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
+        for mime, b64 in _usable_images(images)
+    ]
+    content.append({"type": "text", "text": text})
     return {
         "model": model,
         "max_tokens": max_tokens,
         "thinking": {"type": "disabled"},
         "system": [{"type": "text", "text": system}],
-        "messages": [{"role": "user", "content": [{"type": "text", "text": text}]}],
+        "messages": [{"role": "user", "content": content}],
     }
 
 
-def build_openai_complete_request(system: str, text: str, model: str, max_tokens: int) -> dict:
+def build_openai_complete_request(system: str, text: str, model: str, max_tokens: int, images=None) -> dict:
+    # detail "low" (~85 tokens): enough for item type / colours, and identical on both sides of a match.
+    content = [
+        {"type": "input_image", "image_url": f"data:{mime};base64,{b64}", "detail": "low"}
+        for mime, b64 in _usable_images(images)
+    ]
+    content.append({"type": "input_text", "text": text})
     return {
         "model": model,
         "input": [
             {"role": "developer", "content": [{"type": "input_text", "text": system}]},
-            {"role": "user", "content": [{"type": "input_text", "text": text}]},
+            {"role": "user", "content": content},
         ],
         "max_output_tokens": max_tokens,
         "store": False,
@@ -424,14 +457,16 @@ def generate(prompt, shop_id, provider: str | None = None, *, tools=None, steps=
 
 
 def complete(system: str, text: str, shop_id, *, max_tokens: int, provider: str | None = None,
-             deadline: float | None = None) -> LLMResult:
-    """One plain call (summaries): no tools, no cache_control, same readiness check / retry / deadline."""
+             deadline: float | None = None, images=None) -> LLMResult:
+    """One plain call (summaries, FAQ, photo description): no tools, no cache_control, same readiness
+    check / retry / deadline. images=[(bytes, mime)] (Stage 18) are filtered like generate()'s; the
+    request is unchanged when there are none."""
     s = _settings_for(provider)
     if s.llm_provider == "claude":
-        request = build_claude_complete_request(system, text, s.llm_model, max_tokens)
+        request = build_claude_complete_request(system, text, s.llm_model, max_tokens, images)
         send = _send_claude
     else:
-        request = build_openai_complete_request(system, text, s.llm_model, max_tokens)
+        request = build_openai_complete_request(system, text, s.llm_model, max_tokens, images)
         send = _send_openai
     return _with_retry(s, lambda timeout: send(s, request, shop_id, timeout), shop_id, deadline)
 
