@@ -479,6 +479,8 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - `shops._write_knowledge` სვეტის არარსებობას `"knowledge_faq" in str(exc)`-ით ცნობს — `str(APIError)` `details`-საც შეიცავს (შეიძლება filename) → hardening: `exc.code in ("PGRST204","42703")` + `message`-ში სვეტის სახელი (ახლა უვნებელია: მეორე update იგივე შეცდომით ვარდება → 400).
 - ❓ FAQ-ის request და 100K-ის ზღვარი: 50K ქართული სიმბოლო byte-level tokenizer-ზე შეიძლება >100K ტოკენი იყოს (ცენტების სხვაობა ატვირთვაზე) — პირველ რეალურ ატვირთვაზე `llm_usage.input_tokens`-ით გასაზომი; საჭიროებისას `FAQ_INPUT_MAX_CHARS`-ის შემცირება.
 
+- S17-8 re-check (nit): `clean_reply` `- Q:`-ს `• Q:`-ად აქცევს → `_drop_unanswered` (`startswith("Q:")`) bullet-იან უპასუხო კითხვას ვერ ცნობს (fix: `lstrip("• ")`); ერთ ხაზზე `Q: …? A: …` (ფორმატის დარღვევა) → ციკლი ყველაფერს შლის → FAQ `None` (მცდარი ფაქტი არა, FAQ ჩუმად იკარგება; fix: `A:`-იან ხაზზე გაჩერება).
+
 ### Stage 17 (დაგეგმვისას, 2026-10-29)
 - UI: FAQ-ის სტატუსი („FAQ შეიქმნა / ვერ შეიქმნა"), გადახედვა და ხელახლა გენერაციის ღილაკი `BotTab.jsx`-ში (frontend task, `npm run build` + `dist`; ახლა FAQ მხოლოდ ექსპორტში ჩანს). ამისთვის `ShopOut`-ს `knowledge_faq_present: bool` ან ცალკე GET.
 - არსებული ცოდნიანი მაღაზიების FAQ: backfill სკრიპტი (მფლობელი უშვებს, key-ების შემდეგ) ან გამყიდველების თხოვნა PDF-ის ხელახლა ატვირთვაზე.
@@ -513,6 +515,13 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - Failed attempts: —
 
 ## Last Session
+- Date: 2026-10-29
+- Done: **Stage 17 დასრულდა (offline)** — S17-1…S17-8 (plan `78a6745`; `80190a0`, `091b60d`, `006e430`, `688a0c5`, `40b6ad2`, `53325bd`, `989c04d`; finish-check `7c94900`; fix round 1 `b016729`). PDF ატვირთვისას FAQ (ერთი `llm.complete`, ≤3000, მოჭრილი ხაზის გარეშე) → `shops.knowledge_faq` (0027) → L2; FAQ-ის გარეშე Stage 16-ის L2 ბაიტ-იდენტურად; PDF-ის ჭერი 50K; `search_knowledge` — ხაზოვანი chunk-ები + ქართული ფუძეები; ატვირთვა 10/სთ/IP; ცხრილი არ დამატებულა.
+- Verification (ორკესტრატორი): pip check ✅, pip-audit 0; ruff/compileall ✅; pytest **1554 passed**; frontend lint 0 error / 5 warning, test 29/29, build → `dist` უცვლელი. re-check (code-reviewer): S17-8 fixed.
+- Unverified: რეალური FAQ-ის ხარისხი/ზომა ქართულ PDF-ზე (1500 ტოკენი, 20 წმ მცდელობა, 100K ზღვარი 50K ქართულ სიმბოლოზე); 0027 რეალურ Postgres-ზე; PostgREST-ის სვეტის შეცდომის რეალური ტექსტი; ატვირთვის ~45 წმ Render-ზე.
+- Next: Stage 18 (ფოტოები: ტექსტური აღწერა).
+
+### Stage 16-ის სესია
 - Date: 2026-10-29
 - Done: **Stage 16 დასრულდა (offline)** — S16-1…S16-13 (plan `290e316`; `7be3d3e`, `3e58687`, `d7014fb`, `e5023c2`, `a20c04a`, `7501abb`, `7149de4`, `d156a03`, `3f75a3a`, `cf4db5f`; finish-check `ecff1b2`; fix round 1: `100dd45`, `ff62d88`, `cfd5c54`). LangGraph 1.2.18 (GO) გრაფი: preprocess (შაბლონები ka/en/ru) → agent + 4 tool (≤4 გამოძახება, 45 წმ) → postprocess (`clean_reply`); `request_human` ანაცვლებს `[[HANDOFF]]`-ს; ისტორია 16 → ბოლო 8 + summary (0026; შენახვის შემდეგ, პირობითი update); tracing იძულებით გამორთული; შედარების სკრიპტი production-ის გრაფით.
 - Verification (ორკესტრატორი): pip check ✅, pip-audit 0; ruff/compileall `app tests scripts` ✅; pytest **1468 passed**; frontend lint 0 error / 5 warning, `npm test` 29/29, build → `dist` უცვლელი. re-check: code-reviewer 3/3 fixed, security 2/2 fixed, ახალი critical/should-fix 0.
