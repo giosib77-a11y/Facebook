@@ -5,6 +5,7 @@ The get_bot_reply-level checks (byte-identical cached layers, usage rows, key-le
 live in tests/test_graph.py since S16-6; the old get_bot_reply was removed in S16-8.
 """
 import logging
+import time
 import uuid
 from types import SimpleNamespace
 
@@ -68,6 +69,10 @@ class Harness:
         self.monkeypatch = monkeypatch
         monkeypatch.setattr(llm, "time", SimpleNamespace(
             monotonic=self.clock.monotonic, sleep=self.clock.sleep))
+        # graph.run_turn computes the absolute turn deadline that llm checks: both must read the SAME
+        # clock. With only llm faked, the deadline came from the real monotonic (machine uptime) —
+        # fine on a long-running dev box, "turn budget exhausted" on a freshly booted CI runner.
+        monkeypatch.setattr(graph, "time", SimpleNamespace(monotonic=self.clock.monotonic))
         monkeypatch.setattr(llm, "get_service_client", lambda: self.usage_db)
         self.set_settings(**settings_update)
 
@@ -190,3 +195,35 @@ def test_test_chat_llm_failure_is_502(client, chat_db, h):
     h.result = ValueError("bad request")
     r = client.post("/test-chat", json=_chat_payload())
     assert r.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# (3) regression: the harness must not depend on the machine's uptime
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def fresh_vm_uptime(monkeypatch):
+    """Real time.monotonic() as on a freshly booted CI runner (~50 s), still advancing normally.
+
+    A dev box with days of uptime returns a huge monotonic value, which hid a harness that faked
+    the clock only in llm while graph took the turn deadline from the real clock."""
+    real = time.monotonic
+    base = real()
+    monkeypatch.setattr(time, "monotonic", lambda: real() - base + 50.0)
+
+
+def test_webhook_timeout_fallback_on_a_freshly_booted_machine(fresh_vm_uptime, env, h, monkeypatch):  # noqa: F811
+    _, sent, _ = env
+    h.result = anthropic.APITimeoutError(REQ)
+    h.duration = h.settings.llm_timeout_seconds
+    monkeypatch.setattr(webhook, "run_turn", graph.run_turn)
+
+    _run(text="წითელი მაისური რა ღირს?")
+
+    assert len(h.requests) == 2  # the model was really called (and retried once)
+    assert sent == ["ბოდიში, ამ წუთას ვერ გიპასუხებთ. სცადეთ ცოტა ხანში."]
+
+
+def test_test_chat_ok_on_a_freshly_booted_machine(fresh_vm_uptime, client, chat_db, h):
+    r = client.post("/test-chat", json=_chat_payload())
+    assert r.status_code == 200, r.text
+    assert len(h.requests) == 1
