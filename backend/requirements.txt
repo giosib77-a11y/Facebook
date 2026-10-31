@@ -11,6 +11,6 @@ anthropic>=2.3
 openai>=3.40
 openpyxl>=3.1
 python-multipart>=0.0.9
-pypdf>=6.21.2
+pypdf>=6.21.4
 # Stage 16: graph wiring only - LLM calls stay in services/llm.py (no LangChain chat models)
 langgraph>=1.2

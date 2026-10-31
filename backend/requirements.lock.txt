@@ -9,6 +9,7 @@
 # 2026-10-28: google-genai and its exclusive deps removed (Stage 14)
 # 2026-10-28: langgraph 1.2.18 + transitive deps added (Stage 16, S16-1) from local venv pip freeze (Python 3.14.5, Windows); cp314 manylinux wheels checked with pip download
 # (requests, charset-normalizer, urllib3 were dev-only in the venv; now runtime deps of langsmith)
+# 2026-10-31: pypdf 6.21.2 -> 6.21.4 by hand to clear pip-audit (7 advisories); pypdf has no deps
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anthropic==2.3.0
@@ -58,7 +59,7 @@ pydantic==2.13.5
 pydantic-core==2.46.5
 pydantic-settings==2.15.0
 pyjwt==2.15.1
-pypdf==6.21.2
+pypdf==6.21.4
 python-dotenv==1.2.4
 python-multipart==0.0.32
 pyyaml==6.0.3
