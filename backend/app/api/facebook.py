@@ -382,7 +382,9 @@ def data_deletion_callback(signed_request: str = Form(...)):
 
 
 def _erase_fb_user_data(sc, user_id: str) -> None:
-    """Facebook user-ის მონაცემების წაშლა. ნებისმიერი შეცდომა ზემოთ ადის (A-017: არ იყლაპება)."""
+    """Facebook user-ის მონაცემების წაშლა. ნებისმიერი შეცდომა ზემოთ ადის (A-017: არ იყლაპება).
+
+    bot_customers = კლიენტის (psid) თვიური მრიცხველი — A-030: ისიც იშლება."""
     # 1. გამყიდველი ამ Facebook user-id-ით (connect-ზე ინახება) — გავთიშოთ გვერდი + წავშალოთ საუბრები
     shops = sc.table("shops").select("id").eq("facebook_user_id", user_id).execute().data or []
     for shop in shops:
@@ -397,6 +399,8 @@ def _erase_fb_user_data(sc, user_id: str) -> None:
         ).eq("id", shop["id"]).execute()
     # 2. თუ user_id კლიენტის psid-ია — მისი საუბრები
     sc.table("bot_conversations").delete().eq("psid", user_id).execute()
+    # 3. კლიენტის თვიური მრიცხველი (psid) — შეცდომა ზემოთ ადის (request status → failed)
+    sc.table("bot_customers").delete().eq("psid", user_id).execute()
 
 
 @router.get("/data-deletion/status")

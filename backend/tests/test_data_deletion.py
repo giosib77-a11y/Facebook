@@ -76,6 +76,24 @@ def test_erasure_error_is_recorded_as_failed(client, service_db, caplog, table, 
     assert "data deletion failed" in caplog.text
 
 
+def test_customer_counter_row_is_deleted_by_psid(client, service_db):
+    # A-030: bot_customers (per-customer monthly counter, keyed by psid) is erased too
+    r = _callback(client)
+    assert r.status_code == 200
+    (d,) = service_db.calls_for("bot_customers", "delete")
+    assert ("eq", "psid", FB_USER) in d.filters
+    assert _final_update(service_db)["status"] == "completed"
+
+
+def test_bot_customers_delete_error_is_recorded_as_failed(client, service_db):
+    service_db.errors[("bot_customers", "delete")] = RuntimeError("db down")
+    r = _callback(client)
+    assert r.status_code == 200 and r.json()["confirmation_code"]
+    final = _final_update(service_db)
+    assert final["status"] == "failed" and final["error"] == "RuntimeError"
+    assert "fb_user_id" not in final  # kept for a manual retry
+
+
 def test_request_not_recorded_returns_503_and_deletes_nothing(client, service_db):
     service_db.errors[(TABLE, "upsert")] = RuntimeError("relation does not exist")
     r = _callback(client)
