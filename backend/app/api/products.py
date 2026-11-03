@@ -236,7 +236,13 @@ def upload_product_image(
             path, content, {"content-type": mime, "cache-control": "3600"}
         )
     except Exception as e:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"ატვირთვა ვერ მოხერხდა: {e}")
+        # Storage-ის ნედლი ტექსტი (statusCode / RLS) კლიენტს არ ვუბრუნებთ — მხოლოდ ლოგში
+        logger.warning(
+            "product image upload failed (shop=%s, %s)", shop_id, type(e).__name__, exc_info=True
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "ფოტოს ატვირთვა ვერ მოხერხდა — სცადეთ ცოტა ხანში."
+        )
     url = sc.storage.from_(PRODUCT_IMAGES_BUCKET).get_public_url(path)
     return {"url": (url or "").rstrip("?"), "path": path}
 
