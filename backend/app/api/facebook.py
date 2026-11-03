@@ -81,11 +81,13 @@ def _finish(result: str, **params) -> HTMLResponse:
 # ნებისმიერ ტექსტს „დადასტურებულად" აჩვენებდა. Meta-ს განმხილველი სწორედ ამ
 # ნაკადს ამოწმებს.
 #
-# გამოსავალი — ხელმოწერილი (stateless) კოდი: ცხრილი არ გვჭირდება, ბაზა არ
-# იზრდება, გასუფთავება არ სჭირდება, და კოდი მაინც შემოწმებადია.
+# გამოსავალი — ხელმოწერილი კოდი: ნამდვილობა მოწმდება ბაზის გარეშე (ყალბი კოდი DB-მდე
+# არ აღწევს). წაშლის სტატუსი კი ინახება `data_deletion_requests`-ში (A-017).
 # ფორმატი: <base64url(uid_hash:ts)>.<hmac16>
 # ---------------------------------------------------------------------------
 _DELETION_CODE_TTL = 400 * 24 * 3600  # ~13 თვე — Meta-ს შემოწმებას დროის მარაგი ჰქონდეს
+# A-017: კოდის ნამდვილობას ხელმოწერა ამოწმებს, წაშლის სტატუსს — ეს ცხრილი (migration 0029)
+_DELETION_TABLE = "data_deletion_requests"
 
 
 def _deletion_secret() -> bytes:
@@ -332,8 +334,9 @@ def _connect_callback(
 def data_deletion_callback(signed_request: str = Form(...)):
     """Meta Data Deletion Callback — როცა მომხმარებელი აპს წაშლის, Facebook აქ POST-ავს.
 
-    ვამოწმებთ signed_request-ს app_secret-ით, ვშლით ამ მომხმარებლის (PSID) საუბრებს
-    და ვაბრუნებთ Meta-ს მოთხოვნილ JSON-ს: {url, confirmation_code}.
+    ვამოწმებთ signed_request-ს app_secret-ით, ვწერთ მოთხოვნას (`pending`), ვშლით ამ
+    მომხმარებლის მონაცემებს, ვწერთ შედეგს (`completed` / `failed`) და ვაბრუნებთ Meta-ს
+    მოთხოვნილ JSON-ს: {url, confirmation_code}.
     """
     s = get_settings()
     if not s.fb_app_secret:
@@ -345,54 +348,77 @@ def data_deletion_callback(signed_request: str = Form(...)):
 
     user_id = str(data["user_id"])
     sc = get_service_client()
-
-    # 1. გამყიდველი ამ Facebook user-id-ით — გავთიშოთ გვერდი + წავშალოთ მისი საუბრები.
-    #    (facebook_user_id ინახება connect-ზე; migration 0011-მდე ეს ბლოკი ჩუმად გამოტოვდება.)
-    try:
-        shops = (
-            sc.table("shops").select("id").eq("facebook_user_id", user_id).execute().data or []
-        )
-        for s in shops:
-            try:
-                sc.table("bot_conversations").delete().eq("shop_id", s["id"]).execute()
-            except Exception:
-                pass
-            sc.table("shops").update(
-                {
-                    "facebook_page_id": None,
-                    "facebook_page_token": None,
-                    "instagram_account_id": None,
-                    "bot_enabled": False,
-                }
-            ).eq("id", s["id"]).execute()
-    except Exception:
-        pass  # facebook_user_id სვეტი შეიძლება არ არსებობდეს — fallback ქვემოთ
-
-    # 2. fallback: თუ user_id კლიენტის psid-ია — ვშლით მის საუბრებს
-    try:
-        sc.table("bot_conversations").delete().eq("psid", user_id).execute()
-    except Exception:
-        pass  # Meta-ს მაინც ვპასუხობთ წარმატებით
-
     # ხელმოწერილი კოდი — status-გვერდს შეუძლია მისი ნამდვილობის შემოწმება (P2-16)
     code = make_deletion_code(user_id)
+
+    # A-017: მოთხოვნა ჯერ ცხრილში იწერება (migration 0029). თუ ვერ ჩაიწერა, წაშლას არ ვიწყებთ
+    # და დადასტურებას არ ვაძლევთ — ასე „წაშლილად" ვერაფერი გამოჩნდება, რისი კვალიც არ გვაქვს.
+    try:
+        sc.table(_DELETION_TABLE).upsert(
+            {"code": code, "fb_user_id": user_id, "status": "pending", "error": None}
+        ).execute()
+    except Exception:
+        logger.exception("data deletion request could not be recorded")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "deletion request could not be recorded")
+
+    try:
+        _erase_fb_user_data(sc, user_id)
+        # წაშლის შემდეგ user id აღარ გვჭირდება
+        final = {"status": "completed", "fb_user_id": None, "error": None}
+    except Exception as e:
+        # fb_user_id რჩება — ხელით ხელახლა გასაშვებად (0029-ის ბოლოს query)
+        logger.exception("data deletion failed (code=%s)", code)
+        final = {"status": "failed", "error": type(e).__name__}
+    try:
+        sc.table(_DELETION_TABLE).update(final).eq("code", code).execute()
+    except Exception:
+        # ჩანაწერი `pending` რჩება — status-გვერდი დასრულებულს არ აჩვენებს
+        logger.exception("data deletion status update failed (code=%s)", code)
+
     return {
         "url": f"{_public_base()}/panel/delete-data.html?code={code}",
         "confirmation_code": code,
     }
 
 
+def _erase_fb_user_data(sc, user_id: str) -> None:
+    """Facebook user-ის მონაცემების წაშლა. ნებისმიერი შეცდომა ზემოთ ადის (A-017: არ იყლაპება)."""
+    # 1. გამყიდველი ამ Facebook user-id-ით (connect-ზე ინახება) — გავთიშოთ გვერდი + წავშალოთ საუბრები
+    shops = sc.table("shops").select("id").eq("facebook_user_id", user_id).execute().data or []
+    for shop in shops:
+        sc.table("bot_conversations").delete().eq("shop_id", shop["id"]).execute()
+        sc.table("shops").update(
+            {
+                "facebook_page_id": None,
+                "facebook_page_token": None,
+                "instagram_account_id": None,
+                "bot_enabled": False,
+            }
+        ).eq("id", shop["id"]).execute()
+    # 2. თუ user_id კლიენტის psid-ია — მისი საუბრები
+    sc.table("bot_conversations").delete().eq("psid", user_id).execute()
+
+
 @router.get("/data-deletion/status")
 def data_deletion_status(code: str):
     """დადასტურების კოდის შემოწმება — delete-data.html ამას იძახებს.
 
-    Meta-ს მოთხოვნაა, რომ status-URL-მა წაშლის მდგომარეობა აჩვენოს. ხელმოწერის
-    გარეშე გვერდი ნებისმიერ ტექსტს „დადასტურებულად" აჩვენებდა.
+    Meta-ს მოთხოვნაა, რომ status-URL-მა წაშლის მდგომარეობა აჩვენოს. სტატუსი ცხრილიდან
+    (`pending` / `completed` / `failed`); ჩანაწერის გარეშე (0029-მდე გაცემული კოდი) — `unknown`.
     """
     info = verify_deletion_code(code)
     if not info:
         return {"valid": False, "status": "unknown"}
-    return {"valid": True, "status": "completed", "requested_at": info["requested_at"]}
+    try:
+        rows = (
+            get_service_client().table(_DELETION_TABLE).select("status")
+            .eq("code", code).limit(1).execute().data
+        )
+    except Exception:
+        logger.exception("data deletion status lookup failed")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "status unavailable")
+    state = rows[0]["status"] if rows else "unknown"
+    return {"valid": True, "status": state, "requested_at": info["requested_at"]}
 
 
 @router.post("/disconnect")

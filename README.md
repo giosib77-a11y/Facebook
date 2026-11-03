@@ -371,7 +371,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 
 ## 7. მონაცემთა ბაზა
 
-### ცხრილები (7) — ყველას აქვს RLS
+### ცხრილები (8) — ყველას აქვს RLS
 
 | ცხრილი | რა ინახება |
 |---|---|
@@ -382,11 +382,12 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `bot_customers` | უნიკალური კლიენტი თვეში (ლიმიტის მრიცხველი) |
 | `bot_conversations` | საუბრის მეხსიერება (ბოლო შეტყობინებები) + ძველი ნაწილის `summary` (0026, nullable) + handoff-ის ნიშანი (`needs_attention`, 0010) |
 | `llm_usage` | LLM-ის გამოძახებების usage: `shop_id`, `provider`, `model`, `input_tokens` (cache-ის გარეშე), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0025) |
+| `data_deletion_requests` | Meta Data Deletion მოთხოვნების სტატუსი: `code`, `status` (`pending` / `completed` / `failed`), `error`; `fb_user_id` მხოლოდ დასრულებამდე. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0029) |
 
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (28)
+### მიგრაციები (29)
 
 | # | რა |
 |---|---|
@@ -418,6 +419,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0026` | `bot_conversations.summary` (text, nullable) — ძველი შეტყობინებების შეკუმშული ვერსია (Stage 16). ახალი პოლისი/უფლება არ არის. იდემპოტენტურია. გაუშვი Stage 16-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — summary გამორთულია, ლოგში ერთი WARNING |
 | `0027` | `shops.knowledge_faq` (text, nullable) — PDF-ცოდნის მოკლე FAQ (Stage 17). `authenticated`-ს ამ სვეტზე UPDATE არ აქვს (ჩაწერა მხოლოდ backend-ით). იდემპოტენტურია. გაუშვი Stage 17-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — FAQ გამორთულია, ლოგში ერთი WARNING |
 | `0028` | `products.image_description` (text, nullable) — პროდუქტის ფოტოს ტექსტური აღწერა (Stage 18). იდემპოტენტურია. გაუშვი Stage 18-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — აღწერები გამორთულია, ლოგში ერთი WARNING |
+| `0029` | 🔒 `data_deletion_requests` — Meta Data Deletion-ის რეალური სტატუსი (A-017; RLS, პოლისების გარეშე, მხოლოდ `service_role`). იდემპოტენტურია. გაუშვი backend deploy-**მდე**: მის გარეშე ახალი backend callback-ზე 503-ს აბრუნებს (წაშლა არ იწყება) |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
@@ -444,7 +446,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production) |
 | **შეცდომების გაჟონვა** | production-ში stack trace არ ბრუნდება |
 | **Dev endpoint** | `/test-chat` production-ში გამორთულია |
-| **Data Deletion** | Meta-ს callback + ხელმოწერილი (HMAC) დადასტურების კოდი |
+| **Data Deletion** | Meta-ს callback + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება |
 
 **კოდ-რევიუ:** 2026-08-21…23, 8 გავლა, ~6 400 ხაზი, 22 მიგნება → 16 გასწორებული.
 სრული ანგარიში: [CODE_REVIEW_FINDINGS.md](CODE_REVIEW_FINDINGS.md).
