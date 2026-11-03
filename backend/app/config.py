@@ -11,6 +11,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
+# APP_ENV-ის ერთადერთი მნიშვნელობები, რომლებიც production-ის დაცვებს თიშავს (A-019)
+NON_PRODUCTION_ENVS = ("development", "dev", "test")
+
 
 class Settings(BaseSettings):
     # Supabase
@@ -104,6 +107,21 @@ class Settings(BaseSettings):
             return v or "claude"
         return v
 
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _normalize_app_env(cls, v):
+        # A-019: production-ის დაცვებს თიშავს მხოლოდ ცხადი სია; typo (`prd`, `live`, `staging`)
+        # → ValidationError, აპი არ ირთვება. ცარიელი → production (fail-closed default).
+        if isinstance(v, str):
+            v = v.strip().lower()
+            if v in ("", "production", "prod"):
+                return "production"
+            if v not in NON_PRODUCTION_ENVS:
+                raise ValueError(
+                    "APP_ENV must be one of: production, prod, " + ", ".join(NON_PRODUCTION_ENVS)
+                )
+        return v
+
     @field_validator("anthropic_api_key", "openai_api_key", mode="before")
     @classmethod
     def _strip_llm_keys(cls, v):
@@ -120,7 +138,7 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.app_env.strip().lower() in ("production", "prod")
+        return self.app_env not in NON_PRODUCTION_ENVS
 
     @property
     def llm_key_env_name(self) -> str:

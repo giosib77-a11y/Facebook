@@ -628,7 +628,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `SUPABASE_URL` | ✅ | — | პროექტის URL |
 | `SUPABASE_PUBLISHABLE_KEY` | ✅ | — | საჯარო გასაღები (`sb_publishable_...`). ძველი სახელი `SUPABASE_ANON_KEY` fallback-ად მუშაობს |
 | `SUPABASE_SECRET_KEY` | ✅ | — | 🔒 სერვერის გასაღები (`sb_secret_...`) — **არასდროს frontend-ში**. ძველი სახელი `SUPABASE_SERVICE_ROLE_KEY` fallback-ად მუშაობს; ორივე რომ იყოს, ახალი იგებს |
-| `APP_ENV` | | `production` | `production` (default, fail-closed) → HSTS, დამალული შეცდომები, `/test-chat` off. ლოკალურად `.env`-ში `APP_ENV=development` |
+| `APP_ENV` | | `production` | `production` (default, fail-closed) → HSTS, დამალული შეცდომები, `/test-chat` off. ლოკალურად `.env`-ში `APP_ENV=development`. დასაშვები მხოლოდ `production`/`prod` ან `development`/`dev`/`test`; სხვა მნიშვნელობით (მაგ. `prd`, `staging`) აპი **არ ირთვება** (A-019) |
 | `APP_HOST` · `APP_PORT` | | `0.0.0.0` · `8000` | |
 | `CORS_ORIGINS` | | `*` | production-ში კონკრეტული დომენი |
 | `CLIENT_IP_TRUSTED_HOPS` | ✅ | — (Render: `3`) | production-ში სავალდებულოა (≥1), სხვაგვარად სერვერი არ ადგება. კლიენტის IP = `X-Forwarded-For`-ის მარჯვნიდან N-ური ჩანაწერი (Render-ზე სწორი N დაადგინე `CLIENT_IP_DEBUG`-ით). `CF-Connecting-IP` იგნორირდება |
