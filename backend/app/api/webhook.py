@@ -242,6 +242,24 @@ def _save_turn(
         logger.warning("conversation compaction save failed (shop=%s)", shop_id, exc_info=True)
 
 
+# A-021: მხოლოდ ის სვეტები, რასაც ბოტი იყენებს (prompt / tools / ფოტოს რანჟირება), არა select("*").
+_BOT_PRODUCT_COLUMNS = "id,name,price,quantity,sku,description,image_url"
+
+
+def _load_bot_products(sc, shop_id: str) -> list:
+    """მაღაზიის აქტიური პროდუქტები ბოტისთვის. migration 0028-ის გარეშე — `image_description`-ის გარეშე."""
+    def select(columns: str):
+        return (
+            sc.table("products").select(columns)
+            .eq("shop_id", shop_id).eq("is_active", True).execute().data
+        )
+
+    try:
+        return select(_BOT_PRODUCT_COLUMNS + ",image_description")
+    except Exception:
+        return select(_BOT_PRODUCT_COLUMNS)
+
+
 def _customer_rank(sc, shop_id: str, psid: str) -> int:
     """ამ კლიენტის რიგითი ნომერი (1-დან) მაღაზიის ამ თვის კლიენტებში — მოსვლის მიხედვით.
 
@@ -348,14 +366,7 @@ def _process_events(data: dict) -> None:
             )
             continue
 
-        products = (
-            sc.table("products")
-            .select("*")
-            .eq("shop_id", shop["id"])
-            .eq("is_active", True)
-            .execute()
-            .data
-        )
+        products = _load_bot_products(sc, shop["id"])
 
         for ev in entry.get("messaging", []):
             message = ev.get("message", {})
