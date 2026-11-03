@@ -445,6 +445,16 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
   - `delete_order`-ის 409 შეტყობინება და `DELETABLE_STATUSES` კომენტარი `new`-ისთვის ზუსტი აღარ არის (ტესტი d1 ამოწმებს ტექსტს).
   - Verify: grep ძველ ტექსტებზე; `npm run build` + `dist/` იმავე commit-ში; `pytest -q`.
   - მიზეზი: Cloudflare ახლა არ გამოიყენება; ნაცვლად — T17. დაბრუნდება Cloudflare-ის მომავალ ჩართვასთან ერთად.
+### გარე code review (2026-11-03; A-017…A-021 გასწორდა — AUDIT.md)
+საერთო მიზეზი გადადებისთვის: production — ერთი Render instance, `WEB_CONCURRENCY=1`; in-memory state ერთ process-შია. გადახედვა: >1 instance/worker. მფლობელის Accepted Risk-ად გადასაწყვეტი — AUDIT.md „Proposed Accepted Risks".
+- **webhook-ის მდგრადი queue** (`BackgroundTasks` → crash/deploy-ზე შეტყობინება იკარგება) — Accepted Risk #6, ROADMAP 🏗.
+- **`_SEEN_MIDS` dedup process-memory-შია** (`webhook.py:30`) — restart-ის შემდეგ Meta-ს retry-ზე მეორე პასუხი შესაძლებელია.
+- **rate limiter-ის საერთო state** (`core/ratelimit.py`, `webhook._RATE_HITS`) — Accepted Risk #9; >1 worker-ზე → Redis / DB.
+- **`track_bot_customer` fail-open** (`webhook.py:386-410`) — RPC-ის შეცდომაზე ბოტი ლიმიტის შემოწმების გარეშე პასუხობს (შეგნებული; ზედა ზღვარი — წუთობრივი ლიმიტი). გადახედვა: ავტომატური ბილინგი.
+- **`POST /orders`-ის დღიური bucket მაღაზიის შემოწმებამდე** — A-010 (nit): `check_rate_limit` `shop` select-ის შემდეგ.
+- (A-021-ის ნარჩენი, nit) `/test-chat` (`api/chat.py:44-52`) ჯერ `products.select("*")` — webhook-ის `_load_bot_products`-ზე გადასაყვანი.
+- (A-017-ის ნარჩენი, nit) `failed` წაშლის მოთხოვნა ავტომატურად არ მეორდება — მფლობელი ხელით (0029-ის ბოლოს query); `data_deletion_requests` ცხრილი არ სუფთავდება (მცირეა, კოდი 400 დღე მოქმედებს).
+- (A-018-ის ნარჩენი, nit) მაღაზიის სტატისტიკა (`shops.py` `total_conversations` / `top_terms`) ახლა მხოლოდ ბოლო ~24 სთ-ის საუბრებს ითვლის — UI-ში ტექსტის დაზუსტება საჭიროა?
 ### Stage 12 აუდიტიდან (nit, 2026-10-09)
 - B-12-ის ნარჩენი (S12-1-ის შემდეგ): კლიენტის FB/IG CDN URL-ებზე DNS rebinding TOCTOU და `100.64/10` (CGNAT) `is_private`-ით არ იფარება → `ip.is_global` (`services/facebook.py` `_is_public_http_url`).
 - ტესტი: `resolve_attention`-ის service update-ის `.eq("shop_id")` ფილტრის assert (knowledge-ისას დაემატა, აქ — არა).
@@ -605,6 +615,12 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - (Stage 14, დასრულებული — რიგები იხ. `## Stage 14 — Done`) `backend/requirements*.txt`, `backend/app/config.py`, `backend/tests/conftest.py`, `backend/app/services/llm.py`, `test_bot_reply.py`, `test_golden_conversations.py`.
 
 ## Blockers
+- **მფლობელი — გარე review-ის მიგრაციები `0029`–`0031` (2026-11-03, A-017/A-018/A-020)** ხელით, SQL Editor-ში. რიგი:
+  1. Render-ზე შეამოწმე `APP_ENV` = `production` (A-019: სხვა უცნობი მნიშვნელობით ახალი backend **არ ჩაირთვება**) და `BOT_MEMORY_HOURS` (თუ ≠ 24 — 0030-ის `cron.schedule`-ში იგივე რიცხვი ჩაწერე).
+  2. `0029_data_deletion_requests.sql` — **აუცილებლად deploy-მდე** (მის გარეშე Data Deletion callback 503-ს აბრუნებს). შემოწმება: `t, 0, f, f, f, t`.
+  3. `0031_orders_idempotency_key.sql` — deploy-მდე (რეკომენდებული; მის გარეშე შეკვეთები მაინც იქმნება, WARNING). შემოწმება: `uuid, YES` + unique index.
+  4. `0030_bot_conversations_retention.sql` — ნებისმიერ დროს (backend-ს არ ეხება; ⚠️ პირველივე გაშვებაზე წაიშლება 24 სთ-ზე ძველი ყველა საუბარი, ღია handoff-ების გარდა). შემოწმება: `cron.job`-ში 1 მწკრივი; ~1 სთ-ში `cron.job_run_details.status = succeeded`.
+  5. backend + frontend deploy (`main`-ში merge — მფლობელი). შემდეგ: Meta-ს Data Deletion-ის სატესტო მოთხოვნა → `delete-data.html?code=…` უნდა აჩვენოს „✅ მონაცემები წაიშალა".
 - **მფლობელი — `ANTHROPIC_API_KEY`:** Stage 14 offline სრულდება key-ის გარეშე, მაგრამ `main`-ში merge/deploy და რეალური შემოწმება (cache, ქართული ხარისხი) მის გარეშე არ იგეგმება. რეკომენდაცია: Anthropic Console-ში ცალკე production workspace + spend limit.
 - **მფლობელი — `OPENAI_API_KEY`:** Stage 15-ის ბრმა შედარებისთვის (ლოკალურად; Render-ზე არ სჭირდება, სანამ `LLM_PROVIDER=openai` არ გადაწყდება). სკრიპტი **ორივე** key-ს ითხოვს; Stage 15-ის კოდი key-ების გარეშე სრულდება, გაშვება — მფლობელი (README §9), შედეგი — Decision Log.
 - **მფლობელი — gpt-6-luna-ს ოფიციალური ფასი და პარამეტრები** OpenAI-ის pricing/model გვერდზე (მესამე მხარის: $0.10 in / $0.50 out, cached ≈ $0.01 per MTok; Responses API, `prompt_cache_key`, reasoning-ის პარამეტრები — დაუდასტურებელი; PROJECT.md Open Questions).
@@ -622,6 +638,13 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - Failed attempts: —
 
 ## Last Session
+- Date: 2026-11-03
+- Done: გარე code review — A-017…A-021 (AUDIT.md `5804cbc`), თითო commit-ით და ძველ კოდზე ჩავარდნილი ტესტით: A-017 Data Deletion-ის რეალური სტატუსი (`6bfc16b`, 0029), A-018 საუბრების ვადიანი წაშლა pg_cron-ით + privacy §6 (`9ed57c4`, 0030), A-019 `APP_ENV` allowlist (`07b57da`), A-020 `POST /orders` idempotency (`49fdb40`, 0031), A-021 webhook-ის products სვეტები (`31111a9`). დანარჩენი — Backlog „გარე code review" + AUDIT.md Proposed Accepted Risks.
+- Verification: pytest **1825 passed**, ruff/compileall ✅, frontend lint 0 error / 5 warning, test 31/31, build → `dist` commit-შია.
+- Unverified: 0029–0031 რეალურ Postgres-ზე, pg_cron-ის გაშვება, Meta-ს რეალური callback.
+- Next: მფლობელი — `## Blockers`-ის პირველი პუნქტი (APP_ENV → 0029 → 0031 → 0030 → deploy).
+
+### Stage 18-ის სესია
 - Date: 2026-10-29
 - Done: **Stage 18 დასრულდა (offline) — Stage 15–18 სერია დასრულებულია.** S18-1…S18-8 (plan `86a4fdb`; `6349570`, `196b158`, `7f2b7cd`, `5f9220d`, `bb9dc7e`, `2b7a8f6`, `e618f1f`, `4d14288`). პროდუქტის ფოტოს ტექსტური აღწერა create/update-ზე (საკუთარი Storage, ≤500 EN+KA, 30/სთ/მაღაზია) → `products.image_description` (0028); კლიენტის ფოტოზე აღწერის წინასწარი გამოძახება (>3 აღწერილზე, 12 წმ, არსად ინახება) → `rank_products` → ≤3 საცნობარო ფოტო (იყო 12; 12 ფოტოიან მაღაზიაზე 13 → 4 სურათი); backfill სკრიპტი (მხოლოდ მფლობელი); შედარების სკრიპტი ფოტო-პარიტეტით.
 - Verification (ორკესტრატორი): pip check ✅, pip-audit 0; ruff/compileall `app tests scripts` ✅; pytest **1739 passed**; frontend lint 0 error / 5 warning, test 29/29, build → `dist` უცვლელი (frontend Stage 15–18-ში არ შეცვლილა). finish-check: 0 critical / 0 should-fix.
