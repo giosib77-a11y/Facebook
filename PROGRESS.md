@@ -525,6 +525,15 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - (S19-3-ის report, nit) `/admin/recovery` (`api/admin.py`) კლიენტს `f"ბმულის გენერაცია ვერ მოხერხდა: {e}"`-ს აბრუნებს — N-14-ის მსგავსი; ეტაპი 3-ის N-06-თან ერთად (recovery-ის ბმული ადმინს საერთოდ აღარ უნდა დაუბრუნდეს).
 - (Stage 19-ის დაგეგმვისას, nit) Data Deletion-ში (`_erase_fb_user_data`) გამყიდველის გვერდის გათიშვისას webhook-ის გამოწერა არ უქმდება (S19-7 მხოლოდ `disconnect`-ს ფარავს) — იგივე `unsubscribe_page` best-effort.
 
+### Stage 19 finish-check (nit, 2026-11-03; code-reviewer 0/0/5, security-auditor 0/0/4)
+- `api/shops.py` `_insert_shop_atomic`: RPC-ის მოულოდნელ შეცდომაზე ლოგში მხოლოდ კლასის სახელი — დაემატოს `code` (და `message`, ლოგში მხოლოდ) — ნახევრად გაშვებული 0032-ის (42501 / PGRST203) დიაგნოსტიკისთვის.
+- `api/facebook.py` `disconnect`: ახალი service select `run(...)`-ით — DB-ის შეცდომაზე გათიშვა ჩავარდება (ადრე მხოლოდ update იყო); select `try`-ში → WARNING → update. ასევე: unsubscribe DB update-მდეა — Graph DELETE ✓ + update ✗ → ბოტი ჩუმად კვდება, სანამ ხელახლა არ გათიშავს (იშვიათი) — რიგის შეცვლა (ჯერ update, მერე unsubscribe წაკითხული token-ით).
+- `backend/requirements.txt:2` კომენტარი ჯერ „pip freeze-ით განახლებადი" — hash-ებს დაკარგავს; README §11-ის docker/pip-compile ბრძანებაზე მიუთითოს (A-034-ის ნარჩენი).
+- `frontend/src/admin/AdminPage.jsx:179-181`: A-024-ის 409-ზე ადმინი ზოგად „ვერ მოხერხდა"-ს ხედავს და სია არ ახლდება — catch-ში `load()` / backend-ის detail.
+- `api/admin.py` resolve: check-then-act რჩება (tier ცვლილება → მერე პირობითი status update, 0 მწკრივი იგნორდება) — ორმაგი click / პარალელური `_cancel_pending_requests`; მხოლოდ ადმინი, იშვიათი. გამოსწორება: ჯერ status-ის „დაკავება" (0 მწკრივი → 409), მერე tier — Decision Log-ის A-024-ის ჩანაწერი განიხილავს და უარყოფს (tier-ის ჩავარდნისას „approved" პაკეტის გარეშე); საჭიროა compensating update.
+- CI: `requirements-dev.txt` და `pip install pip-audit` hash-ების გარეშე ყენდება (`permissions: contents: read`, secret-ები არ არის) → `requirements-dev.lock.txt` hash-ებით.
+- `fbConnect.js` origin = `API_BASE`; dev-ში Vite (`:5173`) + ngrok `FB_REDIRECT_URI` → callback origin ≠ `localhost:8000` → toast არ ჩანს (code-reviewer: ეს setup nonce cookie-ზე ისედაც ვარდებოდა). production-ში უცვლელად მუშაობს. ვარიანტი: `/facebook/connect/start` დააბრუნოს `callback_origin`.
+- **შესამოწმებელი (მფლობელი):** Meta-ს Data Deletion callback-ის `user_id` app-scoped ID-ია (ASID), `bot_customers.psid` / `bot_conversations.psid` — page-scoped (PSID) → psid-ით წაშლა (A-030 და უკვე არსებული `bot_conversations`) პრაქტიკაში შეიძლება არაფერს შლიდეს; Messenger-ის კლიენტისთვის callback სავარაუდოდ საერთოდ არ მოდის. offline ვერ დადასტურდება; თუ დადასტურდა — კლიენტის წაშლას სხვა გზა სჭირდება (ეტაპი 2/3), README-ის ფორმულირება დაზუსტდეს.
 ### გარე code review (2026-11-03; A-017…A-021 გასწორდა — AUDIT.md)
 საერთო მიზეზი გადადებისთვის: production — ერთი Render instance, `WEB_CONCURRENCY=1`; in-memory state ერთ process-შია. გადახედვა: >1 instance/worker. მფლობელის Accepted Risk-ად გადასაწყვეტი — AUDIT.md „Proposed Accepted Risks".
 - **webhook-ის მდგრადი queue** (`BackgroundTasks` → crash/deploy-ზე შეტყობინება იკარგება) — Accepted Risk #6, ROADMAP 🏗.
@@ -569,14 +578,14 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
   production-ში `FB_TOKEN_ENCRYPTION_KEY`/`FB_APP_SECRET` startup-ზე არ მოწმდება; `encrypt` `subscribe_page`-ის შემდეგაა (`api/facebook.py:253`).
 - ~~**A-6**~~ — დაიხურა S11-5-ით (migration 0022: `knowledge*`-ზე UPDATE მოხსნილია, ჩაწერა მხოლოდ backend-ით service client-ით).
 - **A-7** — `/admin/recovery` ადმინს recovery ბმულს აბრუნებს + `{e}` შეცდომაში (`admin.py:443-453`).
-- **A-8** — upgrade request-ის resolve `status='pending'`-ს არ ამოწმებს (`admin.py:416-439`).
-- **A-10** — მაღაზიის/პროდუქტის ლიმიტი TOCTOU (პარალელური POST-ით მცირე გადაჭარბება).
+- ~~**A-8**~~ — **დაიხურა Stage 19-ით (A-024, `500f1be`).** upgrade request-ის resolve `status='pending'`-ს არ ამოწმებს (`admin.py:416-439`).
+- **A-10** — (მაღაზიის ნაწილი დაიხურა Stage 19-ით — A-029, 0032; ღიაა მხოლოდ პროდუქტის) მაღაზიის/პროდუქტის ლიმიტი TOCTOU (პარალელური POST-ით მცირე გადაჭარბება).
 - **B-7** — არა-ASCII შეყვანა `hmac.compare_digest`-ს 500-ით აგდებს (`webhook.py:170`, `services/facebook.py:101,148`, `api/facebook.py:110`).
 - **B-8a** — webhook batch-ში ერთი entry-ს exception დანარჩენებს კარგავს (`webhook.py:201-243`).
-- **B-8b** — `_SEEN_MIDS` threadpool-იდან lock-ის გარეშე იცვლება (`webhook.py:61-77`).
+- ~~**B-8b**~~ — **დაიხურა Stage 19-ით (A-026, `93392f7`).** `_SEEN_MIDS` threadpool-იდან lock-ის გარეშე იცვლება (`webhook.py:61-77`).
 - **B-10** — გვერდის „დაკავება" სხვის უფასო მაღაზიაზე; ნამდვილ მფლობელს მხოლოდ `page_taken` (`api/facebook.py:269-274`).
-- **B-11** — popup-ის `message` listener origin/source-ს არ ამოწმებს (`frontend/src/panel/fbConnect.js:19-24`).
-- **B-12** — SSRF: DNS rebinding TOCTOU, `is_private` არ ფარავს 100.64/10 → `is_global` + მხოლოდ საკუთარი Storage URL (`services/facebook.py:279-334`).
+- ~~**B-11**~~ — **დაიხურა Stage 19-ით (A-025, `ee15bd9`).** popup-ის `message` listener origin/source-ს არ ამოწმებს (`frontend/src/panel/fbConnect.js:19-24`).
+- **B-12** — (DNS rebinding-ის ნაწილი დაიხურა Stage 19-ით — A-028, `7aa9c2d`; ღიაა 100.64/10 → `is_global`) SSRF: DNS rebinding TOCTOU, `is_private` არ ფარავს 100.64/10 → `is_global` + მხოლოდ საკუთარი Storage URL (`services/facebook.py:279-334`).
 - **B-13** — კლიენტის ფოტოები `INLINE_IMAGE_BUDGET`-ს არ ემორჩილება (`webhook.py:313-317`).
 - **B-14** — prompt extraction-ით PDF-ცოდნა ფაქტობრივად საჯაროა → გამყიდველს UI-ში გაფრთხილება (`bot.py:194-197`).
 - ~~Frontend lint (eslint) — არ არის; საჭიროა თუ არა?~~ → Stage 13 (S13-1, S13-4).
@@ -696,7 +705,7 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - (Stage 14, დასრულებული — რიგები იხ. `## Stage 14 — Done`) `backend/requirements*.txt`, `backend/app/config.py`, `backend/tests/conftest.py`, `backend/app/services/llm.py`, `test_bot_reply.py`, `test_golden_conversations.py`.
 
 ## Blockers
-- **მფლობელი — Stage 19 (გარე აუდიტი, ეტაპი 1): migration `0032_create_shop_limited.sql` (S19-9)** ხელით, SQL Editor-ში, 0029–0031-ის შემდეგ, Stage 19-ის backend deploy-**მდე** (რეკომენდებული). backend მის გარეშეც მუშაობს: მაღაზიის შექმნა ძველი გზით (ლიმიტის race რჩება), ლოგში ერთი WARNING — რიგის დარღვევა ავარიას არ იწვევს. შემოწმება ფაილის ბოლოს: `authenticated` → `f`, `service_role` → `t`. სრული რიგი: APP_ENV → 0029 → 0031 → 0030 → **0032** → backend + frontend deploy. deploy-ის შემდეგ: (1) Render-ის build-ის ლოგში `pip install -r requirements.lock.txt` hash-mode-ში გადის (S19-12); (2) `https://chatassist.ge/docs` → 404; (3) ორ tab-ში პანელი ≥1 სთ — logout არ ხდება, FB connect popup მუშაობს (S19-10/11); (4) გვერდის გათიშვა → Meta-ს App Dashboard-ში webhook-ის გამოწერა მოიხსნა (S19-7). *(დაგეგმვისას ჩაწერილი; ზუსტდება stage-ის ბოლოს.)*
+- **მფლობელი — Stage 19 (გარე აუდიტი, ეტაპი 1): migration `0032_create_shop_limited.sql` (S19-9)** ხელით, SQL Editor-ში, 0029–0031-ის შემდეგ, Stage 19-ის backend deploy-**მდე** (რეკომენდებული). backend მის გარეშეც მუშაობს: მაღაზიის შექმნა ძველი გზით (ლიმიტის race რჩება), ლოგში ერთი WARNING — რიგის დარღვევა ავარიას არ იწვევს. შემოწმება ფაილის ბოლოს: `authenticated` → `f`, `service_role` → `t`. სრული რიგი: APP_ENV → 0029 → 0031 → 0030 → **0032** → backend + frontend deploy. deploy-ის შემდეგ: (1) Render-ის build-ის ლოგში `pip install -r requirements.lock.txt` hash-mode-ში გადის (S19-12); (2) `https://chatassist.ge/docs` → 404; (3) ორ tab-ში პანელი ≥1 სთ — logout არ ხდება, FB connect popup მუშაობს (S19-10/11); (4) გვერდის გათიშვა → Meta-ს App Dashboard-ში webhook-ის გამოწერა მოიხსნა (S19-7). *(Stage 19-ის ბოლოს დადასტურებული, 2026-11-03.)*
 - **მფლობელი — გარე review-ის მიგრაციები `0029`–`0031` (2026-11-03, A-017/A-018/A-020)** ხელით, SQL Editor-ში. რიგი:
   1. Render-ზე შეამოწმე `APP_ENV` = `production` (A-019: სხვა უცნობი მნიშვნელობით ახალი backend **არ ჩაირთვება**) და `BOT_MEMORY_HOURS` (თუ ≠ 24 — 0030-ის `cron.schedule`-ში იგივე რიცხვი ჩაწერე).
   2. `0029_data_deletion_requests.sql` — **აუცილებლად deploy-მდე** (მის გარეშე Data Deletion callback 503-ს აბრუნებს). შემოწმება: `t, 0, f, f, f, t`.
@@ -715,14 +724,16 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 
 ## Run State
 - Stage: Stage 19 — გარე აუდიტი (PDF, 2026-11-03), ეტაპი 1
-- Finish-check this stage: not run
+- Finish-check this stage: done (code-reviewer 0/0/5 nit, security-auditor 0/0/4 nit → Backlog „Stage 19 finish-check"; გასწორება არ დასჭირდა)
 - Fix rounds this stage: 0/2
 - Failed attempts: —
 
 ## Last Session
 - Date: 2026-11-03
-- Done: **Stage 19 დაიგეგმა** (`/auto plan:`) — გარე აუდიტის PDF-ის ეტაპი 1: AUDIT.md-ში A-022…A-034 (N-ნომრებით; A-012/A-013 → superseded), PROGRESS.md-ში S19-1…S19-13, PROJECT.md Decision Log „Stage 19". კოდი არ შეცვლილა.
-- Next: `/auto continue` → S19-1 ∥ S19-3 (შემდეგ რიგით `## Tasks`-ის მიხედვით).
+- Done: **Stage 19 დასრულდა (offline)** — გარე აუდიტის PDF-ის ეტაპი 1, A-022…A-034, თითო commit-ით და ძველ კოდზე ჩავარდნილი ტესტით: A-022 `/docs` off (`203754f`), A-031 `/panel` მხოლოდ dist-იდან — fallback სრულად მოიხსნა, მფლობელის გადაწყვეტილება (`dba6f30`), A-023 Storage-ის შეცდომა (`023dd43`), A-024 resolve მხოლოდ pending (`500f1be`), A-026 lock-ები (`93392f7`), A-030 `bot_customers` psid (`b2fbf32`), A-025 popup origin/source (`ee15bd9`), A-032 supabase-js default lock (`6f6d644`), A-027 unsubscribe disconnect-ზე (`013c3e4`), A-029 RPC + 0032 (`97e4f75`), A-028 IP-pinned download, IPv4 უპირატესობით (`7aa9c2d`), A-033 hash lock + Actions SHA (`f1779c8`), A-034 README/CLAUDE.md (`e7f4ed8`). A-012/A-013 დაიხურა. finish-check: 0 critical / 0 should-fix (9 nit → Backlog „Stage 19 finish-check").
+- Verification: pip check ✅; ruff/compileall `app tests scripts` ✅; pytest **1894 passed** (1825 → +69); frontend lint 0 error / 5 warning, `npm test` **45/45** (31 → +14), build → `dist` commit-შია და სტაბილურია; `npm audit --omit=dev` 0; Linux container-ში `pip install --require-hashes` + `pip check` + `pip-audit` ✅.
+- Unverified: 0032 რეალურ Postgres-ზე; Render-ის hash-mode build; რეალური Graph `DELETE subscribed_apps`; IP-pinned ჩამოტვირთვა რეალურ FB CDN / Storage-ზე; ბრაუზერში popup და ორი tab (Playwright პროექტში არ არის); Data Deletion-ის ASID ≠ PSID (Backlog).
+- Next: მფლობელი — `## Blockers`-ის Stage 19-ის პუნქტი (0032 → deploy → 4 ხელით შემოწმება); შემდეგ ეტაპი 2 (Backlog „გარე აუდიტი PDF").
 
 ### გარე code review-ის სესია (A-017…A-021)
 - Date: 2026-11-03
