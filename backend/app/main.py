@@ -63,10 +63,19 @@ check_required_settings(settings)
 warn_if_llm_disabled(settings)
 warn_if_retention_mismatch(settings)
 
+def _docs_kwargs(s) -> dict:
+    """A-022: production-ში /docs, /redoc, /openapi.json გამორთულია (API-ს რუკა საჯაროდ არ ჩანს);
+    dev/test-ში — FastAPI-ს ნაგულისხმევი."""
+    if s.is_production:
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {}
+
+
 app = FastAPI(
     title="ქართული მაღაზიების AI ბოტი — API",
     description="Multi-tenant SaaS: Facebook Messenger AI ბოტი ქართული მაღაზიებისთვის",
     version="0.1.0",
+    **_docs_kwargs(settings),
 )
 
 logger = logging.getLogger("app")
