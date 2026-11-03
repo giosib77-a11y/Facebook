@@ -295,38 +295,47 @@ _ALLOWED_SCHEMES = ("http", "https")
 _MAX_REDIRECTS = 3
 
 
-def _is_public_http_url(url: str) -> bool:
-    """True — თუ URL საჯარო ინტერნეტ-მისამართზე მიუთითებს.
+def _resolve_public(url: str) -> tuple[httpx.URL, str] | None:
+    """(გარჩეული URL, პირველი შემოწმებული IP) — თუ URL საჯარო ინტერნეტ-მისამართზე მიუთითებს, თორემ None.
 
     ⚠️ SSRF-ის დაცვა. `products.image_url`-ს გამყიდველი თავად წერს, ე.ი. ეს
     მისამართი არასანდოა. შიდა/ლოკალური მისამართები (127.x, 10.x, 192.168.x,
     169.254.169.254 = cloud metadata) იბლოკება, თორემ სერვერი მათ ჩამოტვირთავდა
-    და შიგთავსს LLM-ს გადასცემდა.
+    და შიგთავსს LLM-ს გადასცემდა. DNS ერთხელ გარჩეულია — გამომძახებელი სწორედ ამ IP-ს
+    უკავშირდება (DNS rebinding: მეორე resolve სხვა მისამართს ვერ დაგვიბრუნებს).
     """
     try:
         parsed = urlparse(url or "")
-    except Exception:
-        return False
-    if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
-        return False
-    try:
+        if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
+            return None
+        parsed_url = httpx.URL(url)
         infos = socket.getaddrinfo(parsed.hostname, None)
-    except (socket.gaierror, UnicodeError, ValueError):
-        return False
+    except (socket.gaierror, UnicodeError, ValueError, httpx.InvalidURL):
+        return None
     if not infos:
-        return False
+        return None
     # ყველა გარჩეული მისამართი უნდა იყოს საჯარო (თუნდაც ერთი შიდა — ვბლოკავთ)
+    addrs = []
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
-            return False
+            return None
         if (
             ip.is_private or ip.is_loopback or ip.is_link_local
             or ip.is_reserved or ip.is_multicast or ip.is_unspecified
         ):
-            return False
-    return True
+            return None
+        addrs.append(ip)
+    # IPv4 ამჯობინებთ: ერთ IP-ზე ვფიქსირდებით და ჰოსტს (მაგ. Render) შეიძლება გასვლითი IPv6 არ ჰქონდეს,
+    # ხოლო httpcore აღარ სცდის დანარჩენ მისამართებს.
+    chosen = next((a for a in addrs if a.version == 4), addrs[0])
+    return parsed_url, str(chosen)
+
+
+def _is_public_http_url(url: str) -> bool:
+    """True — თუ URL საჯარო ინტერნეტ-მისამართზე მიუთითებს (იხ. `_resolve_public`)."""
+    return _resolve_public(url) is not None
 
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
@@ -357,6 +366,8 @@ def is_own_storage_image_url(url: str | None) -> bool:
 # slow-drip სერვერი (1 ბაიტი რამდენიმე წამში) ნაკადს განუსაზღვრელად გააჭიანურებდა და
 # threadpool-ის თრედს დაიკავებდა.
 _DOWNLOAD_DEADLINE_SECONDS = 15.0
+# ტესტებისთვის: httpx.MockTransport (production-ში None = ნამდვილი ქსელი)
+_TRANSPORT: httpx.BaseTransport | None = None
 
 
 def download_image(
@@ -368,50 +379,70 @@ def download_image(
     ძალიან დიდია / მისამართი არასაჯაროა). ბოტი უსურათოდ მაინც აგრძელებს.
 
     ⚠️ ორი დაცვა (რევიუ P1-1):
-      1. SSRF — ყოველი მისამართი (redirect-ებიც) მოწმდება `_is_public_http_url`-ით.
+      1. SSRF — ყოველი მისამართი (redirect-ებიც) მოწმდება `_resolve_public`-ით, ხოლო TCP
+         კავშირი სწორედ შემოწმებულ IP-ზე იხსნება (DNS rebinding: შემოწმებასა და
+         კავშირს შორის მეორე resolve არ ხდება). Host header და TLS SNI/სერტიფიკატის
+         შემოწმება დარჩენილია ორიგინალ hostname-ზე; env proxy-ები იგნორირებულია.
       2. მეხსიერება — ნაკადურად (stream) ვკითხულობთ და ჭერზე ვწყვეტთ, რომ
          უზარმაზარმა პასუხმა instance არ ჩააგდოს (ადრე `r.content` ჯერ
          მთლიანად ჩამოტვირთავდა და მერე ამოწმებდა ზომას).
+    content-type არ არის `image/*` → None (LLM-ს არა-სურათი "image/jpeg"-ად აღარ გადაეცემა).
     """
     current = url
     deadline = time.monotonic() + _DOWNLOAD_DEADLINE_SECONDS
-    for _ in range(_MAX_REDIRECTS + 1):
-        if time.monotonic() >= deadline:
-            logger.warning("სურათის ჩამოტვირთვა: დრო ამოიწურა")
-            return None
-        if not _is_public_http_url(current):
-            logger.warning("სურათის ჩამოტვირთვა დაიბლოკა (არასაჯარო მისამართი): %.120s", current)
-            return None
-        with httpx.stream(
-            "GET", current, timeout=timeout, follow_redirects=False
-        ) as r:
-            if r.is_redirect:
-                nxt = r.headers.get("location")
-                if not nxt:
-                    return None
-                current = str(httpx.URL(current).join(nxt))
-                continue
-            r.raise_for_status()
-            # Content-Length-ს ვენდობით მხოლოდ ადრეული უარისთვის — ნამდვილი
-            # ჭერი ქვემოთ, ნაკადის კითხვისასაა (ყალბი header არ გვატყუებს).
-            declared = r.headers.get("content-length")
-            if declared and declared.isdigit() and int(declared) > max_bytes:
+    with httpx.Client(
+        trust_env=False, follow_redirects=False, timeout=timeout, transport=_TRANSPORT
+    ) as client:
+        for _ in range(_MAX_REDIRECTS + 1):
+            if time.monotonic() >= deadline:
+                logger.warning("სურათის ჩამოტვირთვა: დრო ამოიწურა")
                 return None
-            buf = bytearray()
-            for chunk in r.iter_bytes():
-                buf.extend(chunk)
-                if time.monotonic() >= deadline:
-                    logger.warning("სურათის ჩამოტვირთვა: დრო ამოიწურა (%d ბაიტი)", len(buf))
-                    return None
-                if len(buf) > max_bytes:
-                    logger.warning("სურათი ჭერს გადააჭარბა (%d ბაიტი) — შეწყდა", len(buf))
-                    return None
-            data = bytes(buf)
-            if not data:
+            resolved = _resolve_public(current)
+            if resolved is None:
+                logger.warning("სურათის ჩამოტვირთვა დაიბლოკა (არასაჯარო მისამართი): %.120s", current)
                 return None
-            mime = (r.headers.get("content-type") or "image/jpeg").split(";")[0].strip().lower()
-            if not mime.startswith("image/"):
-                mime = "image/jpeg"
-            return data, mime
+            parsed_url, ip = resolved
+            host = parsed_url.host  # IDNA-ფორმა, IPv6 ფრჩხილების გარეშე
+            host_header = f"[{host}]" if ":" in host else host
+            if parsed_url.port is not None:  # httpx: default port → None
+                host_header = f"{host_header}:{parsed_url.port}"
+            request = client.build_request(
+                "GET", parsed_url.copy_with(host=ip),
+                headers={"Host": host_header},
+                extensions={"sni_hostname": host},
+            )
+            r = client.send(request, stream=True)
+            try:
+                if r.is_redirect:
+                    nxt = r.headers.get("location")
+                    if not nxt:
+                        return None
+                    current = str(parsed_url.join(nxt))  # hostname-URL-ს ვუერთებთ, არა IP-სას
+                    continue
+                r.raise_for_status()
+                # Content-Length-ს ვენდობით მხოლოდ ადრეული უარისთვის — ნამდვილი
+                # ჭერი ქვემოთ, ნაკადის კითხვისასაა (ყალბი header არ გვატყუებს).
+                declared = r.headers.get("content-length")
+                if declared and declared.isdigit() and int(declared) > max_bytes:
+                    return None
+                buf = bytearray()
+                for chunk in r.iter_bytes():
+                    buf.extend(chunk)
+                    if time.monotonic() >= deadline:
+                        logger.warning("სურათის ჩამოტვირთვა: დრო ამოიწურა (%d ბაიტი)", len(buf))
+                        return None
+                    if len(buf) > max_bytes:
+                        logger.warning("სურათი ჭერს გადააჭარბა (%d ბაიტი) — შეწყდა", len(buf))
+                        return None
+                data = bytes(buf)
+                if not data:
+                    return None
+                mime = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if not mime.startswith("image/"):
+                    logger.warning("image download: not an image (%s)", mime or "none")
+                    return None
+                return data, mime
+            finally:
+                r.close()
     logger.warning("სურათის ჩამოტვირთვა: ძალიან ბევრი redirect")
     return None
