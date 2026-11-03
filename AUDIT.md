@@ -126,7 +126,7 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **შედეგი:** ითიშება fail-closed startup, OAuth nonce-ის შემოწმება და XFF-ზე დაფუძნებული IP; იხსნება `/test-chat` (Gemini ავთენტიფიკაციის გარეშე); კლიენტს DB-ის შეცდომის დეტალი უბრუნდება. ლაივზე `env=production` დადასტურებულია, ამიტომ ეს მხოლოდ კონფიგურაციის შეცდომის რისკია.
 - **გამოსწორება:** შებრუნებული ლოგიკა: არა-production მხოლოდ ცხადი `development|dev|test`; ან უცნობი მნიშვნელობა → startup `RuntimeError`.
 - **owner:** backend-dev
-- **status:** open
+- **status:** superseded by A-019 (2026-11-03)
 
 ### A-012 — `/docs`, `/redoc`, `/openapi.json` production-ში ღიაა
 - **severity:** nit
@@ -172,6 +172,60 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **გამოსწორება:** `"test": "node --test src/panel/"` და CI-ის frontend job-ში `npm test`.
 - **owner:** frontend-dev
 - **status:** fixed (Stage 13, 2026-10-27: Vitest `npm test` + CI-ის frontend job — S13-2, S13-5)
+
+---
+
+## გარე code review — 2026-11-03 (commit `ba295b1`, ბრენჩი `agent-system`)
+
+მფლობელის მიერ გადმოცემული გარე review; ხუთივე მიგნება კოდში დადასტურდა. A-019 ანაცვლებს A-011-ს.
+
+### A-017 — Meta Data Deletion: წაშლის შეცდომები იყლაპება, status ყოველთვის „completed"
+- **severity:** should-fix (privacy: Meta-ს/მომხმარებელს წაშლა დადასტურებულად ეუწყება, თუმცა შეიძლება არ მომხდარა)
+- **file:** `backend/app/api/facebook.py:351-375` (`except Exception: pass` სამ ადგილას), `:385-395` (`status: "completed"` ხელმოწერის შემოწმების შემდეგ ყოველთვის)
+- **სცენარი:** Supabase დროებით მიუწვდომელია ან `delete` ვარდება → callback მაინც 200-ს და დადასტურების კოდს აბრუნებს; `delete-data.html` „✅ დადასტურდა"-ს აჩვენებს, მონაცემი კი ბაზაში რჩება და ამის კვალი არსად არის.
+- **გამოსწორება:** მოთხოვნა ინახება ცხრილში `data_deletion_requests` (`pending` → `completed` / `failed`, migration 0029); შეცდომა ილოგება და სტატუსად იწერება; status endpoint ცხრილიდან კითხულობს.
+- **owner:** backend-dev (+ `delete-data.html` სტატუსის ტექსტი)
+- **status:** open
+
+### A-018 — საუბრების შენახვის ვადა არ სრულდება: `bot_conversations` არასდროს იშლება
+- **severity:** should-fix (PII — კლიენტის შეტყობინებები — უვადოდ ინახება; privacy.html §6 ვადაზე საუბრობს)
+- **file:** `backend/app/api/webhook.py:169` (ვადა მხოლოდ კითხვისას მოწმდება), `frontend/privacy.html:92-98`
+- **სცენარი:** კლიენტი ერთხელ წერს და აღარ ბრუნდება → მისი შეტყობინებები + summary ბაზაში რჩება, სანამ მაღაზია არ წაიშლება. `BOT_MEMORY_HOURS` (24) მხოლოდ იმას განსაზღვრავს, ბოტი გამოიყენებს თუ არა ისტორიას.
+- **გამოსწორება:** Supabase `pg_cron` (Render-ის უფასო გეგმაზე cron არ არის) საათში ერთხელ შლის ვადაგასულ ჩანაწერებს (migration 0030); privacy.html §6 განახლდება.
+- **owner:** backend-dev (+ frontend-dev: privacy.html)
+- **status:** open
+
+### A-019 — `APP_ENV`-ის უცნობი მნიშვნელობა production-ის დაცვებს თიშავს (A-011-ის ჩანაცვლება)
+- **severity:** should-fix (fail-open კონფიგურაცია: typo → `/test-chat` ღიაა, fail-closed startup და nonce-ის შემოწმება ითიშება)
+- **file:** `backend/app/config.py:121-123`
+- **სცენარი:** `APP_ENV=prd` / `live` / `staging` → `is_production=False` → აპი ჩუმად dev რეჟიმში ირთვება.
+- **გამოსწორება:** non-production მხოლოდ ცხადი `development | dev | test`; `production | prod` → production; ნებისმიერი სხვა მნიშვნელობა → startup-ზე ValidationError (აპი არ ირთვება).
+- **owner:** backend-dev
+- **status:** open
+
+### A-020 — `POST /orders` idempotency არ აქვს: განმეორებული მოთხოვნა მეორე შეკვეთას ქმნის
+- **severity:** should-fix (ჩვეულებრივ გამოყენებაში: მობილური ქსელის timeout → ხელახლა გაგზავნა → დუბლიკატი შეკვეთა)
+- **file:** `backend/app/api/orders.py:201-222`, `frontend/src/order/OrderPage.jsx:141-166`
+- **სცენარი:** სერვერმა შეკვეთა ჩაწერა, პასუხი გზაში დაიკარგა (ან proxy-ს 502/504) → ღილაკი ისევ აქტიურდება → მყიდველი ხელახლა აგზავნის → ორი `new` შეკვეთა. Accepted Risk #5 („ღილაკი ითიშება") ამ შემთხვევას არ ფარავს.
+- **გამოსწორება:** frontend ფორმაზე ერთ `idempotency_key`-ს (UUID) ქმნის; backend `(shop_id, idempotency_key)`-ზე unique index-ით (migration 0031) არსებულ შეკვეთას აბრუნებს, ახალს არ ქმნის.
+- **owner:** backend-dev + frontend-dev
+- **status:** open
+
+### A-021 — webhook ყოველ event-ზე `products.select("*")`-ს ტვირთავს
+- **severity:** nit (მონაცემთა მინიმიზაცია / ზედმეტი ტრაფიკი; ფუნქციური შეცდომა არ არის)
+- **file:** `backend/app/api/webhook.py:351-358`
+- **სცენარი:** ყოველ შემოსულ შეტყობინებაზე იტვირთება მაღაზიის ყველა აქტიური პროდუქტის ყველა სვეტი (`shop_id`, `is_active`, `created_at`, `updated_at` …), რომელსაც ბოტი არ იყენებს; ახალი სვეტი ავტომატურად მოხვდება ბოტის მეხსიერებაში.
+- **გამოსწორება:** მხოლოდ ბოტის სვეტები (`id, name, price, quantity, sku, description, image_url, image_description`); `image_description`-ის გარეშე (0028 არ არის) — fallback.
+- **owner:** backend-dev
+- **status:** open
+
+### Proposed Accepted Risks (მფლობელის გადაწყვეტილება; კოდი არ იცვლება)
+საერთო მიზეზი: production ერთ Render instance-ზეა, `WEB_CONCURRENCY=1` (ერთი process) — ყველა in-memory state ერთ ადგილასაა და ერთმანეთს არ ეწინააღმდეგება. გადახედვის პირობა ყველასთვის: >1 instance/worker ან ხშირი restart-ები.
+- **webhook-ის მდგრადი queue არ არის** (`BackgroundTasks`) — უკვე Accepted Risk #6; crash/deploy-ზე მიმდინარე შეტყობინება იკარგება.
+- **`_SEEN_MIDS` (webhook dedup) process-memory-შია** (`webhook.py:30`) — restart-ზე ნულდება; Meta-ს retry restart-ის შემდეგ ერთ შეტყობინებაზე მეორე პასუხს გამოიწვევს (იშვიათი, უვნებელი). Decision Log 2026-08.
+- **rate limiter-ის state საერთო არ არის** (`core/ratelimit.py`, `webhook._RATE_HITS`) — უკვე Accepted Risk #9; რამდენიმე worker-ზე ლიმიტი N-ჯერ გაიზრდება.
+- **`track_bot_customer` fail-open** (`webhook.py:386-410`): RPC-ის შეცდომაზე ბოტი პასუხობს ლიმიტის შემოწმების გარეშე. შეგნებული: DB-ის ხარვეზისას კლიენტს პასუხი არ დაეკარგოს; ზედა ზღვარი — webhook-ის წუთობრივი ლიმიტი (6/psid, 30/shop). გადახედვა: ავტომატური ბილინგი ან ხშირი RPC-შეცდომები ლოგში.
+- **`POST /orders`-ის დღიური bucket მაღაზიის შემოწმებამდე იქმნება** — A-010 (nit, Backlog-ში); ერთი instance-ის მეხსიერებაზე გავლენა მცირეა (10/წთ/IP ლიმიტით).
 
 ---
 
