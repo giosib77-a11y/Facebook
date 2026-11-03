@@ -234,7 +234,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 
 ## გარე აუდიტი (PDF) — 2026-11-03, ეტაპი 1 (commit `3c7cd9a`, ბრენჩი `main`)
 
-წყარო: `dock/external-audit-2026-11-03.pdf.pdf` (git-ში არ არის). ID ფრჩხილებში — PDF-ის N-ნომერი. ეტაპი 1 = სწრაფი და დაბალი რისკის მიგნებები (მფლობელის სია). დანარჩენი (N-01…N-05, N-06-ის MFA/audit log/recovery, N-07…N-10, N-12, N-18) — ეტაპი 2/3, აქ არ შედის. ყველა მიგნება ჩაწერამდე ახლანდელ კოდში გადამოწმდა (2026-11-03, `a498a1f`). გეგმა და task-ები — `PROGRESS.md` Stage 19.
+წყარო: `docs/external-audit-2026-11-03.pdf` (`.gitignore`-ით git-ში არ არის). ID ფრჩხილებში — PDF-ის N-ნომერი. ეტაპი 1 = სწრაფი და დაბალი რისკის მიგნებები (მფლობელის სია). დანარჩენი (N-01…N-05, N-06-ის MFA/audit log/recovery, N-07…N-10, N-12, N-18) — ეტაპი 2/3, აქ არ შედის. ყველა მიგნება ჩაწერამდე ახლანდელ კოდში გადამოწმდა (2026-11-03, `a498a1f`). გეგმა და task-ები — `PROGRESS.md` Stage 19.
 
 ### A-022 (N-13) — `/docs`, `/redoc`, `/openapi.json` production-ში ღიაა (ანაცვლებს A-012-ს)
 - **severity:** nit (ინფორმაციის გამჟღავნება; ყველა route სერვერზე მოწმდება)
@@ -303,7 +303,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 ### A-031 (N-21) — `dist`-ის არარსებობისას `/panel` მთელ `frontend/` წყაროს ასერვირებს
 - **severity:** nit (მხოლოდ build-ის გარეშე: `package.json`, `src/**`, `node_modules/**`, `vite.config.js` საჯაროდ ჩანს; `dist` git-შია და CI ამოწმებს)
 - **file:** `backend/app/main.py:309-323`
-- **გამოსწორება:** fallback-ში მხოლოდ `frontend/`-ის ძირის `*.html` + `frontend/public/`; სხვა ბილიკი → 404.
+- **გამოსწორება:** fallback სრულად იხსნება (მფლობელის გადაწყვეტილება, 2026-11-03): `/panel` მხოლოდ `frontend/dist`-იდან; `dist/index.html`-ის გარეშე `/panel` არ mount-დება + WARNING.
 - **owner:** backend-dev · **task:** S19-2
 - **status:** open
 
