@@ -450,6 +450,9 @@ def resolve_upgrade_request(
     if not req:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მოთხოვნა ვერ მოიძებნა")
     r = req[0]
+    # მხოლოდ pending მოთხოვნა მუშავდება — დამუშავებულის ხელახლა approve პაკეტს აღარ ცვლის
+    if r.get("status") != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, "მოთხოვნა უკვე დამუშავებულია")
     now_iso = datetime.now(timezone.utc).isoformat()
     if payload.approve:
         tier = r["requested_tier"]
@@ -464,9 +467,15 @@ def resolve_upgrade_request(
             _apply_bot_limit(sc, oid, tier)
         else:
             sc.table("shops").update({"subscription_tier": tier}).eq("id", r["shop_id"]).execute()
-        sc.table("upgrade_requests").update({"status": "approved", "resolved_at": now_iso}).eq("id", req_id).execute()
+        (
+            sc.table("upgrade_requests").update({"status": "approved", "resolved_at": now_iso})
+            .eq("id", req_id).eq("status", "pending").execute()
+        )
     else:
-        sc.table("upgrade_requests").update({"status": "rejected", "resolved_at": now_iso}).eq("id", req_id).execute()
+        (
+            sc.table("upgrade_requests").update({"status": "rejected", "resolved_at": now_iso})
+            .eq("id", req_id).eq("status", "pending").execute()
+        )
     return {"ok": True}
 
 

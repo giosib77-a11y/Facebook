@@ -108,7 +108,9 @@ def test_admin_tier_downgrade_disables_excess_bots(admin_db):
 
 
 def test_admin_approve_downgrade_request_disables_excess_bots(admin_db):
-    admin_db.responses[("upgrade_requests", "select")] = [{"id": "r1", "shop_id": A, "requested_tier": "basic"}]
+    admin_db.responses[("upgrade_requests", "select")] = [
+        {"id": "r1", "shop_id": A, "requested_tier": "basic", "status": "pending"}
+    ]
     admin_db.responses[("shops", "select")] = [
         shop(A, "2026-01-01", True, "basic"), shop(B, "2026-02-01", True, "basic"),
     ]
