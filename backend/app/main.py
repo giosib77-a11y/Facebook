@@ -45,8 +45,23 @@ def warn_if_llm_disabled(s) -> None:
         )
 
 
+# A-018: ვადაგასულ საუბრებს ბაზა შლის (pg_cron, migration 0030) — საათები cron-ის ბრძანებაშია.
+CONVERSATION_RETENTION_HOURS = 24
+
+
+def warn_if_retention_mismatch(s) -> None:
+    """BOT_MEMORY_HOURS ≠ cron-ის საათები → ან ბოტი ისტორიას ადრე კარგავს, ან PII დიდხანს რჩება."""
+    if s.bot_memory_hours != CONVERSATION_RETENTION_HOURS:
+        logging.getLogger("app").warning(
+            "BOT_MEMORY_HOURS=%s but the pg_cron purge (migration 0030) deletes conversations after %sh"
+            " — re-run cron.schedule with the same hours",
+            s.bot_memory_hours, CONVERSATION_RETENTION_HOURS,
+        )
+
+
 check_required_settings(settings)
 warn_if_llm_disabled(settings)
+warn_if_retention_mismatch(settings)
 
 app = FastAPI(
     title="ქართული მაღაზიების AI ბოტი — API",

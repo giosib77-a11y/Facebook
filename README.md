@@ -387,7 +387,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (29)
+### მიგრაციები (30)
 
 | # | რა |
 |---|---|
@@ -420,6 +420,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0027` | `shops.knowledge_faq` (text, nullable) — PDF-ცოდნის მოკლე FAQ (Stage 17). `authenticated`-ს ამ სვეტზე UPDATE არ აქვს (ჩაწერა მხოლოდ backend-ით). იდემპოტენტურია. გაუშვი Stage 17-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — FAQ გამორთულია, ლოგში ერთი WARNING |
 | `0028` | `products.image_description` (text, nullable) — პროდუქტის ფოტოს ტექსტური აღწერა (Stage 18). იდემპოტენტურია. გაუშვი Stage 18-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — აღწერები გამორთულია, ლოგში ერთი WARNING |
 | `0029` | 🔒 `data_deletion_requests` — Meta Data Deletion-ის რეალური სტატუსი (A-017; RLS, პოლისების გარეშე, მხოლოდ `service_role`). იდემპოტენტურია. გაუშვი backend deploy-**მდე**: მის გარეშე ახალი backend callback-ზე 503-ს აბრუნებს (წაშლა არ იწყება) |
+| `0030` | 🔒 `pg_cron` + `purge_expired_bot_conversations(hours)` — საათში ერთხელ შლის 24 სთ-ზე ძველ საუბრებს (ღია handoff — 30 დღემდე რჩება) (A-018). EXECUTE მოხსნილია `public/anon/authenticated`-დან. იდემპოტენტურია; გაშვება ნებისმიერ დროს (backend-ის ცვლილება არ სჭირდება) |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
@@ -640,7 +641,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `OPENAI_MODEL` | | `gpt-6-luna` | მოდელის შეცვლა კოდის გარეშე |
 | `LLM_TIMEOUT_SECONDS` | | `20` | ერთი LLM მცდელობის timeout (წმ); `gt 0, ≤ 20`, სხვა მნიშვნელობა → სერვერი არ ადგება. retry-ების ჯამი ≤45 წმ, მერე webhook fallback პასუხი |
 | `BOT_MEMORY_MESSAGES` | | `20` | 0 = მეხსიერება გამორთული (ისტორიის შეკუმშვა 16-ზე/8-ზე კოდშია, `memory.py`) |
-| `BOT_MEMORY_HOURS` | | `24` | |
+| `BOT_MEMORY_HOURS` | | `24` | ვადაგასულ საუბრებს pg_cron შლის 24 სთ-ზე (0030); სხვა მნიშვნელობაზე startup WARNING — cron-ის ბრძანებაც შეცვალე |
 | `FB_APP_ID` · `FB_APP_SECRET` | ✅ | — | 🔒 Meta App |
 | `FB_VERIFY_TOKEN` | ✅ | — | webhook-ის ვერიფიკაცია |
 | `FB_GRAPH_VERSION` | | `v21.0` | |
