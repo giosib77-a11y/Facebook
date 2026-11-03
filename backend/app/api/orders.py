@@ -99,6 +99,20 @@ def create_order(payload: OrderCreate, request: Request):
     if not _valid_phone(payload.customer_phone):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მიუთითეთ სწორი ტელეფონის ნომერი")
 
+    # A-020: იგივე ფორმის განმეორებითი გაგზავნა (პასუხი დაიკარგა) → პირველი შეკვეთა ბრუნდება.
+    # ლიმიტებამდე, რომ retry-მ „3 დაუდასტურებელი შეკვეთა"-ზე 429 არ მიიღოს.
+    idem_key = str(payload.idempotency_key) if payload.idempotency_key else None
+    if idem_key:
+        try:
+            prev = _find_order_by_key(sc, str(payload.shop_id), idem_key)
+        except Exception:
+            # migration 0031 ჯერ არ გაშვებულა — შეკვეთა მაინც იქმნება, idempotency-ს გარეშე
+            logger.warning("orders.idempotency_key lookup failed - idempotency off for this order", exc_info=True)
+            idem_key = None
+        else:
+            if prev:
+                return _order_response(prev)
+
     # ერთი ნომრიდან დაუდასტურებელი შეკვეთების ლიმიტი (ციფრებით შედარება —
     # „+995 555 12-34-56“ == „995555123456“).
     phone_digits = _NON_DIGITS.sub("", payload.customer_phone)
@@ -208,18 +222,41 @@ def create_order(payload: OrderCreate, request: Request):
         "total": total,
         "status": "new",
     }
+    if idem_key:
+        row["idempotency_key"] = idem_key
     order_id = None
     try:
         res = sc.table("orders").insert(row).execute()
         if res.data:
             order_id = res.data[0]["id"]
-    except Exception:
+    except Exception as e:
+        # ერთდროული დუბლიკატი: unique index-მა (0031) მეორე INSERT დაბლოკა → პირველი შეკვეთა
+        if idem_key and ("23505" in str(e) or "duplicate key" in str(e)):
+            try:
+                prev = _find_order_by_key(sc, str(payload.shop_id), idem_key)
+            except Exception:
+                prev = None
+            if prev:
+                return _order_response(prev)
         logger.exception("order insert failed (shop=%s)", payload.shop_id)
         order_id = None
     if order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთის შექმნა ვერ მოხერხდა")
 
     return {"ok": True, "order_id": order_id, "total": total}
+
+
+def _find_order_by_key(sc, shop_id: str, key: str) -> dict | None:
+    """მაღაზიის შეკვეთა ამ idempotency key-ით (key მხოლოდ ერთი მაღაზიის ფარგლებშია უნიკალური)."""
+    rows = (
+        sc.table("orders").select("id,total")
+        .eq("shop_id", shop_id).eq("idempotency_key", key).limit(1).execute().data
+    )
+    return rows[0] if rows else None
+
+
+def _order_response(order: dict) -> dict:
+    return {"ok": True, "order_id": order["id"], "total": float(order["total"])}
 
 
 # ---------- გამყიდველი (ავტორიზებული) ----------

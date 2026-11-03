@@ -387,7 +387,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (30)
+### მიგრაციები (31)
 
 | # | რა |
 |---|---|
@@ -421,6 +421,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0028` | `products.image_description` (text, nullable) — პროდუქტის ფოტოს ტექსტური აღწერა (Stage 18). იდემპოტენტურია. გაუშვი Stage 18-ის backend deploy-**მდე**; backend მის გარეშეც მუშაობს — აღწერები გამორთულია, ლოგში ერთი WARNING |
 | `0029` | 🔒 `data_deletion_requests` — Meta Data Deletion-ის რეალური სტატუსი (A-017; RLS, პოლისების გარეშე, მხოლოდ `service_role`). იდემპოტენტურია. გაუშვი backend deploy-**მდე**: მის გარეშე ახალი backend callback-ზე 503-ს აბრუნებს (წაშლა არ იწყება) |
 | `0030` | 🔒 `pg_cron` + `purge_expired_bot_conversations(hours)` — საათში ერთხელ შლის 24 სთ-ზე ძველ საუბრებს (ღია handoff — 30 დღემდე რჩება) (A-018). EXECUTE მოხსნილია `public/anon/authenticated`-დან. იდემპოტენტურია; გაშვება ნებისმიერ დროს (backend-ის ცვლილება არ სჭირდება) |
+| `0031` | `orders.idempotency_key` (uuid, nullable) + partial UNIQUE `(shop_id, idempotency_key)` — საჯარო ფორმის განმეორებითი გაგზავნა მეორე შეკვეთას არ ქმნის (A-020). იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); backend მის გარეშეც მუშაობს — idempotency-ს გარეშე, ლოგში WARNING |
 
 **გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 

@@ -26,6 +26,9 @@ class OrderCreate(BaseModel):
     # Never stored in the order row.
     website: str | None = Field(default=None, max_length=200)
     form_ms: int = Field(ge=0)
+    # A-020: one UUID per filled-in form; a retry with the same key returns the first order.
+    # Optional: an old cached form page sends none (no idempotency, as before).
+    idempotency_key: uuid.UUID | None = None
 
 
 class OrderOut(BaseModel):

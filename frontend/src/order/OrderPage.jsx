@@ -19,6 +19,13 @@ function isValidPhone(raw) {
   return digits >= 9 && digits <= 15;
 }
 
+// A-020: ერთი key ერთ შევსებულ ფორმაზე — პასუხის დაკარგვის შემდეგ ხელახალი გაგზავნა
+// იმავე შეკვეთას აბრუნებს. ძველ ბრაუზერზე (randomUUID არ არის) — key-ის გარეშე, როგორც ადრე.
+function newIdempotencyKey() {
+  const c = window.crypto;
+  return c && typeof c.randomUUID === "function" ? c.randomUUID() : null;
+}
+
 function BagIcon() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -49,6 +56,7 @@ export default function OrderPage() {
   // Anti-bot (FA-04): page mount time for form_ms + hidden honeypot value.
   const [mountedAt] = useState(() => Date.now());
   const [website, setWebsite] = useState("");
+  const [idemKey, setIdemKey] = useState(newIdempotencyKey);
 
   function showToast(msg, isErr) {
     setToast({ msg, isErr });
@@ -151,10 +159,13 @@ export default function OrderPage() {
           items,
           website,
           form_ms: Date.now() - mountedAt,
+          idempotency_key: idemKey,
         }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
+        // 4xx — შეკვეთა არ შექმნილა (შესწორებული ფორმა ახალი მოთხოვნაა); 5xx/ქსელი — key რჩება
+        if (res.status >= 400 && res.status < 500) setIdemKey(newIdempotencyKey());
         const d = data && data.detail ? data.detail : "შეცდომა (HTTP " + res.status + ")";
         throw new Error(typeof d === "string" ? d : JSON.stringify(d));
       }
