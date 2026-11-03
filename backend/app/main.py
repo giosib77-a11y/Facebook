@@ -291,16 +291,7 @@ def status():
 # გამყიდველის პანელის მომსახურება იმავე backend-იდან — ngrok-ით გასაზიარებლად.
 # პანელი ხელმისაწვდომია: <backend-url>/panel/
 class _NoCacheStatic(StaticFiles):
-    """ბრაუზერმა პანელის ფაილები რომ არ დააქეშოს (ცვლილებები მაშინვე ჩანდეს).
-
-    extra_dirs — დამატებითი საქაღალდეები, სადაც ფაილი უნდა მოიძებნოს, თუ მთავარში არაა.
-    საჭიროა fallback-რეჟიმისთვის: build-ის გარეშე `config.js`/`favicon.svg`
-    `frontend/public/`-შია, HTML კი მათ ძირიდან ითხოვს.
-    """
-
-    def __init__(self, *args, extra_dirs=(), **kwargs):
-        super().__init__(*args, **kwargs)
-        self.all_directories = list(self.all_directories) + [Path(d) for d in extra_dirs]
+    """ბრაუზერმა პანელის ფაილები რომ არ დააქეშოს (ცვლილებები მაშინვე ჩანდეს)."""
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
@@ -315,18 +306,15 @@ class _NoCacheStatic(StaticFiles):
         return resp
 
 
-_FRONTEND_SRC = Path(__file__).resolve().parents[2] / "frontend"
-_FRONTEND_DIST = _FRONTEND_SRC / "dist"
-# React-ის build-ის გამოსავალი (frontend/dist), თუ არსებობს; თუ არა — ძველი frontend/.
-# ეს fallback უსაფრთხოების ბადეა: build რომ ვერ აეწყოს, საიტი მაინც მუშაობს.
-_FRONTEND_DIR = _FRONTEND_DIST if (_FRONTEND_DIST / "index.html").exists() else _FRONTEND_SRC
-if _FRONTEND_DIR.exists():
-    # fallback-რეჟიმში (dist არ არსებობს) public/-იც უნდა ჩანდეს ძირად, თორემ
-    # config.js ვერ ჩაიტვირთება და პანელი მკვდარი იქნება.
-    _extra = [] if _FRONTEND_DIR == _FRONTEND_DIST else [_FRONTEND_SRC / "public"]
-    _extra = [d for d in _extra if d.exists()]
-    app.mount(
-        "/panel",
-        _NoCacheStatic(directory=str(_FRONTEND_DIR), html=True, extra_dirs=_extra),
-        name="panel",
-    )
+def _mount_panel(application: FastAPI, dist: Path) -> bool:
+    """A-031: /panel მხოლოდ React-ის build-იდან (frontend/dist) მოდის. წყაროს frontend/
+    საქაღალდის fallback არ არსებობს — dist-ის გარეშე /panel უბრალოდ არ ისერვება (404)."""
+    if not (dist / "index.html").exists():
+        logger.warning("frontend/dist/index.html missing - /panel is not served (run npm run build)")
+        return False
+    application.mount("/panel", _NoCacheStatic(directory=str(dist), html=True), name="panel")
+    return True
+
+
+_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+_mount_panel(app, _FRONTEND_DIST)
