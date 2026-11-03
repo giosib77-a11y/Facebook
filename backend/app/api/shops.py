@@ -72,6 +72,12 @@ def _cancel_pending_requests(shop_ids: list[str]) -> None:
     )
 
 
+_SHOP_LIMIT_TEXT = (
+    "პაკეტის ლიმიტი: მეტი მაღაზიის დასამატებლად განაახლე პაკეტი "
+    "(სტანდარტი — 2 მაღაზია, ბიზნესი — ულიმიტო)."
+)
+
+
 @router.post("", response_model=ShopOut, status_code=status.HTTP_201_CREATED)
 def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_auth)):
     """ქმნის მაღაზიას მიმდინარე მომხმარებლის სახელზე.
@@ -88,20 +94,58 @@ def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_aut
     tiers = [s.get("subscription_tier") for s in owned]
     limit = owner_shop_limit(tiers)
     if limit is not None and len(owned) >= limit:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "პაკეტის ლიმიტი: მეტი მაღაზიის დასამატებლად განაახლე პაკეტი "
-            "(სტანდარტი — 2 მაღაზია, ბიზნესი — ულიმიტო).",
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, _SHOP_LIMIT_TEXT)
     data = payload.model_dump(mode="json")
     data["owner_id"] = auth.user_id
     # per-account: ახალი მაღაზია მემკვიდრეობით იღებს მფლობელის მიმდინარე პაკეტს —
     # ერთი გამოწერა ფარავს ყველა მაღაზიას (მაგ. სტანდარტის მე-2 მაღაზია ცალკე გადახდას არ ითხოვს)
     data["subscription_tier"] = best_tier(tiers)
-    res = run(get_service_client().table("shops").insert(data))
-    if not res.data:
+    rows = _insert_shop_atomic(data, limit)
+    if not rows:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "მაღაზიის შექმნა ვერ მოხერხდა")
-    return res.data[0]
+    return rows[0]
+
+
+# migration 0032 ჯერ არ არის გაშვებული (PGRST202) → ძველი გზა; flag პროცესზე ერთხელ ჩაირთვება
+_CREATE_SHOP_RPC_MISSING = False
+
+
+def _insert_shop_atomic(data: dict, limit: int | None) -> list:
+    """ლიმიტის შემოწმება + INSERT ერთ ტრანზაქციაში (RPC `create_shop_limited`, A-029).
+
+    pre-check (`create_shop`-ში) მხოლოდ სწრაფი უარია; პარალელური მოთხოვნების race-ს RPC-ის
+    advisory lock ფარავს. `core.db.run` აქ განზრახ არ გამოიყენება — გვჭირდება შეცდომის კოდი/ტექსტი.
+    """
+    global _CREATE_SHOP_RPC_MISSING
+    sc = get_service_client()
+    if not _CREATE_SHOP_RPC_MISSING:
+        try:
+            res = sc.rpc(
+                "create_shop_limited",
+                {
+                    "p_owner": data["owner_id"],
+                    "p_name": data["name"],
+                    "p_description": data.get("description"),
+                    "p_currency": data.get("currency"),
+                    "p_tier": data["subscription_tier"],
+                    "p_limit": limit,
+                },
+            ).execute()
+            return res.data or []
+        except Exception as exc:
+            message = getattr(exc, "message", None) or str(exc)
+            if "shop_limit_reached" in message or "shop_limit_reached" in str(exc):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, _SHOP_LIMIT_TEXT)
+            if getattr(exc, "code", None) == "PGRST202":
+                _CREATE_SHOP_RPC_MISSING = True
+                logger.warning(
+                    "create_shop_limited missing (migration 0032 not applied) - "
+                    "shop limit check is not atomic"
+                )
+            else:
+                logger.warning("create_shop_limited failed (%s)", type(exc).__name__)
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "მაღაზიის შექმნა ვერ მოხერხდა")
+    return run(sc.table("shops").insert(data)).data or []
 
 
 @router.get("/me", response_model=list[ShopOut])

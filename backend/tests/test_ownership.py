@@ -47,7 +47,7 @@ def test_create_product_inserts_via_service_client_for_owned_shop(client, user_d
 def test_create_shop_sets_owner_and_inherits_best_tier(client, user_db, service_db):
     """ახალი მაღაზია → service insert owner_id=auth user-ით და მფლობელის საუკეთესო პაკეტით."""
     user_db.responses[("shops", "select")] = [{"subscription_tier": "standard"}]
-    service_db.responses[("shops", "insert")] = [
+    service_db.rpc_responses["create_shop_limited"] = [
         {
             "id": SHOP_ID,
             "owner_id": USER_ID,
@@ -62,10 +62,12 @@ def test_create_shop_sets_owner_and_inherits_best_tier(client, user_db, service_
     resp = client.post("/shops", json={"name": "New shop"})
 
     assert resp.status_code == 201, resp.text
-    inserts = service_db.calls_for("shops", "insert")
-    assert len(inserts) == 1
-    assert inserts[0].payload["owner_id"] == USER_ID
-    assert inserts[0].payload["subscription_tier"] == "standard"
+    # S19-9: insert now goes through the atomic RPC (service_role) instead of table().insert()
+    rpcs = [c for c in service_db.rpc_calls if c.fn == "create_shop_limited"]
+    assert len(rpcs) == 1
+    assert rpcs[0].params["p_owner"] == USER_ID
+    assert rpcs[0].params["p_tier"] == "standard"
+    assert service_db.calls_for("shops", "insert") == []
     assert user_db.calls_for("shops", "insert") == []
 
 
