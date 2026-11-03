@@ -106,16 +106,16 @@ App Roles-ში დამატებულ ანგარიშებზე (
 
 | ფენა | ტექნოლოგია |
 |---|---|
-| **Backend** | FastAPI (Python 3.11+), uvicorn |
+| **Backend** | FastAPI (Python 3.14, CI 3.14.3), uvicorn |
 | **DB / Auth / Storage** | Supabase — Postgres + Row Level Security + Auth + Storage |
-| **Frontend** | React 18 + Vite (**MPA**, არა SPA) — 8 გვერდი |
+| **Frontend** | React 19 + Vite (**MPA**, არა SPA) — 8 გვერდი |
 | **AI** | Anthropic Claude (`claude-haiku-5-5`, default) ან OpenAI (`gpt-6-luna`) — `LLM_PROVIDER`-ით; მოდელები `CLAUDE_MODEL` / `OPENAI_MODEL`-ით იცვლება |
 | **ბოტის გრაფი** | LangGraph (`langgraph>=1.2`) — **მხოლოდ wiring** (node-ები და გადასვლები). LLM-ს ყოველთვის `services/llm.py` იძახებს; LangChain-ის chat model-ები არ გამოიყენება |
 | **არხები** | Facebook Messenger Platform · Instagram Messaging (Graph `v21.0`) |
 | **ჰოსტინგი** | Render (Starter $7/თვე — cold-start გამორთულია) |
 | **დომენი** | `chatassist.ge` (DNS + SSL) |
 
-⚠️ **Render-ზე Node არ არის** — ამიტომ `frontend/dist/` **ჩადის git-ში**.
+⚠️ **Render-ზე Node არ არის** — ამიტომ `frontend/dist/` **ჩადის git-ში**. `/panel` ისერვება მხოლოდ `frontend/dist`-იდან (fallback არ არის; dist-ის გარეშე 404 — გაუშვი `npm run build`).
 build-ს ლოკალურად აკეთებ (`npm run build`) და commit-ავ.
 
 ---
@@ -176,7 +176,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         28 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         32 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -297,7 +297,7 @@ webhook `object` ველით არჩევს (`page` / `instagram`).
 
 ავტორიზაცია: `Authorization: Bearer <supabase_access_token>`.
 DB-ოპერაციები სრულდება **მომხმარებლის JWT-ით** → RLS უზრუნველყოფს იზოლაციას.
-სრული ინტერაქტიული დოკუმენტაცია: `/docs`
+სრული ინტერაქტიული დოკუმენტაცია: `/docs` (OpenAPI; `/docs`, `/redoc`, `/openapi.json` მხოლოდ dev-ში — production-ში გამორთულია)
 
 ### სისტემა
 | Method | Path | აღწერა | Auth |
@@ -346,7 +346,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | POST | `/webhook` | შემოსული შეტყობინებები (X-Hub-Signature-256) |
 | GET | `/facebook/connect/start` | OAuth-ის დაწყება |
 | GET | `/facebook/connect/callback` | token-ის შენახვა + webhook subscribe |
-| POST | `/facebook/disconnect` | გვერდის გათიშვა |
+| POST | `/facebook/disconnect` | გვერდის გათიშვა + Meta-ს webhook subscription-ის მოხსნა (`DELETE /{page_id}/subscribed_apps`, best-effort) |
 | POST | `/facebook/data-deletion` | Meta-ს Data Deletion callback |
 | GET | `/facebook/data-deletion/status` | კოდის შემოწმება (ხელმოწერილი) |
 
@@ -387,7 +387,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (31)
+### მიგრაციები (32)
 
 | # | რა |
 |---|---|
@@ -422,8 +422,9 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0029` | 🔒 `data_deletion_requests` — Meta Data Deletion-ის რეალური სტატუსი (A-017; RLS, პოლისების გარეშე, მხოლოდ `service_role`). იდემპოტენტურია. გაუშვი backend deploy-**მდე**: მის გარეშე ახალი backend callback-ზე 503-ს აბრუნებს (წაშლა არ იწყება) |
 | `0030` | 🔒 `pg_cron` + `purge_expired_bot_conversations(hours)` — საათში ერთხელ შლის 24 სთ-ზე ძველ საუბრებს (ღია handoff — 30 დღემდე რჩება) (A-018). EXECUTE მოხსნილია `public/anon/authenticated`-დან. იდემპოტენტურია; გაშვება ნებისმიერ დროს (backend-ის ცვლილება არ სჭირდება) |
 | `0031` | `orders.idempotency_key` (uuid, nullable) + partial UNIQUE `(shop_id, idempotency_key)` — საჯარო ფორმის განმეორებითი გაგზავნა მეორე შეკვეთას არ ქმნის (A-020). იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); backend მის გარეშეც მუშაობს — idempotency-ს გარეშე, ლოგში WARNING |
+| `0032` | 🔒 `create_shop_limited` RPC — მაღაზიის ლიმიტის შემოწმება + INSERT ატომურად (per-owner advisory lock) (A-029). EXECUTE მხოლოდ `service_role`-ს. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე backend ძველი გზით მუშაობს + ერთი WARNING |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -448,7 +449,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production) |
 | **შეცდომების გაჟონვა** | production-ში stack trace არ ბრუნდება |
 | **Dev endpoint** | `/test-chat` production-ში გამორთულია |
-| **Data Deletion** | Meta-ს callback + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება |
+| **Data Deletion** | Meta-ს callback (იშლება მაღაზიის მონაცემები და `bot_customers` — psid) + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება |
 
 **კოდ-რევიუ:** 2026-08-21…23, 8 გავლა, ~6 400 ხაზი, 22 მიგნება → 16 გასწორებული.
 სრული ანგარიში: [CODE_REVIEW_FINDINGS.md](CODE_REVIEW_FINDINGS.md).
@@ -466,7 +467,7 @@ P0-ის დეტალები: [SECURITY_FIX_PROMPT.md](SECURITY_FIX_PROMPT
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements.txt    # Windows-ზე ლოკალურად ყოველთვის ეს (არა requirements.lock.txt)
 Copy-Item ..\.env.example ..\.env    # შემდეგ შეავსე
 uvicorn app.main:app --reload
 ```
@@ -606,6 +607,14 @@ Instances:         1  (rate limit და webhook dedup მეხსიერე�
 Health Check Path: /health
 Build Filter:      backend/**  frontend/dist/**
 ```
+
+`requirements.lock.txt` — hash-pinned და Linux-ზე resolved (Render/CI); pip hash-checking რეჟიმს ავტომატურად რთავს. Windows ლოკალურად `requirements.txt` გამოიყენება. თავიდან გენერაცია (repo root-იდან, Git Bash; ვერსიების ასაწევად დაამატე `--upgrade`, მერე თავსართი ხელით დააბრუნე):
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/backend:/w" -w /w python:3.14.3-slim sh -c "pip install -q pip-tools && pip-compile --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url --output-file requirements.lock.txt requirements.txt"
+```
+
+CI-ში GitHub Actions commit SHA-ებზეა დაპინული — ვერსიის აწევისას SHA განაახლე.
 
 **აუცილებელი production-პარამეტრები:**
 
