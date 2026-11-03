@@ -45,3 +45,5 @@ supabase/.branches/
 supabase/.temp/
 
 graphify-out/
+
+docs/external-audit-*.pdf
