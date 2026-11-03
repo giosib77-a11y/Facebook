@@ -1,5 +1,5 @@
 /* პანელის Supabase კლიენტი + auth-ჰელპერები — გადმოტანილია app.js-იდან ხაზ-ხაზ.
- * ⚠️ არც ერთი პარამეტრი არ შეცვალო — თითოეული განზრახაა (იხ. კომენტარები).
+ * ⚠️ არც ერთი პარამეტრი არ შეცვალო და `lock` არ დაამატო — თითოეული განზრახაა (იხ. კომენტარები).
  */
 import { createClient } from "@supabase/supabase-js";
 
@@ -14,10 +14,14 @@ export const sb = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_PUBLISHABLE_KEY, {
     detectSessionInUrl: false,
     // implicit — პაროლის აღდგენის ბმული hash-ით (მრავალ მოწყობილობაზე მუშაობს)
     flowType: "implicit",
-    // ⚠️ no-op lock — navigator LockManager-ის ჩაკეტვის თავიდან ასაცილებლად.
-    // getSession() რომ არ „გაიჭედოს" მრავალი tab-ის/popup-ის დროს.
-    // პირდაპირ ეხება Facebook-ის popup-ნაკადს — არ მოხსნა.
-    lock: async (_name, _timeout, fn) => await fn(),
+    // ⚠️ `lock` განზრახ არ არის მითითებული — supabase-js-ის ნაგულისხმევი navigator
+    // LockManager იცავს refresh-token-ის რბოლას tab-ებს შორის (ძველი no-op lock-ი
+    // შემთხვევით logout-ს იწვევდა). უსაფრთხოა, რადგან Facebook-ის popup
+    // (about:blank → Facebook → backend-ის callback HTML, facebook.py::_finish)
+    // supabase-js-ს საერთოდ არ ტვირთავს და lock-ს ვერც დაიჭერს, ვერც დაელოდება.
+    // ცნობილი deadlock-ის თავიდან ასაცილებლად onAuthStateChange-ის callback-ში
+    // არასდროს გააკეთო `await sb.auth.*`. readStoredToken და refreshToken-ის 8წმ
+    // timeout რჩება დამატებით დაცვად.
   },
 });
 
