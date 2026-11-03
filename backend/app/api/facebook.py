@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Res
 from fastapi.responses import HTMLResponse
 
 from app.config import get_settings
-from app.core.crypto import encrypt
+from app.core.crypto import decrypt, encrypt
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -431,10 +431,25 @@ def disconnect(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
 
     ეს სვეტები გამყიდველს ჩაწერადი არ აქვს (0015) → მფლობელობა RLS-ით, ჩაწერა
     service_role-ით (owner_id ფილტრით).
+
+    A-027: row-ის გასუფთავებამდე Meta-საც ვეუბნებით გამოწერის მოხსნას (DELETE subscribed_apps).
+    best-effort: Graph/decrypt-ის შეცდომა გათიშვას არ აჩერებს (token/page id ლოგში არ იწერება).
     """
     owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    page = run(
+        get_service_client().table("shops")
+        .select("facebook_page_id, facebook_page_token")
+        .eq("id", str(shop_id))
+        .eq("owner_id", auth.user_id)
+        .limit(1)
+    ).data
+    if page and page[0].get("facebook_page_id") and page[0].get("facebook_page_token"):
+        try:
+            fb.unsubscribe_page(page[0]["facebook_page_id"], decrypt(page[0]["facebook_page_token"]))
+        except Exception as e:
+            logger.warning("unsubscribe on disconnect failed (shop=%s, %s)", shop_id, type(e).__name__)
     res = run(
         get_service_client().table("shops")
         .update({"facebook_page_id": None, "facebook_page_token": None, "instagram_account_id": None, "bot_enabled": False})

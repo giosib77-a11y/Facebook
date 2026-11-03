@@ -250,6 +250,15 @@ def subscribe_page(page_id: str, page_token: str) -> None:
     )
 
 
+def unsubscribe_page(page_id: str, page_token: str) -> None:
+    """გვერდიდან ჩვენი app-ის webhook-გამოწერის მოხსნა (disconnect-ზე, A-027)."""
+    _graph(
+        "DELETE", f"/{page_id}/subscribed_apps",
+        params={"access_token": page_token},
+        timeout=15,
+    )
+
+
 def get_page_instagram_account(page_id: str, page_token: str) -> str | None:
     """გვერდზე მიბმული Instagram Business ანგარიშის ID (თუ არსებობს)."""
     r = _graph(
