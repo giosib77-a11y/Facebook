@@ -28,6 +28,7 @@ logger = logging.getLogger("app")
 # ერთი instance გვაქვს, ამიტომ პრაქტიკულ შემთხვევებს ფარავს. მრავალ-instance-ზე
 # გადასვლისას → Redis ან ბაზის ცხრილი.
 _SEEN_MIDS: "OrderedDict[str, float]" = OrderedDict()
+_SEEN_LOCK = threading.Lock()
 _SEEN_TTL = 600      # წამი — ამაზე ძველს ვივიწყებთ
 _SEEN_MAX = 5000     # ჩანაწერების ჭერი (მეხსიერება არ გაიბეროს)
 
@@ -69,18 +70,19 @@ def _already_handled(mid: str | None) -> bool:
     if not mid:
         return False  # id-ის გარეშე ვერ გავარჩევთ — ვამუშავებთ
     now = time.time()
-    while _SEEN_MIDS:
-        k, ts = next(iter(_SEEN_MIDS.items()))
-        if now - ts > _SEEN_TTL:
-            _SEEN_MIDS.pop(k, None)
-        else:
-            break
-    if mid in _SEEN_MIDS:
-        return True
-    _SEEN_MIDS[mid] = now
-    while len(_SEEN_MIDS) > _SEEN_MAX:
-        _SEEN_MIDS.popitem(last=False)
-    return False
+    with _SEEN_LOCK:  # sync endpoint-ები threadpool-ში მუშაობს — გაწმენდა/შემოწმება/ჩაწერა ატომურია
+        while _SEEN_MIDS:
+            k, ts = next(iter(_SEEN_MIDS.items()))
+            if now - ts > _SEEN_TTL:
+                _SEEN_MIDS.pop(k, None)
+            else:
+                break
+        if mid in _SEEN_MIDS:
+            return True
+        _SEEN_MIDS[mid] = now
+        while len(_SEEN_MIDS) > _SEEN_MAX:
+            _SEEN_MIDS.popitem(last=False)
+        return False
 
 
 # B-3: წუთობრივი ლიმიტი — ერთმა კლიენტმა/მაღაზიამ საერთო LLM კვოტა და threadpool

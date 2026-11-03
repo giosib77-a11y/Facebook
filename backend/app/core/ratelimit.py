@@ -8,6 +8,7 @@ In-memory, per-IP sliding window. ერთი პროცესისთვი
     @router.post("/orders", dependencies=[Depends(rate_limit("orders", limit=20, window=60))])
 """
 import logging
+import threading
 import time
 from collections import defaultdict, deque
 
@@ -19,6 +20,8 @@ logger = logging.getLogger("app")
 
 # bucket -> (ip -> deque[timestamps])
 _HITS: dict[str, dict[str, deque]] = defaultdict(lambda: defaultdict(deque))
+# sync dependency-ები threadpool-ში მუშაობს → _HITS / _WINDOWS / _last_sweep მხოლოდ ამ lock-ით იცვლება
+_LOCK = threading.Lock()
 # პერიოდული გაწმენდის მრიცხველი (მეხსიერება არ გაიბეროს)
 _last_sweep = [time.monotonic()]
 # გაფრთხილება „header აკლია" — პროცესზე მაქსიმუმ ერთხელ
@@ -76,7 +79,9 @@ def _client_ip(request: Request) -> str:
 
 
 def _sweep(now: float) -> None:
-    """ძველი ჩანაწერების პერიოდული გაწმენდა — ~5 წუთში ერთხელ."""
+    """ძველი ჩანაწერების პერიოდული გაწმენდა — ~5 წუთში ერთხელ.
+
+    თავად lock-ს არ იღებს: მხოლოდ `with _LOCK:` ბლოკიდან უნდა გამოიძახებოდეს."""
     if now - _last_sweep[0] < 300:
         return
     _last_sweep[0] = now
@@ -95,40 +100,46 @@ def _sweep(now: float) -> None:
 
 def register_window(bucket: str, window: int) -> None:
     """bucket-ის window-ის რეგისტრაცია — sweep-მა გრძელი (მაგ. დღიური) ჩანაწერები არ წაშალოს."""
-    _WINDOWS[bucket] = max(_WINDOWS.get(bucket, 0), window)
+    with _LOCK:
+        _WINDOWS[bucket] = max(_WINDOWS.get(bucket, 0), window)
 
 
 def _hit(bucket: str, key: str, limit: int, window: int) -> None:
     """ერთი მოთხოვნის აღრიცხვა; ლიმიტის გადაცილებაზე → HTTP 429 + Retry-After."""
     now = time.monotonic()
-    _sweep(now)
-    dq = _HITS[bucket][key]
-    while dq and now - dq[0] > window:
-        dq.popleft()
-    if len(dq) >= limit:
-        retry = int(window - (now - dq[0])) + 1
+    retry = 0
+    with _LOCK:
+        _sweep(now)
+        dq = _HITS[bucket][key]
+        while dq and now - dq[0] > window:
+            dq.popleft()
+        if len(dq) >= limit:
+            retry = int(window - (now - dq[0])) + 1
+        else:
+            dq.append(now)
+    if retry:  # 429 lock-ის გარეთ (retry ≥ 1 ყოველთვის)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="ბევრი მოთხოვნა მოვიდა — სცადეთ ცოტა ხანში.",
             headers={"Retry-After": str(max(retry, 1))},
         )
-    dq.append(now)
 
 
 def allow(bucket: str, key: str, limit: int, window: int) -> bool:
     """იგივე sliding window, რაც `_hit`-ში (იგივე `_HITS`), ოღონდ HTTP 429-ის ნაცვლად bool:
     ლიმიტზე → False (არაფერი ემატება), სხვაგვარად timestamp ემატება → True. handler-იდან
     გამოსაძახებლად, როცა ლიმიტის გადაცილება მოთხოვნას არ უნდა აჩერებდეს (მაგ. ფოტოს აღწერა)."""
-    register_window(bucket, window)
+    register_window(bucket, window)  # თავად იღებს lock-ს — ამიტომ _LOCK-ის გარეთ (Lock არა-reentrant-ია)
     now = time.monotonic()
-    _sweep(now)
-    dq = _HITS[bucket][key]
-    while dq and now - dq[0] > window:
-        dq.popleft()
-    if len(dq) >= limit:
-        return False
-    dq.append(now)
-    return True
+    with _LOCK:
+        _sweep(now)
+        dq = _HITS[bucket][key]
+        while dq and now - dq[0] > window:
+            dq.popleft()
+        if len(dq) >= limit:
+            return False
+        dq.append(now)
+        return True
 
 
 def rate_limit(bucket: str, limit: int, window: int = 60):
