@@ -135,7 +135,7 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **შედეგი:** სრული API სქემა (ადმინის route-ების ჩათვლით) ჩანს. exploit არ არის — ყველა route სერვერზე მოწმდება.
 - **გამოსწორება:** production-ში `FastAPI(docs_url=None, redoc_url=None, openapi_url=None)`.
 - **owner:** backend-dev
-- **status:** superseded by A-022 (N-13, 2026-11-03) — დაიხურება A-022-თან ერთად
+- **status:** fixed via A-022 (`203754f`)
 
 ### A-013 — Storage-ის ნედლი შეცდომა კლიენტს უბრუნდება
 - **severity:** nit
@@ -144,7 +144,7 @@ Accepted Risks-ში (`PROJECT.md`) და Backlog-ში (`PROGRESS.md`) უ�
 - **შედეგი:** პასუხში `ატვირთვა ვერ მოხერხდა: {e}` — storage3-ის შიდა დეტალი (statusCode/error/message). საიდუმლო არ ჟონავს.
 - **გამოსწორება:** ფიქსირებული ტექსტი + `logger.warning(..., exc_info=True)`.
 - **owner:** backend-dev
-- **status:** superseded by A-023 (N-14, 2026-11-03) — დაიხურება A-023-თან ერთად
+- **status:** fixed via A-023 (`023dd43`)
 
 ### A-014 — dev dependency `source-map-js` (high, GHSA-68fv-2mgg-jv7q)
 - **severity:** nit
@@ -241,14 +241,14 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **file:** `backend/app/main.py:66-70` (`FastAPI(...)` docs პარამეტრების გარეშე)
 - **გამოსწორება:** production-ში `docs_url=None, redoc_url=None, openapi_url=None`; dev-ში უცვლელი.
 - **owner:** backend-dev · **task:** S19-1
-- **status:** open
+- **status:** fixed (`203754f`; ტესტი `test_docs_production.py`). A-012 დაიხურა.
 
 ### A-023 (N-14) — Storage-ის ნედლი შეცდომა კლიენტს უბრუნდება (ანაცვლებს A-013-ს)
 - **severity:** nit
 - **file:** `backend/app/api/products.py:239` (`f"ატვირთვა ვერ მოხერხდა: {e}"`)
 - **გამოსწორება:** ფიქსირებული ტექსტი; დეტალი — `logger.warning(..., exc_info=True)` shop id-ით.
 - **owner:** backend-dev · **task:** S19-3
-- **status:** open
+- **status:** fixed (`023dd43`; ტესტი `test_upload_error.py`). A-013 დაიხურა. nit (Backlog): `/admin/recovery` (`admin.py`) ჯერ `{e}`-ს აბრუნებს.
 
 ### A-024 (N-06, ნაწილი) — `resolve_upgrade_request` არ ამოწმებს `status == 'pending'`
 - **severity:** should-fix (ფული: უკვე უარყოფილი / გაუქმებული / დადასტურებული მოთხოვნის ხელახალი approve პაკეტს ცვლის)
@@ -256,77 +256,77 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **სცენარი:** ადმინი ძველ (rejected/cancelled) მოთხოვნას ადასტურებს → მფლობელის ყველა მაღაზია `requested_tier`-ზე გადადის; დადასტურებულის ხელახალი approve ხელით შეცვლილ tier-ს გადაწერს.
 - **გამოსწორება:** `status != 'pending'` → 409, არაფერი იცვლება; სტატუსის საბოლოო update `.eq("status", "pending")` ფილტრით. MFA / audit log / recovery-ის ბმული — ეტაპი 2/3.
 - **owner:** backend-dev · **task:** S19-4
-- **status:** open
+- **status:** fixed (`500f1be`; ტესტი `test_upgrade_resolve.py`; `test_bot_limit.py`-ის fixture-ს `status: pending` დაემატა)
 
 ### A-025 (N-11) — Facebook-ის popup-ის `message` listener `e.origin`-ს და `e.source`-ს არ ამოწმებს
 - **severity:** nit (ნებისმიერ ფანჯარას შეუძლია ყალბი toast / პანელის reload; მონაცემი არ იცვლება)
 - **file:** `frontend/src/panel/fbConnect.js:19-24`
 - **გამოსწორება:** მიიღება მხოლოდ `e.origin === new URL(APP_CONFIG.API_BASE).origin` (callback-ის HTML backend-იდან მოდის) **და** `e.source === popup` (`startConnect`-ში გახსნილი ფანჯარა); დანარჩენი — ჩუმად იგნორდება. ბუფერი და fallback redirect უცვლელი.
 - **owner:** frontend-dev · **task:** S19-10
-- **status:** open
+- **status:** fixed (`ee15bd9`; ტესტი `fbConnect.test.js`; რეალურ ბრაუზერში — unverified)
 
 ### A-026 (N-15) — `_SEEN_MIDS` და `ratelimit._sweep` / `_hit` / `allow` lock-ის გარეშეა
 - **severity:** nit (sync handler-ები threadpool-ში ერთდროულად მუშაობს: dict-ის იტერაცია ცვლილებისას → `RuntimeError` → 500; dedup-ის race → ორმაგი პასუხი)
 - **file:** `backend/app/api/webhook.py:30,67-83`, `backend/app/core/ratelimit.py:78-130`
 - **გამოსწორება:** `threading.Lock` (როგორც `_RATE_HITS`/`_RATE_LOCK`-ში): `_already_handled` მთლიანად lock-ში; ratelimit-ში `_sweep` + deque-ის შემოწმება/დამატება ერთ lock-ში (`HTTPException` lock-ის გარეთ ისვრის).
 - **owner:** backend-dev · **task:** S19-5
-- **status:** open
+- **status:** fixed (`93392f7`; ტესტი `test_inmemory_locks.py` — სტრუქტურული ტესტები ძველზე ვარდება; race GIL-ის გამო საიმედოდ ვერ რეპროდუცირდება)
 
 ### A-027 (N-16) — disconnect webhook-ის გამოწერას (`subscribed_apps`) არ აუქმებს
 - **severity:** should-fix (privacy: გათიშვის შემდეგ Meta ამ გვერდის შეტყობინებებს ისევ გვიგზავნის)
 - **file:** `backend/app/api/facebook.py:425-444`, `backend/app/services/facebook.py:244-250`
 - **გამოსწორება:** DB-ის გასუფთავებამდე `DELETE /{page_id}/subscribed_apps` page token-ით (best-effort: Graph-ის / გაშიფვრის შეცდომა ილოგება, disconnect მაინც სრულდება).
 - **owner:** backend-dev · **task:** S19-7
-- **status:** open
+- **status:** fixed (`013c3e4`; ტესტი `test_disconnect_unsubscribe.py`; რეალური Graph DELETE — unverified)
 
 ### A-028 (N-17) — `download_image`: არა-სურათი `image/jpeg`-ად ინიშნება; DNS-ის შემოწმება და კავშირი ცალ-ცალკე resolve-დება
 - **severity:** nit (defense-in-depth: DNS rebinding-ით SSRF-ის ფანჯარა; HTML/JSON LLM-ს სურათად მიეწოდება)
 - **file:** `backend/app/services/facebook.py:289-323,353-408`
 - **გამოსწორება:** `content-type` არ იწყება `image/`-ით ან არ არის → `None`; კავშირი იმ IP-ზე, რომელიც შემოწმდა (URL-ში IP, `Host` header + TLS `sni_hostname` = ორიგინალი host; `trust_env=False`), ყოველ redirect-ზე თავიდან.
 - **owner:** backend-dev · **task:** S19-8
-- **status:** open
+- **status:** fixed (`7aa9c2d`; ტესტი `test_image_download.py`; რეალური FB CDN / TLS SNI IP-ზე — unverified)
 
 ### A-029 (N-19) — მაღაზიების ლიმიტის შემოწმება და INSERT ცალ-ცალკეა (race)
 - **severity:** should-fix (`PROJECT.md`-ის პაკეტის წესი ირღვევა: ორი პარალელური `POST /shops` ლიმიტზე მეტ მაღაზიას ქმნის)
 - **file:** `backend/app/api/shops.py:76-104`
 - **გამოსწორება:** RPC `create_shop_limited` (migration `0032`, SECURITY DEFINER, `pg_advisory_xact_lock` მფლობელზე → count → insert ერთ ტრანზაქციაში; EXECUTE მხოლოდ `service_role`); 0032-ის გარეშე — ძველი გზა + ერთჯერადი WARNING.
 - **owner:** backend-dev · **task:** S19-9
-- **status:** open
+- **status:** fixed (`97e4f75`; ტესტები `test_create_shop_limit.py`, `test_migration_0032.py`; migration 0032 — მფლობელი; რეალურ Postgres-ზე — unverified)
 
 ### A-030 (N-20) — Data Deletion `bot_customers`-ში psid-ს ტოვებს
 - **severity:** should-fix (privacy: წაშლა დადასტურებულად ეუწყება, კლიენტის იდენტიფიკატორი კი რჩება)
 - **file:** `backend/app/api/facebook.py:384-401` (`_erase_fb_user_data`)
 - **გამოსწორება:** `bot_customers.delete().eq("psid", user_id)` (იგივე user_id, რაც `bot_conversations`-ზე); შეცდომა ზემოთ ადის (A-017).
 - **owner:** backend-dev · **task:** S19-6
-- **status:** open
+- **status:** fixed (`b2fbf32`; ტესტი `test_data_deletion.py`)
 
 ### A-031 (N-21) — `dist`-ის არარსებობისას `/panel` მთელ `frontend/` წყაროს ასერვირებს
 - **severity:** nit (მხოლოდ build-ის გარეშე: `package.json`, `src/**`, `node_modules/**`, `vite.config.js` საჯაროდ ჩანს; `dist` git-შია და CI ამოწმებს)
 - **file:** `backend/app/main.py:309-323`
 - **გამოსწორება:** fallback სრულად იხსნება (მფლობელის გადაწყვეტილება, 2026-11-03): `/panel` მხოლოდ `frontend/dist`-იდან; `dist/index.html`-ის გარეშე `/panel` არ mount-დება + WARNING.
 - **owner:** backend-dev · **task:** S19-2
-- **status:** open
+- **status:** fixed (`dba6f30`; ტესტი `test_frontend_fallback.py`)
 
 ### A-032 (N-22) — supabase-js-ის no-op `lock`: refresh token-ის race ტაბებს შორის
 - **severity:** nit (შესაძლო შემთხვევითი logout ორ ტაბში; რეალურ ბრაუზერში დაუდასტურებელი)
 - **file:** `frontend/src/panel/supabase.js:19-22`
 - **გამოსწორება:** `lock` პარამეტრი იშლება (ნაგულისხმევი navigator lock). popup-ის ცალკე გადაწყვეტა: popup (`about:blank` → Facebook → backend-ის callback HTML) supabase-js-ს საერთოდ არ ტვირთავს, ამიტომ lock მას ვერ ჩაკეტავს; `readStoredToken` და `refreshToken`-ის 8 წმ timeout რჩება.
 - **owner:** frontend-dev · **task:** S19-11
-- **status:** open
+- **status:** fixed (`6f6d644`; ტესტი `supabase.test.js`; ორი tab / popup რეალურ ბრაუზერში — unverified)
 
 ### A-033 (N-23) — `requirements.lock.txt`-ს hash-ები არ აქვს; GitHub Actions tag-ზეა მიბმული
 - **severity:** nit (supply chain)
 - **file:** `backend/requirements.lock.txt`, `.github/workflows/ci.yml:19-20,42-43`
 - **გამოსწორება:** `pip-compile --generate-hashes` Linux-ზე (Docker `python:3.14.3-slim`), არსებული ვერსიები უცვლელი; CI-ში lock ცალკე `--require-hashes`-ით; `actions/*` → commit SHA (`# vX` კომენტარით).
 - **owner:** task-executor · **task:** S19-12
-- **status:** open
+- **status:** fixed (`f1779c8`; Render-ის hash-mode build — unverified რეალურ deploy-მდე)
 
 ### A-034 — README-ის აცდენა
 - **severity:** nit
 - **file:** `README.md:109,111,179` (+ §7 მიგრაციების სია)
 - **სცენარი:** README: Python 3.11+, React 18, 28 მიგრაცია; რეალურად Python 3.14 (CI 3.14.3), React 19, 31 (S19-9-ის შემდეგ 32).
 - **owner:** task-executor · **task:** S19-13
-- **status:** open
+- **status:** fixed (S19-13)
 
 ---
 
