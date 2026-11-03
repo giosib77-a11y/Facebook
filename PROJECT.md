@@ -19,8 +19,8 @@ Multi-tenant SaaS ქართული მაღაზიებისთვი�
 ## Current Stage
 **Live production** — chatassist.ge (Render). Meta Business Verification ⏳, App Review ⬜,
 Development → Live ⬜ ([README.md](README.md) §2). ამჟამინდელი სამუშაო ეტაპი:
-**Stage 18 — ფოტოები: პროდუქტის ფოტოს ტექსტური აღწერა ერთხელ (create/update-ზე) + კლიენტის ფოტოზე ≤3 საცნობარო ფოტო (აღწერის ერთი გამოძახება მხოლოდ >3 აღწერიან მაღაზიაზე); migration 0028**
-(იხ. `PROGRESS.md`; Stage 10–17 დასრულებულია, Stage 14–17 — offline, deploy/გაშვება key-ებს ელოდება). Stage 18 — Stage 15–18 სერიის ბოლო.
+**Stage 19 — გარე აუდიტი (PDF, 2026-11-03), ეტაპი 1: სწრაფი და დაბალი რისკის გასწორებები (AUDIT.md A-022…A-034); migration 0032**
+(იხ. `PROGRESS.md`; Stage 10–18 დასრულებულია, Stage 14–18 — offline, deploy/გაშვება key-ებს ელოდება). Scope — მხოლოდ AUDIT.md-ის A-022…A-034; ეტაპი 2/3 — Backlog.
 სამუშაო მხოლოდ `agent-system`-ზე; `main`-ში merge არ იგეგმება, სანამ API key-ები არ იქნება. ყველაფერი offline, fake client-ებით.
 
 ## Scope
@@ -600,6 +600,18 @@ LLM-ით, ერთხელ — `image_url`-ის დაყენება/�
 - **A-020 idempotency:** key body-ში (`idempotency_key`, UUID, არასავალდებულო — ძველი ქეშირებული ფორმა key-ის გარეშე მუშაობს), არა header-ში (Pydantic ვალიდაცია, CORS-ის ცვლილება არ სჭირდება). frontend ახალ key-ს მხოლოდ 4xx-ის შემდეგ ქმნის (შეკვეთა არ შექმნილა); ქსელის შეცდომა/5xx — key რჩება. backend lookup ლიმიტებამდე; ერთდროული დუბლიკატი → partial unique index (0031) → 23505 → არსებული შეკვეთა. 0031-ის გარეშე — idempotency გამორთულია, შეკვეთა მაინც იქმნება. Accepted Risk #5 დაიხურა.
 - **A-021:** webhook — `_load_bot_products` (8 სვეტი; 0028-ის გარეშე fallback). `/test-chat` — Backlog.
 - Deploy-ის რიგი: `PROGRESS.md` → `## Blockers`.
+
+### 2026-11-03 — Stage 19: გარე აუდიტი (PDF), ეტაპი 1 (მფლობელის მოთხოვნა; /auto plan — ორკესტრატორის გადაწყვეტილებები, მფლობელმა გადახედოს)
+- **დაგეგმვა architect-ის გარეშე:** 12 მცირე, ერთმანეთისგან დამოუკიდებელი გასწორება, თითოს გამოსწორება PDF-ში უკვე მითითებულია → task-ები პირდაპირ `PROGRESS.md`-ში. ID-ები AUDIT.md-ში A-022…A-034 (N-ნომრით), რომ არსებული `fix(scope): ... (A-0xx)` სტილი შენარჩუნდეს; A-012/A-013 → superseded by A-022/A-023.
+- **სიმძიმე (ჩვენი სკალით):** should-fix — A-024 (N-06: ძველი მოთხოვნის approve პაკეტს ცვლის = ფული), A-027 (N-16) და A-030 (N-20) (privacy), A-029 (N-19: პაკეტის წესი ირღვევა); დანარჩენი nit. PDF-ის „დაბალი" პრიორიტეტი ამას არ ეწინააღმდეგება — ჩვენთან „should-fix" ნიშნავს „წესი ირღვევა / ჩვეულებრივ გამოყენებაში არასწორი შედეგი".
+- **A-024 (N-06):** წაკითხვისას `status != 'pending'` → 409, არაფერი იცვლება; საბოლოო update `.eq("status","pending")`. ატომური „claim" (ჯერ status, მერე tier) უარყოფილია: tier-ის ჩავარდნისას მოთხოვნა „approved" დარჩებოდა პაკეტის გარეშე. ორი ადმინის ერთდროული approve — ამ მასშტაბზე (ერთი ადმინი) მისაღები.
+- **A-031 (N-21):** მფლობელის არჩევანი — fallback-ში მხოლოდ ძირის `*.html` + `public/`. ⚠️ შენიშვნა: build-ის გარეშე HTML Vite-ის წყაროა (`/src/*.jsx`) და React-ის გვერდები მაინც არ იმუშავებს — რეალური ბადე `dist/` git-ში + CI-ის `git diff --exit-code -- dist`-ია. fallback-ის სრული მოხსნა უფრო მარტივი იქნებოდა; შეიცვლება მფლობელის სურვილით (ერთი ფუნქცია).
+- **A-028 (N-17):** DNS pinning ახალი dependency-ის გარეშე — httpx request IP-ზე, `Host` header + `sni_hostname` extension (TLS ორიგინალ host-ზე მოწმდება), `trust_env=False` (proxy pinning-ს არ აუვლის). `content-type`-ის გარეშე ან არა-`image/*` → `None` (ადრე default `image/jpeg`). რისკი: FB CDN-ის რეალური ქცევა offline ვერ მოწმდება — ჩავარდნისას ბოტი უსურათოდ აგრძელებს (უკვე არსებული ქცევა).
+- **A-029 (N-19):** RPC `create_shop_limited` (0032) `pg_advisory_xact_lock`-ით მფლობელზე (count + insert ერთ ტრანზაქციაში); ლიმიტი და tier Python-ში რჩება (`core/tiers.py` — ერთი წყარო), RPC-ს პარამეტრად გადაეცემა. Alternatives: unique/trigger constraint (tier-ის ლოგიკა SQL-ში გაორდებოდა), `select ... for update` (ცარიელ სიმრავლეზე არაფერს კეტავს). 0032-ის გარეშე — ძველი გზა + ერთჯერადი WARNING (პროექტის ნიმუში 0026–0031).
+- **A-027 (N-16):** unsubscribe best-effort — Graph-ის შეცდომა disconnect-ს არ აჩერებს (გამყიდველმა გათიშვა ყოველთვის უნდა შეძლოს); webhook-ი page id-ის გარეშე შეტყობინებას ისედაც აღარ ამუშავებს.
+- **A-032 (N-22):** popup-ის „ცალკე გადაწყვეტა" = დადასტურება, რომ popup supabase-js-ს არ ტვირთავს (`about:blank` → Facebook → backend-ის callback HTML) → ნაგულისხმევი lock მას ვერ ჩაკეტავს; ამიტომ საკმარისია no-op lock-ის მოხსნა `panel/supabase.js`-ში. `readStoredToken` / 8 წმ timeout რჩება დაზღვევად. რეალურ ბრაუზერში (ორი tab, popup) — მფლობელის ხელით შემოწმება deploy-მდე.
+- **A-033 (N-23):** lock — `pip-compile --generate-hashes` ერთჯერად Docker `python:3.14.3-slim` კონტეინერში (Linux, როგორც Render/CI); `pip-tools` project dependency **არ ხდება**. ვერსიები უცვლელი (არსებული lock = preference). CI-ში lock და dev ცალ-ცალკე install (hash-mode ერთ ბრძანებაში dev ფაილსაც hash-ებს მოსთხოვდა). Windows dev — `requirements.txt` (README §).  Docker-ის გარეშე → Blocker, Actions-ის SHA pinning მაინც კეთდება.
+- როგორ შეიცვლება: ეტაპი 2/3 — `PROGRESS.md` Backlog „გარე აუდიტი PDF".
 
 ## Accepted Risks
 <!-- მიღებული რისკები: რა, რატომ მისაღებია, გადახედვის პირობა. ივსება მფლობელის გადაწყვეტილებით. -->
