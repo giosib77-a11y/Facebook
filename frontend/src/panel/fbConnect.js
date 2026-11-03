@@ -3,7 +3,7 @@
  * ⚠️⚠️ ეს ფაილი განზრახ React-ის გარეთაა (იხ. REACT_MIGRATION.md, ნაწილი 3.1).
  * ეს არის ზუსტად ის ნაკადი, რომელიც App Review-ს ვიდეოშია — თუ გატყდა, უარყოფაა.
  *
- * ორი წესი, რომელიც არ უნდა დაირღვეს:
+ * სამი წესი, რომელიც არ უნდა დაირღვეს:
  *  1. `message`-ლისენერი რეგისტრირდება მოდულის ჩატვირთვისთანავე, არა useEffect-ში.
  *     თუ popup React-ის mount-მდე მოასწრებს პასუხს, შეტყობინება დაიკარგებოდა და
  *     პანელი ვერასდროს გაიგებდა, რომ გვერდი დაუკავშირდა (შეცდომის გარეშე!).
@@ -11,12 +11,28 @@
  *     StrictMode-ის ორმაგი mount-იც უვნებელია (cleanup→resubscribe ბუფერს არ კარგავს).
  *  2. `window.open` სინქრონულად, click-ის დამმუშავებელში, `await`-მდე.
  *     თუ წინ await გაჩნდა, ბრაუზერი popup-ს დაბლოკავს.
+ *  3. `message` მიიღება მხოლოდ API-ს origin-იდან და მხოლოდ ჩვენს მიერ გახსნილი popup-იდან
+ *     (`e.origin` + `e.source === popupRef`). popup-ის ბოლო გვერდს backend აბრუნებს და
+ *     `window.opener.postMessage`-ით პასუხობს; სხვა ფანჯარას/საიტს არ უნდა შეეძლოს
+ *     ყალბი `{fb: ...}` შეტყობინებით პანელის მოტყუება.
  */
 
 const pending = [];
 let handler = null;
+let popupRef = null;
+
+/** backend-ის origin (popup-ის ბოლო გვერდი სწორედ იქიდან მოდის) */
+function apiOrigin() {
+  try {
+    return new URL(window.APP_CONFIG.API_BASE, window.location.href).origin;
+  } catch {
+    return window.location.origin;
+  }
+}
 
 window.addEventListener("message", (e) => {
+  if (e.origin !== apiOrigin()) return;
+  if (!popupRef || e.source !== popupRef) return;
   const d = e.data;
   if (!d || typeof d !== "object" || !d.fb) return;
   if (handler) handler(d);
@@ -88,6 +104,7 @@ export function fbResultMessage(d) {
  */
 export async function startConnect(shopId, api) {
   const popup = window.open("about:blank", "fbconnect", "width=600,height=720");
+  popupRef = popup;
   let res;
   try {
     res = await api("/facebook/connect/start?shop_id=" + encodeURIComponent(shopId));
