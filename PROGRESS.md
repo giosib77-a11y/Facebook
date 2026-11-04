@@ -187,7 +187,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `e2e/legal.spec.js`: `delete-data.html` §1-ში „Apps and Websites" არ არის, §2-ში არის; `privacy.html`-ში „SMTP provider" და „Telegram" ჩანს (ძველზე ვარდება).
   - done when: საერთო frontend + e2e; `dist` იმავე commit-ში; HTML ფაილების სახელები უცვლელი.
 
-- [ ] **S20-17 — დოკუმენტაცია: README + CLAUDE.md (A-035…A-039)** · owner: task-executor · files: `README.md`, `CLAUDE.md` · depends: S20-1…S20-16
+- [x] ✅ (README §6/§7/§8/§9/§10/§12/§14; CLAUDE.md 49 ხაზი — backend 2242, vitest 72, e2e 7, შემდეგი 0037) **S20-17 — დოკუმენტაცია: README + CLAUDE.md (A-035…A-039)** · owner: task-executor · files: `README.md`, `CLAUDE.md` · depends: S20-1…S20-16
   - README: §6 API — Stage 20-ის endpoint-ები/ცვლილებები (`PROJECT.md` API Contract „Stage 20"); §7 — `0033`–`0036` სიაში (დანიშნულება, „backend deploy-მდე; მის გარეშე ძველი ქცევა + WARNING") + რაოდენობა + Stage 20-ის run order; env — `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `NOTIFY_EMAIL_FROM` (Brevo / Resend SMTP მაგალითებით), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `LLM_KILL_SWITCH`, `LLM_DAILY_TOKEN_CAP`, `LLM_MONTHLY_TOKENS_*`; abuse cap (`:270`, `:446`) → „100 (უფასოზე 30)"; Data Deletion — callback მხოლოდ გამყიდველზე (ASID), კლიენტის გზა; Meta App Dashboard-ში `message_echoes` + გვერდის ხელახალი დაკავშირება; e2e — `npx playwright install chromium`, `npm run build && npm run test:e2e` (backend-ის გარეშე).
   - `CLAUDE.md`: test-ის ხაზი — ზუსტი რაოდენობები; „შემდეგი მიგრაცია `0037_...sql`"; frontend-ის Commands-ში e2e ხაზი (`- e2e frontend: ...` — `verify.sh`-ის `lint`/`typecheck`/`test` ხაზები უცვლელი); ≤50 ხაზი; `.claude/`-ს არ ეხება.
   - done when: `grep -n "100 შეტყობინება" README.md` — მხოლოდ „უფასოზე 30"-ით; `grep -c "0036_shops_bot_status" README.md` ≥ 1; CLAUDE.md ≤50 ხაზი (რაოდენობა report-ში); key-ის მნიშვნელობა არსად; pytest/ruff უცვლელად მწვანე.
@@ -682,6 +682,7 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - (S20-9) `budget.spend_status` `alert`-ში kill-switch-ს არ ითვალისწინებს (API Contract ითვალისწინებს) — ახლა `admin.py` `overview`-შია კომპენსირებული; სუფთა გზა: `budget.py` + `test_budget.py:305`, მერე კომპენსაცია იშლება.
 - (S20-11) webhook-ის წუთობრივი ლიმიტის WARNING (`წუთობრივი ლიმიტი გადაჭარბდა ... psid=%s`) psid-ს წერს — ძველი ხაზი, „ლოგში psid არასდროს" წესს არღვევს; psid ამოიღოს.
 - (S20-11) `bot_status`-ის ერთი ჩავარდნილი ჩაწერა (დროებითი DB-ის შეცდომაც) ჯანმრთელობის ჩაწერას restart-მდე თიშავს (module flag) — retry N წუთში ან flag მხოლოდ სვეტის არარსებობის code-ზე.
+- (S20-17) README §15 (ეტაპების ისტორია) და footer-ის თარიღი Stage 15+-ს არ ასახავს; §5.5 ადმინ-პანელის აღწერაში არ არის „ვადა" სვეტი და LLM ბანერი; §14 #2-ის ხაზების რაოდენობა გადასამოწმებელია.
 - (S20-13) e2e-ში კლიენტის წაშლის (DELETE) სცენარი არ არის (unit ტესტით დაფარულია); „🗑" ღილაკს `aria-label`.
 - (S20-6) `expire_subscriptions()` არ ეხება მფლობელს, რომელსაც `subscriptions`-ში მწკრივი არ აქვს, მაგრამ shops-ზე ფასიანი tier აქვს (მაგ. ხელით SQL-ით) — 0034-ის ხელახალი გაშვება ავსებს; ვადაგასულის გათიშული ბოტები ავტომატურად არ ბრუნდება (გეგმით).
 
