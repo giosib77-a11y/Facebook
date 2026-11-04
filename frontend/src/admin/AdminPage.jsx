@@ -15,6 +15,22 @@ function Pill({ on, yes = "კი", no = "არა" }) {
   return <span className={on ? "pill pill-on" : "pill pill-off"}>{on ? yes : no}</span>;
 }
 
+const SOON_MS = 3 * 86400e3;
+
+/** ვადა ≤3 დღეა ან უკვე გასულია */
+function isExpiringSoon(paidUntil) {
+  if (!paidUntil) return false;
+  const t = new Date(paidUntil).getTime();
+  return !Number.isNaN(t) && t - Date.now() <= SOON_MS;
+}
+
+function llmAlertText(llm) {
+  const hasToday = llm.today_tokens != null;
+  const pct =
+    hasToday && llm.daily_cap > 0 ? Math.round((llm.today_tokens / llm.daily_cap) * 100) + "%" : "—";
+  return `⚠️ LLM ხარჯი: დღეს ${hasToday ? llm.today_tokens : "—"} / ${llm.daily_cap} ტოკენი (${pct})`;
+}
+
 function Stat({ val, lbl, mrr }) {
   return (
     <div className={mrr ? "stat mrr" : "stat"}>
@@ -151,6 +167,16 @@ export default function AdminPage() {
     }
   }
 
+  async function extend30(s) {
+    try {
+      const r = await req("POST", "/admin/subscriptions/" + s.owner_id + "/extend", { days: 30 });
+      showToast("ვადა გაგრძელდა: " + fmtDate(r && r.paid_until));
+      load();
+    } catch (e) {
+      showToast((e && e.message) || "ვერ მოხერხდა", true);
+    }
+  }
+
   async function recovery(email) {
     if (!email) return;
     try {
@@ -195,9 +221,9 @@ export default function AdminPage() {
     downloadCSV(
       "shops.csv",
       toCSV(
-        ["მაღაზია", "მფლობელი", "პაკეტი", "კლიენტი_თვე", "ლიმიტი", "პროდუქტი", "შეკვეთა", "Facebook", "ბოტი", "შექმნა"],
+        ["მაღაზია", "მფლობელი", "პაკეტი", "ვადა", "კლიენტი_თვე", "ლიმიტი", "პროდუქტი", "შეკვეთა", "Facebook", "ბოტი", "შექმნა"],
         shops.map((s) => [
-          s.name, s.owner_email, s.tier_label, s.monthly_customers, s.customer_limit,
+          s.name, s.owner_email, s.tier_label, fmtDate(s.paid_until), s.monthly_customers, s.customer_limit,
           s.products, s.orders, s.fb_connected ? "კი" : "არა", s.bot_enabled ? "ჩართ" : "გამორთ",
           fmtDate(s.created_at),
         ])
@@ -300,6 +326,17 @@ export default function AdminPage() {
               </div>
             )}
 
+            {overview && overview.llm && overview.llm.alert && (
+              <div className="banner" role="status">
+                <div className="banner-title">{llmAlertText(overview.llm)}</div>
+              </div>
+            )}
+            {overview && overview.llm && overview.llm.kill_switch && (
+              <div className="banner banner-error" role="alert">
+                <div className="banner-title">LLM_KILL_SWITCH ჩართულია — ბოტი ყველგან ოპერატორზეა</div>
+              </div>
+            )}
+
             <div className="card">
               <div className="list-header">
                 <h2 style={{ margin: 0 }}>📊 საერთო მაჩვენებლები</h2>
@@ -326,6 +363,12 @@ export default function AdminPage() {
                     <Stat val={overview.total_orders} lbl="შეკვეთა (სულ)" />
                     <Stat val={overview.orders_30d} lbl="შეკვეთა (30 დღე)" />
                     <Stat val={overview.revenue + " ₾"} lbl="ბრუნვა (გაუქმ. გარეშე)" />
+                    {overview.llm && (
+                      <Stat
+                        val={overview.llm.month_tokens != null ? overview.llm.month_tokens : "—"}
+                        lbl="LLM ტოკენი (თვე)"
+                      />
+                    )}
                     <Stat
                       val={overview.total_shops ? (overview.total_orders / overview.total_shops).toFixed(1) : 0}
                       lbl="საშ. შეკვეთა/მაღაზია"
@@ -394,7 +437,7 @@ export default function AdminPage() {
                     <table className="admin">
                       <thead>
                         <tr>
-                          <th>მაღაზია</th><th>მფლობელი</th><th>პაკეტი</th><th>კლიენტი/თვე</th>
+                          <th>მაღაზია</th><th>მფლობელი</th><th>პაკეტი</th><th>ვადა</th><th>კლიენტი/თვე</th>
                           <th>პროდ.</th><th>შეკვ.</th><th>Facebook</th><th>ბოტი</th><th>შექმნა</th><th>მოქმედება</th>
                         </tr>
                       </thead>
@@ -415,6 +458,24 @@ export default function AdminPage() {
                                     <option key={t[0]} value={t[0]}>{t[1]}</option>
                                   ))}
                                 </select>
+                              </td>
+                              <td>
+                                <span
+                                  style={
+                                    isExpiringSoon(s.paid_until)
+                                      ? { color: "var(--danger)", fontWeight: 600 }
+                                      : undefined
+                                  }
+                                >
+                                  {fmtDate(s.paid_until)}
+                                </span>{" "}
+                                <button
+                                  className="icon-btn"
+                                  disabled={s.tier === "free"}
+                                  onClick={() => extend30(s)}
+                                >
+                                  +30 დღე
+                                </button>
                               </td>
                               <td>
                                 <span style={over ? { color: "var(--danger)", fontWeight: 600 } : undefined}>
