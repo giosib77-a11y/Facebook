@@ -325,6 +325,13 @@ def _connect_callback(
         )
         return _finish("error", reason="shop_not_found")
 
+    # A-038: ახალი token → ძველი ჯანმრთელობის სტატუსი (token_expired და ა.შ.) იწმინდება.
+    # ცალკე best-effort (migration 0036 შეიძლება არ იყოს) — fallback-ის pop სიაში არ შედის.
+    try:
+        _save({"bot_status": None, "bot_status_at": None})
+    except Exception as exc:
+        logger.warning("bot_status reset failed (shop=%s, %s)", data.get("shop_id"), type(exc).__name__)
+
     if not bot_allowed:
         return _finish("connected", page=page_name, bot="limit")
     return _finish("connected", page=page_name)

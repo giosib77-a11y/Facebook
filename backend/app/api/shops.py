@@ -227,6 +227,7 @@ def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
         "prices": TIER_PRICES,
         "payment_iban": settings.payment_iban,
         "payment_contact": settings.payment_contact,
+        "email_notifications": settings.email_notifications_enabled,
     }
 
 

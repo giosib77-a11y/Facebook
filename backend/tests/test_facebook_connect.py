@@ -98,7 +98,8 @@ def test_c5b_same_shop_reconnect_with_its_own_ig_id_works(client, service_db):
     text, saved = _connect(client, service_db, [{"id": SHOP_ID, "subscription_tier": "free", "bot_enabled": False}])
     assert saved["instagram_account_id"] == "ig-1"
     assert '"fb": "connected"' in text
-    assert len(service_db.calls_for("shops", "update")) == 1
+    # the page save is still a single update (the extra bot_status reset is a separate, health-only update)
+    assert len([u for u in service_db.calls_for("shops", "update") if "facebook_page_id" in u.payload]) == 1
 
 
 def test_c5c_no_ig_account_skips_check_and_saves(client, service_db, monkeypatch):

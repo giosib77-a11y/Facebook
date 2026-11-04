@@ -4,7 +4,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from postgrest.exceptions import APIError
 
 from app.core.db import run
@@ -12,6 +12,7 @@ from app.core.ratelimit import check_rate_limit, rate_limit, register_window
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.models.order import OrderCreate, OrderOut, OrderStatusUpdate
+from app.services import notify
 
 router = APIRouter(tags=["orders"])
 logger = logging.getLogger("app")
@@ -76,7 +77,7 @@ def public_menu(shop_id: uuid.UUID):
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(rate_limit("create_order", limit=10, window=60))],
 )
-def create_order(payload: OrderCreate, request: Request):
+def create_order(payload: OrderCreate, request: Request, background_tasks: BackgroundTasks):
     """კლიენტი ქმნის შეკვეთას (საჯარო). ჩაწერა service_role-ით."""
     # დღიური (ip, shop) ლიმიტი — ნებისმიერ DB წვდომამდე; ითვლის ყველა მცდელობას (400-საც).
     check_rate_limit(
@@ -243,6 +244,8 @@ def create_order(payload: OrderCreate, request: Request):
     if order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "შეკვეთის შექმნა ვერ მოხერხდა")
 
+    # email მფლობელს (A-038) — პასუხის შემდეგ, ფონურად; მხოლოდ ახალ შეკვეთაზე (არა განმეორებაზე)
+    background_tasks.add_task(notify.notify_new_order, str(payload.shop_id), order_id, total)
     return {"ok": True, "order_id": order_id, "total": total}
 
 
