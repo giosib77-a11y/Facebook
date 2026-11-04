@@ -65,7 +65,7 @@ def test_psid_over_limit_skipped_without_llm_or_reply(env, caplog):
     assert len(bot_calls) == webhook._RATE_PER_PSID
     assert len(sent) == webhook._RATE_PER_PSID
     # skipped message costs no track_bot_customer DB work
-    assert len(db.rpc_calls) == webhook._RATE_PER_PSID
+    assert len([c for c in db.rpc_calls if c.fn == "track_bot_customer"]) == webhook._RATE_PER_PSID
     assert any(SHOP_ID in r.getMessage() for r in caplog.records)
 
 

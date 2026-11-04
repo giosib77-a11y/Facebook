@@ -204,7 +204,7 @@ def test_expired_pause_runs_the_normal_path(env):
 
     assert calls["bot"] == 1
     assert sent == ["llm reply"]
-    assert [c.fn for c in db.rpc_calls] == ["track_bot_customer"]
+    assert [c.fn for c in db.rpc_calls if c.fn == "track_bot_customer"] == ["track_bot_customer"]
 
 
 def test_garbage_paused_until_is_treated_as_not_paused(env):

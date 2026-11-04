@@ -13,9 +13,9 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, R
 from app.config import get_settings
 from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
-from app.core.tiers import DAILY_ABUSE_CAP, limits_for
+from app.core.tiers import daily_cap, limits_for
 from app.services.facebook import download_image, send_text_message, verify_signature
-from app.services import memory
+from app.services import budget, memory
 from app.services.graph import run_turn
 
 router = APIRouter(tags=["messenger webhook"])
@@ -534,8 +534,8 @@ def _process_events(data: dict) -> None:
                 monthly = int(row.get("monthly_unique") or 0)
                 day_count = int(row.get("day_count") or 0)
                 limits = limits_for(shop.get("subscription_tier"))
-                if day_count > DAILY_ABUSE_CAP:
-                    continue  # abuse/loop — ჩუმად ვჩერდებით
+                if day_count > daily_cap(shop.get("subscription_tier")):
+                    continue  # abuse/loop — ჩუმად ვჩერდებით (free 30 / ფასიანი 100)
                 limit = int(limits["customers"])
                 if monthly > limit:
                     # ლიმიტი გადაჭარბდა — ვბლოკავთ მხოლოდ მათ, ვინც ლიმიტის შემდეგ მოვიდა
@@ -564,7 +564,14 @@ def _process_events(data: dict) -> None:
                     "bot disabled — %s not set (shop=%s)", settings.llm_key_env_name, shop.get("id"),
                 )
 
-            if over_limit or bot_disabled:
+            # S20-9: LLM-ის ხარჯის კონტროლი (kill-switch / გლობალური დღიური ჭერი / მფლობელის თვიური ბიუჯეტი);
+            # უკვე გადაწყვეტილ შემთხვევაზე (over_limit / bot_disabled) ბიუჯეტის RPC არ იძახება.
+            # უცნობი ხარჯი (migration 0035 / RPC შეცდომა) → None → ბოტი მუშაობს (fail-open).
+            reason = None if (over_limit or bot_disabled) else budget.blocked_reason(sc, shop)
+            if reason:
+                logger.warning("bot budget: %s - operator reply (shop=%s)", reason, shop.get("id"))
+
+            if over_limit or bot_disabled or reason:
                 auto_reply = OPERATOR_SOON_REPLY
                 try:
                     send_text_message(page_token, sender_id, auto_reply)

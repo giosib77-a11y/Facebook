@@ -22,7 +22,7 @@ from app.core.tiers import (
     limits_for,
     normalize_tier,
 )
-from app.services import subscriptions
+from app.services import budget, subscriptions
 from app.services.bot_limits import enforce_bot_limit
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
@@ -214,6 +214,10 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         tier_counts[t] = tier_counts.get(t, 0) + 1
         mrr += TIER_PRICES.get(t, 0)
 
+    # API Contract: alert = kill_switch or (today_tokens >= 80% of the daily cap)
+    llm = budget.spend_status(sc)
+    llm["alert"] = bool(llm["alert"] or llm["kill_switch"])
+
     return {
         "total_shops": len(shops),
         "total_sellers": len({s["owner_id"] for s in shops if s.get("owner_id")}),
@@ -224,6 +228,7 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         "revenue": round(revenue, 2),
         "mrr": mrr,
         "tier_counts": tier_counts,
+        "llm": llm,
     }
 
 
