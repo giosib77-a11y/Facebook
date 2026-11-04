@@ -242,10 +242,16 @@ def get_user_id(user_token: str) -> str | None:
 
 
 def subscribe_page(page_id: str, page_token: str) -> None:
-    """გვერდს აწერს ჩვენს app-ს webhook-ზე (messages ველი)."""
+    """გვერდს აწერს ჩვენს app-ს webhook-ზე (messages ველი).
+
+    message_echoes — გამყიდველის ხელით დაწერილი პასუხის ამოსაცნობად (ბოტი პაუზდება, A-035).
+    """
     _graph(
         "POST", f"/{page_id}/subscribed_apps",
-        params={"access_token": page_token, "subscribed_fields": "messages,messaging_postbacks"},
+        params={
+            "access_token": page_token,
+            "subscribed_fields": "messages,messaging_postbacks,message_echoes",
+        },
         timeout=15,
     )
 

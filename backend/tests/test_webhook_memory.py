@@ -294,7 +294,11 @@ def test_missing_summary_column_falls_back_to_the_old_behaviour(m, service_db, c
         service_db.calls.clear()
         m.run()
 
-    selects = [c.columns for c in service_db.calls_for("bot_conversations", "select")]
+    # S20-3: the pause lookup (`bot_paused_until`) is a separate select — this test is about the memory load
+    selects = [
+        c.columns for c in service_db.calls_for("bot_conversations", "select")
+        if c.columns != "bot_paused_until"
+    ]
     assert selects == ["messages,updated_at,summary", "messages,updated_at"]  # second event only
     assert m.kinds() == ["agent", "agent"]  # no summary call, no cut at 18
     for payload in (first, m.saved()):

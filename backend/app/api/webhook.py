@@ -133,6 +133,110 @@ class Conversation:
 
 _SUMMARY_COLUMN_WARNED = False  # სვეტის არარსებობის WARNING — ერთხელ პროცესზე
 
+# A-035: handoff-ის / გამყიდველის პასუხის შემდეგ ბოტი ამდენი საათით ჩუმდება
+# (ან სანამ პანელში „მოგვარებულია" არ დაჭერილა — რომელიც უფრო ადრე)
+BOT_PAUSE_HOURS = 12
+_ECHO_TEXT_MAX = 2000
+_PAUSE_COLUMN_WARNED = False  # bot_paused_until-ის არარსებობის WARNING — ერთხელ პროცესზე
+_ECHO_APP_ID_WARNED = False   # FB_APP_ID-ის არარსებობის WARNING — ერთხელ პროცესზე
+
+
+def _warn_pause_missing() -> None:
+    """migration 0033-ის გარეშე პაუზა გამორთულია — WARNING ერთხელ პროცესზე."""
+    global _PAUSE_COLUMN_WARNED
+    if _PAUSE_COLUMN_WARNED:
+        return
+    _PAUSE_COLUMN_WARNED = True
+    logger.warning(
+        "bot_conversations.bot_paused_until missing (migration 0033 not applied) - handoff pause disabled"
+    )
+
+
+def _paused_until(sc, shop_id: str, psid: str) -> datetime | None:
+    """საუბრის პაუზის დასასრული, თუ ის ჯერ მომავალშია; სხვა შემთხვევაში (ან შეცდომაზე) None."""
+    try:
+        r = (
+            sc.table("bot_conversations").select("bot_paused_until")
+            .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
+        )
+    except Exception:
+        _warn_pause_missing()
+        return None
+    try:
+        raw = (r.data or [{}])[0].get("bot_paused_until")
+        if not raw:
+            return None
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts if ts > datetime.now(timezone.utc) else None
+    except Exception:
+        return None
+
+
+def _append_history(sc, shop_id: str, psid: str, new_messages: list, *, pause: bool) -> bool:
+    """ისტორიაში შეტყობინებების დამატება LLM-ის გარეშე (გამყიდველის echo / შეჩერებულ საუბარში კლიენტის ტექსტი).
+
+    pause=True → `bot_paused_until` = now + BOT_PAUSE_HOURS. needs_attention / attention_at არ იცვლება.
+    migration 0033-ის გარეშე ტექსტი მაინც ინახება, პაუზის გარეშე. True — ჩაიწერა.
+    """
+    s = get_settings()
+    if s.bot_memory_messages <= 0 and not pause:
+        return False
+    now = datetime.now(timezone.utc)
+    conv = _load_conversation(sc, shop_id, psid)
+    row: dict = {"shop_id": shop_id, "psid": psid, "updated_at": now.isoformat()}
+    if s.bot_memory_messages > 0:
+        row["messages"] = (list(conv.messages) + list(new_messages))[-s.bot_memory_messages:]
+    if conv.summary_supported:
+        row["summary"] = conv.summary  # None ასუფთავებს (ძველი საუბარი)
+    if pause:
+        row["bot_paused_until"] = (now + timedelta(hours=BOT_PAUSE_HOURS)).isoformat()
+    try:
+        sc.table("bot_conversations").upsert(row).execute()
+        return True
+    except Exception as e:
+        err = type(e).__name__
+    if pause:
+        try:
+            sc.table("bot_conversations").upsert({k: v for k, v in row.items() if k != "bot_paused_until"}).execute()
+            _warn_pause_missing()
+            return True
+        except Exception as e:
+            err = type(e).__name__
+    logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s, %s)", shop_id, err)
+    return False
+
+
+def _handle_echo(sc, shop: dict, ev: dict) -> None:
+    """გამყიდველის ხელით დაწერილი პასუხი (message.is_echo): ტექსტი ისტორიაში + ბოტის პაუზა.
+
+    ჩვენი აპის საკუთარი პასუხები echo-დ ბრუნდება `app_id == FB_APP_ID`-ით — მათ ვტოვებთ.
+    ლოგში psid / ტექსტი არასდროს.
+    """
+    global _ECHO_APP_ID_WARNED
+    settings = get_settings()
+    app_id = (settings.fb_app_id or "").strip()
+    if not app_id:
+        if not _ECHO_APP_ID_WARNED:
+            _ECHO_APP_ID_WARNED = True
+            logger.warning("FB_APP_ID not set - seller replies cannot be told apart; echo ignored")
+        return
+    message = ev.get("message") or {}
+    if str(message.get("app_id") or "") == app_id:
+        return  # ჩვენი ბოტის პასუხი
+    psid = (ev.get("recipient") or {}).get("id")
+    if not psid:
+        return
+    if _already_handled(message.get("mid")):
+        return
+    text = message.get("text")
+    text = text.strip()[:_ECHO_TEXT_MAX] if isinstance(text, str) else ""
+    if _append_history(
+        sc, str(shop["id"]), str(psid), [{"role": "operator", "content": text or "[დანართი]"}], pause=True,
+    ):
+        logger.info("seller reply - bot paused (shop=%s)", shop.get("id"))
+
 
 def _load_conversation(sc, shop_id: str, psid: str) -> Conversation:
     """კლიენტის ბოლო შეტყობინებები + summary (მეხსიერება). migration 0008-ის გარეშე — ცარიელი;
@@ -216,18 +320,27 @@ def _save_turn(
     if needs_attention:
         full["needs_attention"] = True
         full["attention_at"] = now
+        # A-035: handoff-ის შემდეგ ბოტი BOT_PAUSE_HOURS საათით ჩუმდება
+        full["bot_paused_until"] = (datetime.now(timezone.utc) + timedelta(hours=BOT_PAUSE_HOURS)).isoformat()
     saved = False
     try:
         sc.table("bot_conversations").upsert(full).execute()
         saved = True
     except Exception:
-        # migration 0010 ჯერ არ გაშვებულა (needs_attention არ არსებობს) — მეხსიერება მაინც შევინახოთ
         if needs_attention:
+            # ჯერ migration 0033-ის გარეშე (bot_paused_until არ არსებობს) — handoff ძველებურად
+            no_pause = {k: v for k, v in full.items() if k != "bot_paused_until"}
             try:
-                sc.table("bot_conversations").upsert(base).execute()
+                sc.table("bot_conversations").upsert(no_pause).execute()
                 saved = True
+                _warn_pause_missing()
             except Exception:
-                pass
+                # migration 0010 ჯერ არ გაშვებულა (needs_attention არ არსებობს) — მეხსიერება მაინც შევინახოთ
+                try:
+                    sc.table("bot_conversations").upsert(base).execute()
+                    saved = True
+                except Exception:
+                    pass
     if not (saved and compact and conv is not None and conv.summary_supported
             and memory.needs_compaction(full_history)):
         return
@@ -380,7 +493,14 @@ def _process_events(data: dict) -> None:
                 for a in (message.get("attachments") or [])
                 if a.get("type") == "image" and (a.get("payload") or {}).get("url")
             ]
-            if message.get("is_echo") or not sender_id or (not text and not image_urls):
+            if message.get("is_echo"):
+                # A-035: გამყიდველის ხელით დაწერილი პასუხი — ისტორიაში + ბოტის პაუზა
+                try:
+                    _handle_echo(sc, shop, ev)
+                except Exception:
+                    logger.warning("echo-ს დამუშავება ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
+                continue
+            if not sender_id or (not text and not image_urls):
                 continue
             # Meta-ს გამეორებული მოვლენა — ერთხელ უკვე ვუპასუხეთ (P1-3)
             if _already_handled(message.get("mid")):
@@ -392,6 +512,16 @@ def _process_events(data: dict) -> None:
                     "წუთობრივი ლიმიტი გადაჭარბდა — შეტყობინება გამოტოვებულია (shop=%s, psid=%s)",
                     shop.get("id"), sender_id,
                 )
+                continue
+
+            # A-035: საუბარი შეჩერებულია (handoff / გამყიდველმა უპასუხა) — შეტყობინებას ისტორიაში ვინახავთ,
+            # პასუხი არ იგზავნება (LLM, გაგზავნა, ფოტოს ჩამოტვირთვა, კლიენტის თვლა — არა)
+            if _paused_until(sc, str(shop["id"]), str(sender_id)):
+                _append_history(
+                    sc, str(shop["id"]), str(sender_id),
+                    [{"role": "user", "content": text or "[სურათი]"}], pause=False,
+                )
+                logger.info("bot paused - message stored without reply (shop=%s)", shop.get("id"))
                 continue
 
             # --- მონეტიზაცია: კლიენტის თვლა + ლიმიტების შემოწმება ---
