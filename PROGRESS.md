@@ -219,7 +219,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - (code-reviewer, DESIGN.md §9.2) `AttentionCard`-ის resume / resolve / delete — მიმდინარე request-ის დროს ღილაკი `disabled` + `is-loading` (ორმაგი click → ერთი request).
   - ტესტები: Vitest — expired → „განახლება" (ძველზე ვარდება); budget ტექსტი; ორმაგი click → `api` 1-ჯერ; e2e (`attention.spec.js`) — 375×812 viewport: `document.documentElement.scrollWidth <= 375` და ღილაკები viewport-შია (ძველზე ვარდება).
   - done when: საერთო frontend + e2e; `dist` იმავე commit-ში.
-- [ ] **S20-22 — should-fix (A-036, ადმინი): „+30 დღე" — confirm + დაბლოკვა request-ის დროს (ორმაგი click → +60)** · owner: frontend-dev · files: `frontend/src/admin/AdminPage.jsx`, `frontend/src/admin/AdminPage.test.jsx`, `frontend/dist/**` · depends: S20-21 (`dist`)
+- [x] ✅ (vitest 79 (+4, ძველზე 3 ვარდება); in-flight `owner_id`-ით (ერთი მფლობელის ყველა მწკრივი); `useRef` სინქრონული guard) **S20-22 — should-fix (A-036, ადმინი): „+30 დღე" — confirm + დაბლოკვა request-ის დროს (ორმაგი click → +60)** · owner: frontend-dev · files: `frontend/src/admin/AdminPage.jsx`, `frontend/src/admin/AdminPage.test.jsx`, `frontend/dist/**` · depends: S20-21 (`dist`)
   - `extend` read→write-ია (`admin.py:522-531`) → ორი პარალელური request ვადას ორჯერ ზრდის. ღილაკი: `confirm("გავაგრძელო ვადა 30 დღით?")` → request-ის დროს `disabled` (ამ მწკრივზე).
   - ტესტი: ორმაგი click → `req` 1-ჯერ (ძველზე 2 → ვარდება); confirm=false → 0.
   - done when: საერთო frontend; `dist` იმავე commit-ში.
