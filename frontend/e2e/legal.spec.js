@@ -19,6 +19,9 @@ test("delete-data.html: §1 (კლიენტი) არ ახსენებ
   const s2 = await sectionText(seller);
   expect(s1).not.toContain("Apps and Websites");
   expect(s1).toContain("24 საათში");
+  // A-039: კლიენტის წაშლა მრიცხველს არ შლის, მისგან იდენტიფიკატორს შლის
+  expect(s1).toContain("თვიური მრიცხველიდან");
+  expect(s1).toContain("იდენტიფიკატორი");
   expect(s2).toContain("Apps and Websites");
   expect(s2).toContain("Facebook ID");
   expect(net.blocked).toEqual([]);
@@ -35,5 +38,9 @@ test("privacy.html: processor-ების სიაში SMTP provider და 
   const s9 = await page.locator("h2", { hasText: "9. საერთაშორისო გადაცემა" }).evaluate((el) => el.nextElementSibling.textContent);
   expect(s9).toContain("SMTP provider");
   expect(s9).toContain("Telegram");
+  await expect(page.locator("li", { hasText: "Telegram —" })).toContainText("მაღაზიის სახელი და იდენტიფიკატორი");
+  const s8 = await page.locator("h2", { hasText: "8. მონაცემთა წაშლა" }).evaluate((el) => el.nextElementSibling.textContent);
+  expect(s8).toContain("თვიური");
+  expect(s8).toContain("მრიცხველიდან");
   expect(net.blocked).toEqual([]);
 });
