@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { api, req, readStoredToken } from "../lib/api.js";
 import { toCSV, downloadCSV, fmtDate } from "../lib/csv.js";
@@ -42,6 +42,9 @@ function Stat({ val, lbl, mrr }) {
 
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
+  // +30 დღე: გაგრძელება read→write-ია, ორმაგი კლიკი = +60 — ref სინქრონული დაცვაა, state — disabled-ისთვის
+  const extendingRef = useRef(new Set());
+  const [extending, setExtending] = useState(() => new Set());
   const [forbidden, setForbidden] = useState(false);
   const [overview, setOverview] = useState(null);
   const [shops, setShops] = useState([]);
@@ -168,12 +171,20 @@ export default function AdminPage() {
   }
 
   async function extend30(s) {
+    const id = s.owner_id;
+    if (extendingRef.current.has(id)) return;
+    if (!confirm("გავაგრძელო ვადა 30 დღით?")) return;
+    extendingRef.current.add(id);
+    setExtending(new Set(extendingRef.current));
     try {
-      const r = await req("POST", "/admin/subscriptions/" + s.owner_id + "/extend", { days: 30 });
+      const r = await req("POST", "/admin/subscriptions/" + id + "/extend", { days: 30 });
       showToast("ვადა გაგრძელდა: " + fmtDate(r && r.paid_until));
       load();
     } catch (e) {
       showToast((e && e.message) || "ვერ მოხერხდა", true);
+    } finally {
+      extendingRef.current.delete(id);
+      setExtending(new Set(extendingRef.current));
     }
   }
 
@@ -471,7 +482,7 @@ export default function AdminPage() {
                                 </span>{" "}
                                 <button
                                   className="icon-btn"
-                                  disabled={s.tier === "free"}
+                                  disabled={s.tier === "free" || extending.has(s.owner_id)}
                                   onClick={() => extend30(s)}
                                 >
                                   +30 დღე

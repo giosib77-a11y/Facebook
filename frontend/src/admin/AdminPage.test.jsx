@@ -43,6 +43,7 @@ beforeEach(() => {
   apiMod.readStoredToken.mockReturnValue("tok");
   apiMod.api.mockImplementation(async (p) => (p in data ? data[p] : []));
   apiMod.req.mockResolvedValue({ owner_id: "o1", tier: "starter", paid_until: "2026-12-31T00:00:00Z" });
+  window.confirm = vi.fn(() => true);
 });
 
 async function renderPage() {
@@ -76,6 +77,44 @@ test("+30 days calls extend with the right path/body and reloads", async () => {
   );
   expect(await screen.findByText(/ვადა გაგრძელდა:/)).toBeInTheDocument();
   await waitFor(() => expect(apiMod.api.mock.calls.length).toBeGreaterThan(before));
+});
+
+test("+30 days: double click with confirm sends exactly one request", async () => {
+  await renderPage();
+  const btn = screen.getByRole("button", { name: "+30 დღე" });
+  fireEvent.click(btn);
+  fireEvent.click(btn);
+  await screen.findByText(/ვადა გაგრძელდა:/);
+  expect(window.confirm).toHaveBeenCalledWith("გავაგრძელო ვადა 30 დღით?");
+  expect(apiMod.req).toHaveBeenCalledTimes(1);
+});
+
+test("+30 days: declined confirm sends nothing", async () => {
+  window.confirm = vi.fn(() => false);
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: "+30 დღე" }));
+  expect(window.confirm).toHaveBeenCalledTimes(1);
+  expect(apiMod.req).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "+30 დღე" })).toBeEnabled();
+});
+
+test("+30 days: button is disabled while in flight and re-enabled after", async () => {
+  let resolve;
+  apiMod.req.mockReturnValue(new Promise((r) => { resolve = r; }));
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: "+30 დღე" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "+30 დღე" })).toBeDisabled());
+  resolve({ owner_id: "o1", tier: "starter", paid_until: "2026-12-31T00:00:00Z" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "+30 დღე" })).toBeEnabled());
+  expect(apiMod.req).toHaveBeenCalledTimes(1);
+});
+
+test("+30 days: button is re-enabled after an error", async () => {
+  apiMod.req.mockRejectedValue(new Error("fail"));
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: "+30 დღე" }));
+  await screen.findByText("fail");
+  await waitFor(() => expect(screen.getByRole("button", { name: "+30 დღე" })).toBeEnabled());
 });
 
 test("extend error shows the backend detail in a toast", async () => {
