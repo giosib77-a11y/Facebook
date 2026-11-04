@@ -321,22 +321,68 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     return {"ok": True, "tier": "free", "bot_disabled": disabled, "message": msg}
 
 
+_PAUSE_COLUMN_WARNED = False  # bot_paused_until-ის არარსებობის WARNING — ერთხელ პროცესზე
+
+
+def _warn_pause_missing() -> None:
+    """migration 0033-ის გარეშე პანელის პაუზის ფუნქციები გამორთულია — WARNING ერთხელ პროცესზე."""
+    global _PAUSE_COLUMN_WARNED
+    if _PAUSE_COLUMN_WARNED:
+        return
+    _PAUSE_COLUMN_WARNED = True
+    logger.warning(
+        "bot_conversations.bot_paused_until missing (migration 0033 not applied) - panel pause list disabled"
+    )
+
+
+def _future_iso(raw) -> str | None:
+    """`bot_paused_until` → ISO (UTC), თუ ის მომავალშია; სხვა შემთხვევაში (ან ცუდი მნიშვნელობა) None."""
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        ts = ts.astimezone(timezone.utc)
+    except ValueError:
+        return None
+    return ts.isoformat() if ts > datetime.now(timezone.utc) else None
+
+
 @router.get("/{shop_id}/attention")
 def list_attention(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
-    """საუბრები, რომლებსაც ოპერატორი სჭირდება (handoff). RLS მხოლოდ საკუთარ მაღაზიას აჩვენებს."""
+    """საუბრები, რომლებსაც ოპერატორი სჭირდება (handoff) ან ბოტი შეჩერებულია (A-035).
+    RLS მხოლოდ საკუთარ მაღაზიას აჩვენებს."""
+    # `+` URL-ში არ უნდა მოხვდეს (PostgREST-ში space-ად იკითხება) — ამიტომ Z ფორმატი
+    now_z = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pause_supported = True
     try:
         r = (
             auth.client.table("bot_conversations")
-            .select("psid,messages,attention_at,updated_at")
+            .select("psid,messages,attention_at,updated_at,needs_attention,bot_paused_until")
             .eq("shop_id", str(shop_id))
-            .eq("needs_attention", True)
-            .order("attention_at", desc=True)
+            .or_(f"needs_attention.eq.true,bot_paused_until.gte.{now_z}")
+            .order("updated_at", desc=True)
             .limit(50)
             .execute()
         )
     except Exception:
-        # migration 0010 ჯერ არ გაშვებულა
-        return {"items": [], "count": 0}
+        # migration 0033 ჯერ არ გაშვებულა → ძველი query (მხოლოდ needs_attention)
+        _warn_pause_missing()
+        pause_supported = False
+        try:
+            r = (
+                auth.client.table("bot_conversations")
+                .select("psid,messages,attention_at,updated_at")
+                .eq("shop_id", str(shop_id))
+                .eq("needs_attention", True)
+                .order("attention_at", desc=True)
+                .limit(50)
+                .execute()
+            )
+        except Exception:
+            # migration 0010 ჯერ არ გაშვებულა
+            return {"items": [], "count": 0, "attention_count": 0}
 
     items = []
     for row in r.data or []:
@@ -346,14 +392,19 @@ def list_attention(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
             if m.get("role") == "user":
                 last_user = (m.get("content") or "").strip()
                 break
+        needs = True if not pause_supported else bool(row.get("needs_attention"))
         items.append(
             {
                 "psid": row["psid"],
                 "last_message": last_user,
-                "at": row.get("attention_at") or row.get("updated_at"),
+                # მხოლოდ შეჩერებულ საუბარს attention_at ძველი handoff-იდან შეიძლება დარჩენოდა
+                "at": (row.get("attention_at") or row.get("updated_at")) if needs else row.get("updated_at"),
+                "needs_attention": needs,
+                "paused_until": _future_iso(row.get("bot_paused_until")) if pause_supported else None,
             }
         )
-    return {"items": items, "count": len(items)}
+    attention_count = sum(1 for i in items if i["needs_attention"])
+    return {"items": items, "count": len(items), "attention_count": attention_count}
 
 
 @router.post("/{shop_id}/attention/{psid}/resolve")
@@ -365,14 +416,43 @@ def resolve_attention(
     owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    # განახლება service_role-ით (bot_conversations-ს owner-update პოლისი არ აქვს)
+    # განახლება service_role-ით (bot_conversations-ს owner-update პოლისი არ აქვს);
+    # „მოგვარებულია" პაუზასაც ხსნის (A-035)
+    sc = get_service_client()
     try:
-        get_service_client().table("bot_conversations").update(
-            {"needs_attention": False}
+        sc.table("bot_conversations").update(
+            {"needs_attention": False, "bot_paused_until": None}
         ).eq("shop_id", str(shop_id)).eq("psid", psid).execute()
     except Exception:
-        pass
+        # migration 0033 ჯერ არ გაშვებულა → მხოლოდ flag
+        _warn_pause_missing()
+        try:
+            sc.table("bot_conversations").update(
+                {"needs_attention": False}
+            ).eq("shop_id", str(shop_id)).eq("psid", psid).execute()
+        except Exception:
+            pass
     return {"ok": True}
+
+
+@router.post("/{shop_id}/attention/{psid}/resume")
+def resume_bot(shop_id: uuid.UUID, psid: str, auth: CurrentAuth = Depends(get_current_auth)):
+    """„ბოტის ჩართვა": საუბრის პაუზა მოიხსნება (needs_attention უცვლელია). A-035."""
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    try:
+        get_service_client().table("bot_conversations").update(
+            {"bot_paused_until": None}
+        ).eq("shop_id", str(shop_id)).eq("psid", psid).execute()
+    except Exception as e:
+        # psid ლოგში არ იწერება
+        logger.warning("ბოტის ჩართვა ვერ მოხერხდა (shop=%s, %s)", shop_id, type(e).__name__)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ბოტის ჩართვა ახლა ვერ მოხერხდა — სცადეთ მოგვიანებით.",
+        )
+    return {"ok": True, "paused_until": None}
 
 
 @router.get("/{shop_id}/export")
