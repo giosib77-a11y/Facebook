@@ -227,7 +227,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - S20-18-ის შემდეგ კლიენტის წაშლა მრიცხველს არ შლის, მისგან ID-ს შლის: §1 (კლიენტი) და privacy §8 — „წაიშლება თქვენი საუბარი, ხოლო კლიენტების თვიური მრიცხველიდან — თქვენი იდენტიფიკატორი"; გამყიდველის §2 — უცვლელი (იქ წაშლა რჩება). ასევე (security nit) privacy-ში Telegram: „ტექნიკური შეტყობინებები (მაღაზიის სახელი და იდენტიფიკატორი; კლიენტის მონაცემის გარეშე)".
   - e2e: ახალი ფორმულირება ჩანს (ძველზე ვარდება).
   - done when: საერთო frontend + e2e; `dist` იმავე commit-ში.
-- [ ] **S20-24 — დოკუმენტაცია (fix round 1-ის ნარჩენი): README — `LLM_DAILY_TOKENS_PER_OWNER`, echo/IG, ანონიმიზაცია, 0035-ის შემდეგ restart; CLAUDE.md-ის რიცხვები** · owner: task-executor · files: `README.md`, `CLAUDE.md` · depends: S20-18…S20-23
+- [x] ✅ (CLAUDE.md 49 ხაზი — backend 2277, vitest 79, e2e 8) **S20-24 — დოკუმენტაცია (fix round 1-ის ნარჩენი): README — `LLM_DAILY_TOKENS_PER_OWNER`, echo/IG, ანონიმიზაცია, 0035-ის შემდეგ restart; CLAUDE.md-ის რიცხვები** · owner: task-executor · files: `README.md`, `CLAUDE.md` · depends: S20-18…S20-23
   - README: env ცხრილს (§12) და LLM-ის ჭერის აბზაცს (§8) — `LLM_DAILY_TOKENS_PER_OWNER` (default 1000000, 0 = გამორთული, მფლობელის ყველა მაღაზიის დღიური ჯამი); Data Deletion / API — კლიენტის წაშლა `bot_customers`-ს ანონიმიზებს (ლიმიტი არ ნულდება); echo — ჩვენი პასუხი `message_id`-ითაც ამოიცნობა, Instagram-ის echo `app_id`-ის გარეშე პაუზას არ იწვევს; Stage 20 run order — „0035 backend-ის შემდეგ თუ გაეშვა → Render restart (ბიუჯეტის flag)".
   - CLAUDE.md: ტესტების ზუსტი რაოდენობები (backend / vitest / e2e); ≤50 ხაზი.
   - done when: README-ის env სახელები `.env.example`-ს ემთხვევა; CLAUDE.md ≤50; pytest უცვლელად მწვანე.
