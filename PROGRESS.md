@@ -192,6 +192,42 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `CLAUDE.md`: test-ის ხაზი — ზუსტი რაოდენობები; „შემდეგი მიგრაცია `0037_...sql`"; frontend-ის Commands-ში e2e ხაზი (`- e2e frontend: ...` — `verify.sh`-ის `lint`/`typecheck`/`test` ხაზები უცვლელი); ≤50 ხაზი; `.claude/`-ს არ ეხება.
   - done when: `grep -n "100 შეტყობინება" README.md` — მხოლოდ „უფასოზე 30"-ით; `grep -c "0036_shops_bot_status" README.md` ≥ 1; CLAUDE.md ≤50 ხაზი (რაოდენობა report-ში); key-ის მნიშვნელობა არსად; pytest/ruff უცვლელად მწვანე.
 
+### Finish-check (Stage 20, 2026-11-05) — should-fix (fix round 1)
+> code-reviewer 0/1/7, security-auditor 0/2/2 (+2 დაუდასტურებელი), browser-tester 0/2/5. ორკესტრატორმა ახლანდელ კოდში გადაამოწმა; დუბლიკატები გაერთიანდა. რიგი: S20-18 ∥ S20-19 → S20-20 (S20-18-ის შემდეგ, `facebook.py` არა — `webhook.py` S20-19-ს არ ეხება) → frontend S20-21 → S20-22 → S20-23 (`dist`). საერთო „done when" — ზემოთ.
+
+- [ ] **S20-18 — should-fix (A-039-ის რეგრესია): კლიენტის წაშლა `bot_customers`-ს არ შლის, ანონიმიზებს — ლიმიტის მრიცხველი არ ნულდება** · owner: backend-dev · files: `backend/app/api/shops.py`, `backend/tests/test_customer_delete.py` · depends: —
+  - მიზეზი (ორივე reviewer, დადასტურდა): `track_bot_customer` (0004:58-63) `monthly_unique`-ს `bot_customers`-ის `count(*)`-ით ითვლის, `_customer_rank` — `created_at`-ით; `DELETE /shops/{id}/customers/{psid}`-ით გამყიდველი (RLS select-ით psid-ები აქვს) მრიცხველს ანულებს → თვიური კლიენტების ლიმიტი და დღიური 30/100 ჭერი გვერდს უვლის (0017-ის A-1-ის რეგრესია).
+  - `shops.py` `delete_customer_data`: `bot_conversations` — delete უცვლელი; `bot_customers` — delete-ის ნაცვლად service `update({"psid": "del:" + uuid4().hex}).eq("shop_id").eq("psid", psid)` (ყველა თვის მწკრივი; `(shop_id, psid, ym)` unique — ერთი psid-ის მწკრივებს სხვადასხვა `ym` აქვს, ერთი ახალი მნიშვნელობა საკმარისია). `count(*)` და `created_at`-ის რიგი რჩება, PSID ქრება. პასუხი/შეცდომები უცვლელი.
+  - ტესტი: (1) service_db-ში `bot_customers` delete 0, update 1 payload `psid` `del:`-ით იწყება, filter-ები `shop_id`+`psid` (ძველ კოდზე delete → ვარდება); (2) update-ის შეცდომა → 500 (არსებული ტექსტი); (3) `bot_conversations` delete უცვლელი.
+  - done when: საერთო backend.
+- [ ] **S20-19 — should-fix (A-037): მფლობელის დღიური ტოკენ-წილი — ერთი tenant პლატფორმის დღიურ ჭერს ვერ ამოწურავს** · owner: backend-dev · files: `backend/app/config.py`, `.env.example`, `backend/app/services/budget.py`, `backend/tests/test_budget.py`, `backend/tests/test_config_stage20.py`, `backend/tests/conftest.py` (shared — მხოლოდ `os.environ.pop("LLM_DAILY_TOKENS_PER_OWNER")`) · depends: —
+  - მიზეზი (security-auditor, დადასტურდა `budget.py:106-121`-ით): `LLM_DAILY_TOKEN_CAP` (3M) ერთი საერთო რესურსია; ერთი ფასიანი მაღაზიის კლიენტი (100/დღე × ~25K) ჭერის ~83%-ს ხარჯავს → UTC დღის ბოლომდე **ყველა** tenant ოპერატორზე + 12 სთ პაუზა (cross-tenant DoS).
+  - `Settings.llm_daily_tokens_per_owner: int = Field(1_000_000, ge=0)` (0 = გამორთული); `.env.example` — `LLM_DAILY_TOKENS_PER_OWNER=1000000` (კომენტარი: მფლობელის ყველა მაღაზიის დღიური ჯამი; გლობალურის ~⅓) + იქვე „თვიური … (მაღაზიაზე)" → „(მფლობელის ყველა მაღაზიის ჯამი)" (code-reviewer-ის nit).
+  - `budget.blocked_reason`: kill-switch → **მფლობელის დღიური** (`tokens_used(sc, owner_id, day_start)` ≥ cap → `"owner_daily_cap"`; RPC None → გამოტოვება, fail-open) → გლობალური დღიური → თვიური; `owner_id`-ის გარეშე — გამოტოვება. WARNING (მფლობელზე/დღეში ერთხელ) `"LLM owner daily token cap reached - bot switched to operator (owner=%s)"`. webhook-ი `reason`-ს ისედაც ზოგადად ამუშავებს (S20-9) — webhook.py არ იცვლება; `bot_status` `budget_exhausted` მხოლოდ `monthly_budget`-ზე რჩება.
+  - ტესტები: owner ≥1M, გლობალური < 3M → `"owner_daily_cap"` (ძველ კოდზე None → ვარდება); cap 0 → RPC owner-day-ზე 0; RPC None → შემდეგი შემოწმება; owner_id არ არის → გამოტოვება; config default 1_000_000, უარყოფითი → ValidationError.
+  - done when: საერთო backend; `test_webhook_budget.py` უცვლელად მწვანე.
+- [ ] **S20-20 — should-fix (A-035): ჩვენი პასუხის echo-ს ამოცნობა გაგზავნილი `message_id`-ით; Instagram-ის echo `app_id`-ის გარეშე პაუზას არ იწვევს** · owner: backend-dev · files: `backend/app/services/facebook.py`, `backend/app/api/webhook.py`, `backend/tests/test_bot_pause.py`, `backend/tests/test_reply_delivery.py` (მხოლოდ თუ `send_text_message`-ის return-ის ცვლილება exact assert-ს არღვევს) · depends: S20-18 (არა ფაილით — ≤2 პარალელურად)
+  - მიზეზი (ორივე reviewer, დაუდასტურებელი, მაგრამ შედეგი — მთავარი ფუნქცია): Instagram-ზე echo `messages` ველთან ერთად მოდის; თუ IG echo-ს `app_id` არ აქვს, `_handle_echo` ბოტის **საკუთარ** პასუხს გამყიდველისად თვლის → ბოტი ყოველი პასუხის შემდეგ 12 სთ-ით ჩერდება.
+  - `services/facebook.py` `send_text_message`: Send API-ის პასუხიდან `message_id`(-ები) აბრუნებს (`list[str]`; chunk-ებად გაგზავნისას — ყველა); არსებული გამომძახებლები return-ს იგნორირებენ — ქცევა უცვლელი.
+  - `webhook.py`: `_OUR_MIDS` (dict mid → monotonic, `threading.Lock`, TTL 10 წთ, ჭერი `_SEEN_MIDS`-ის ნიმუშით); ყოველი წარმატებული გაგზავნის (მთავარი გზა + ოპერატორის გზა) mid-ები იწერება. `_handle_echo`: ჯერ `mid in _OUR_MIDS` → ჩვენია (return); მერე არსებული `app_id == FB_APP_ID` → ჩვენია; მერე **`object == "instagram"` და `app_id` ცარიელი → იგნორი** (INFO `"instagram echo without app_id ignored (shop=%s)"`) — IG-ზე გამყიდველის ხელით პასუხის პაუზა გამორთულია, სანამ რეალური payload არ დადასტურდება (Decision Log); სხვა → გამყიდველი (არსებული). ყოველ echo-ზე INFO `"echo app_id=%s (shop=%s)"` (app_id PII არ არის) — მფლობელის შესამოწმებლად (Instant Reply / Business Suite). `_handle_echo`-ს `exc_info=True` → მხოლოდ კლასის სახელი (security nit: traceback-ში psid).
+  - ტესტები: (1) გაგზავნილი mid-ის echo `app_id`-ის გარეშე → upsert 0, პაუზა არა (ძველზე seller → ვარდება); (2) IG (`object: "instagram"`) echo `app_id`-ის გარეშე, უცნობი mid → upsert 0 (ძველზე ვარდება); (3) page echo უცხო `app_id`-ით, უცნობი mid → seller (უცვლელი); (4) TTL-ის შემდეგ mid აღარ ითვლება; (5) `send_text_message` (`_graph` MockTransport) → აბრუნებს `["m_1"]`; (6) ლოგში psid/ტექსტი არა, app_id — კი.
+  - done when: საერთო backend.
+- [ ] **S20-21 — should-fix (A-036 / A-038 / A-035, UI): პანელი — მობილური layout, `budget_exhausted`-ის ტექსტი, ვადაგასულზე განახლება, ღილაკების busy-state** · owner: frontend-dev · files: `frontend/src/panel/Dashboard.jsx`, `frontend/src/panel/Dashboard.test.jsx`, `frontend/styles.css`, `frontend/e2e/attention.spec.js`, `frontend/dist/**` · depends: —
+  - (browser-tester) 375px: `.product-actions` (`styles.css:320`) — `flex-wrap: wrap` + `flex-shrink: 1`/`min-width: 0`, მობილურზე ღილაკები სრულ სიგანეზე ან გადაიტანება; `.dash-side` — `min-width: 0` (`styles.css:172`; `.dash-main`-ს უკვე აქვს) — მთელი პანელის ჰორიზონტალური გადაცდენა (scrollWidth 623 vs 375) ქრება.
+  - (code-reviewer) `budget_exhausted` ტექსტი → „⚠️ ბოტის თვიური ლიმიტი ამოიწურა — კლიენტებს ახლა ოპერატორი პასუხობს" (ბიუჯეტი ყველა შეტყობინებას აჩერებს, არა მხოლოდ ახალ კლიენტებს).
+  - (code-reviewer + browser-tester, DESIGN.md §9.3) `expired` ბანერს — „განახლება" ღილაკი + `PayInfo`, პირობა `(expires_soon || expired) && !pending_request`.
+  - (code-reviewer, DESIGN.md §9.2) `AttentionCard`-ის resume / resolve / delete — მიმდინარე request-ის დროს ღილაკი `disabled` + `is-loading` (ორმაგი click → ერთი request).
+  - ტესტები: Vitest — expired → „განახლება" (ძველზე ვარდება); budget ტექსტი; ორმაგი click → `api` 1-ჯერ; e2e (`attention.spec.js`) — 375×812 viewport: `document.documentElement.scrollWidth <= 375` და ღილაკები viewport-შია (ძველზე ვარდება).
+  - done when: საერთო frontend + e2e; `dist` იმავე commit-ში.
+- [ ] **S20-22 — should-fix (A-036, ადმინი): „+30 დღე" — confirm + დაბლოკვა request-ის დროს (ორმაგი click → +60)** · owner: frontend-dev · files: `frontend/src/admin/AdminPage.jsx`, `frontend/src/admin/AdminPage.test.jsx`, `frontend/dist/**` · depends: S20-21 (`dist`)
+  - `extend` read→write-ია (`admin.py:522-531`) → ორი პარალელური request ვადას ორჯერ ზრდის. ღილაკი: `confirm("გავაგრძელო ვადა 30 დღით?")` → request-ის დროს `disabled` (ამ მწკრივზე).
+  - ტესტი: ორმაგი click → `req` 1-ჯერ (ძველზე 2 → ვარდება); confirm=false → 0.
+  - done when: საერთო frontend; `dist` იმავე commit-ში.
+- [ ] **S20-23 — should-fix (A-039, ტექსტი): `delete-data.html` / `privacy.html` — კლიენტის მრიცხველიდან ID იშლება (ანონიმიზაცია)** · owner: frontend-dev · files: `frontend/delete-data.html`, `frontend/privacy.html`, `frontend/e2e/legal.spec.js`, `frontend/dist/**` · depends: S20-18, S20-22 (`dist`)
+  - S20-18-ის შემდეგ კლიენტის წაშლა მრიცხველს არ შლის, მისგან ID-ს შლის: §1 (კლიენტი) და privacy §8 — „წაიშლება თქვენი საუბარი, ხოლო კლიენტების თვიური მრიცხველიდან — თქვენი იდენტიფიკატორი"; გამყიდველის §2 — უცვლელი (იქ წაშლა რჩება). ასევე (security nit) privacy-ში Telegram: „ტექნიკური შეტყობინებები (მაღაზიის სახელი და იდენტიფიკატორი; კლიენტის მონაცემის გარეშე)".
+  - e2e: ახალი ფორმულირება ჩანს (ძველზე ვარდება).
+  - done when: საერთო frontend + e2e; `dist` იმავე commit-ში.
+
 ## Stage 19 — Done
 > **საერთო „done when" ყველა task-ზე:** backend — `backend/`-იდან `.venv/Scripts/python.exe -m ruff check app tests scripts`, `.venv/Scripts/python.exe -m compileall -q app tests scripts`, `.venv/Scripts/python.exe -m pytest -q` სუფთაა (საწყისი: **1825 passed**; რაოდენობა report-ში); frontend task-ზე — `frontend/`-იდან `npm run lint` (0 error), `npm test`, `npm run build` და `frontend/dist/` იმავე commit-ში (საწყისი: 31 test). **ახალი ტესტი ძველ კოდზე ვარდება** — report-ში თითო ქცევაზე 1–2 მაგალითი (ტესტის სახელი + რატომ ვარდება; შეამოწმე `git stash`-ით ან ცვლილების დროებით მოხსნით და დააბრუნე). არსებული ტესტი არ ქრება და არ სუსტდება — იცვლება მხოლოდ task-ში დასახელებული exact assert. ტესტი ქსელს არ მიმართავს, `.env`-ს არ კითხულობს. ლოგში token / psid / URL-ის query — არასდროს. task-ის `files`-ის გარეთ ცვლილება → გაჩერდი, report-ში მიზეზი.
 > **რიგი:** backend ჯაჭვები ფაილების მიხედვით: S19-1 → S19-2 (`main.py`); S19-6 → S19-7 → S19-8 (`api/facebook.py`, `services/facebook.py`); დამოუკიდებელი: S19-3, S19-4, S19-5, S19-9. frontend: S19-10 → S19-11 (`dist/`). S19-12 დამოუკიდებელია. S19-13 — ყველას შემდეგ. ორკესტრატორი ერთდროულად ≤2 task-ს გასცემს და თითოს ცალკე commit-ით (`git add <task-ის files>`).
@@ -674,6 +710,15 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - `send_failed` ერთეული კლიენტის შეცდომაზეც (მაგ. გვერდი დაბლოკა) ჩნდება — Graph-ის error code-ებით გაფილტვრა (551 / 10), თუ ხმაურიანი აღმოჩნდა.
 - ადმინ პანელში ბოტის ჯანმრთელობის სვეტი (`bot_status`) ყველა მაღაზიაზე.
 
+### Stage 20 finish-check (nit, 2026-11-05)
+- (code-reviewer) `budget.py:85-92` PGRST202 → `_rpc_missing` ბიუჯეტს restart-მდე თიშავს: თუ backend 0035-ზე ადრე ავიდა, migration-ის შემდეგ Render restart სჭირდება (Blockers-ში ჩაწერილია) ან retry N წუთში.
+- (code-reviewer) `admin.py:486-489` approve-ზე `apply_tier` (+30) `shops` update-მდეა — shops-ის ჩავარდნა + ადმინის განმეორება → +60. გამოსწორება: `apply_tier` shops-ის შემდეგ.
+- (security) Telegram-ის ტექსტში მაღაზიის სახელია (ფიზიკური პირის სახელი შეიძლება იყოს) — privacy-ს ფორმულირება S20-23-ში ზუსტდება; ალტერნატივა — მხოლოდ shop id.
+- (ორივე reviewer) „🗑 კლიენტის მონაცემების წაშლა" მხოლოდ attention სიაშია; Stage 20-მდე დაკავშირებულ გვერდებზე (echo არ მოდის ხელახალ connect-მდე) „მიწერეთ მაღაზიას" გზა ხშირად ვერ მუშაობს — email-ის გზა რჩება. ღილაკი საუბრების სიაშიც / email-ის გზა წინ.
+- (browser-tester) ადმინი 375px-ზე: `.header-right` (email, „← პანელი", „გასვლა") გვერდს 455px-მდე აფართოებს (Stage 20-მდე); kill-switch ბანერი „📊 საერთო მაჩვენებლები" ბარათს ეხება (gap); `privacy.html` 375px-ზე 18px გადაცდენა (წყარო ვერ დადგინდა).
+- (browser-tester, დაუდასტურებელი) headless Chromium-ში `toLocaleTimeString("ka-GE")` → „04:22 AM", თარიღი US ფორმატით — რეალურ ka-GE ბრაუზერში შესამოწმებელი; საჭიროებისას `hourCycle: "h23"` / ხელით ფორმატი.
+- (browser-tester / DESIGN.md §10) ღილაკების focus — მხოლოდ ბრაუზერის default outline (თხელი).
+
 ### Stage 20 (nit, task-ების report-ებიდან)
 - (S20-1) CI-ის frontend job-ში e2e არ ეშვება: build-ის შემდეგ `npx playwright install --with-deps chromium` + `npm run test:e2e` (`.github/workflows/ci.yml`; Linux runner-ზე `--with-deps` საჭიროა).
 - (S20-3) `_paused_until` ნებისმიერ select-ის შეცდომაზე (დროებით DB outage-ზეც) „migration 0033 not applied" WARNING-ს წერს — ტექსტი ზოგადი გახდეს ან code-ით გაირჩეს.
@@ -895,8 +940,8 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 
 ## Run State
 - Stage: Stage 20 — გარე აუდიტი (PDF, 2026-11-03), ეტაპი 2 „ფული და ნდობა" (A-035…A-039)
-- Finish-check this stage: not run
-- Fix rounds this stage: 0/2
+- Finish-check this stage: done (2026-11-05: code-reviewer 0/1/7, security-auditor 0/2/2, browser-tester 0/2/5 → S20-18…S20-23; nit → Backlog „Stage 20 finish-check")
+- Fix rounds this stage: 1/2
 - Failed attempts: —
 
 ## Last Session
