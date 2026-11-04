@@ -289,8 +289,13 @@ def get_page_instagram_account(page_id: str, page_token: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Send API
 # ---------------------------------------------------------------------------
-def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
-    _graph(
+def send_text_message(page_token: str, recipient_id: str, text: str) -> list[str]:
+    """ტექსტის გაგზავნა. აბრუნებს Send API-ის `message_id`-ებს (webhook-ი მათით ცნობს ჩვენს echo-ს).
+
+    ერთი გამოძახება = ერთი შეტყობინება → ჩვეულებრივ ერთი id; სხვა/დაზიანებული პასუხისას — `[]`
+    (შეტყობინება უკვე გაგზავნილია — პასუხის ფორმის გამო არასდროს ვაგდებთ).
+    """
+    r = _graph(
         "POST", "/me/messages",
         params={"access_token": page_token},
         json={
@@ -300,6 +305,12 @@ def send_text_message(page_token: str, recipient_id: str, text: str) -> None:
         },
         timeout=20,
     )
+    try:
+        body = r.json()
+    except ValueError:
+        return []
+    mid = body.get("message_id") if isinstance(body, dict) else None
+    return [mid] if isinstance(mid, str) and mid else []
 
 
 # ---------------------------------------------------------------------------

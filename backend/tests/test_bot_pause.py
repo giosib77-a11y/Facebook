@@ -4,12 +4,16 @@
 * seller's manual reply (`message.is_echo`, app_id != FB_APP_ID) -> stored as role "operator" + pause
 * paused conversation -> customer message stored, no LLM / send / photo download / track_bot_customer
 * without migration 0033 -> pause disabled, text still stored, one WARNING per process
+* S20-20: our own echo is recognised by the Send API `message_id`; an Instagram echo without app_id never pauses
 
 `_process_events` is called directly with a fake service client; nothing leaves the process.
 """
 import logging
+import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 import app.api.webhook as webhook
@@ -32,6 +36,7 @@ def _reset_process_state(monkeypatch):
     """Module-level one-shot flags and the duplicate-mid memory are process-global."""
     monkeypatch.setattr(webhook, "_PAUSE_COLUMN_WARNED", False, raising=False)
     monkeypatch.setattr(webhook, "_ECHO_APP_ID_WARNED", False, raising=False)
+    monkeypatch.setattr(webhook, "_OUR_MIDS", OrderedDict(), raising=False)  # S20-20: fresh per test
     webhook._SEEN_MIDS.clear()
     yield
     webhook._SEEN_MIDS.clear()
@@ -83,7 +88,7 @@ def _customer(message=None):
     }]})
 
 
-def _echo(*messages, recipient=PSID):
+def _echo(*messages, recipient=PSID, obj="page"):
     """Seller's reply as Meta delivers it: sender = the page, recipient = the customer."""
     events = []
     for m in messages:
@@ -91,7 +96,7 @@ def _echo(*messages, recipient=PSID):
             "sender": {"id": PAGE_ID}, "recipient": {"id": recipient},
             "message": {"is_echo": True, **m},
         })
-    webhook._process_events({"object": "page", "entry": [{"id": PAGE_ID, "messaging": events}]})
+    webhook._process_events({"object": obj, "entry": [{"id": PAGE_ID, "messaging": events}]})
 
 
 def _warnings(caplog, needle):
@@ -331,6 +336,226 @@ def test_echo_storage_failure_does_not_break_the_batch(env, caplog):
 
     assert any("საუბრის შენახვა ვერ მოხერხდა" in r.getMessage() for r in caplog.records)
     assert PSID not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------- S20-20: own echo by sent message_id
+
+def _send_with_ids(monkeypatch, sent, fail_on=None):
+    """Fake Send API: every call returns its own message_id; call number `fail_on` raises GraphError."""
+    n = {"i": 0}
+
+    def fake(tok, psid, text):
+        n["i"] += 1
+        if fail_on == n["i"]:
+            raise facebook.GraphError(500, "send failed")
+        sent.append(text)
+        return [f"m_sent_{n['i']}"]
+
+    monkeypatch.setattr(webhook, "send_text_message", fake)
+
+
+def _only_the_turn_was_saved(db):
+    """The bot's own turn is the single upsert; no operator message and no pause was written."""
+    (save,) = db.calls_for("bot_conversations", "upsert")
+    assert "bot_paused_until" not in save.payload
+    assert all(m["role"] != "operator" for m in save.payload["messages"])
+
+
+def test_echo_of_a_sent_message_id_without_app_id_does_not_pause(env, monkeypatch):
+    db, sent, calls = env
+    _send_with_ids(monkeypatch, sent)
+
+    _customer()
+    assert sent == ["llm reply"]
+    _echo({"mid": "m_sent_1", "text": "llm reply"})  # no app_id (e.g. Instagram)
+
+    _only_the_turn_was_saved(db)
+
+
+def test_echo_of_every_chunk_of_a_split_reply_is_ours(env, monkeypatch):
+    db, sent, calls = env
+    _send_with_ids(monkeypatch, sent)
+    calls["result"] = TurnResult("ა" * 1000 + ". " + "ბ" * 1000)
+
+    _customer()
+    assert len(sent) == 2
+    _echo({"mid": "m_sent_1", "text": "x"}, {"mid": "m_sent_2", "text": "y"})
+
+    _only_the_turn_was_saved(db)
+
+
+def test_echo_of_the_operator_soon_reply_is_ours(env, monkeypatch):
+    db, sent, calls = env
+    _send_with_ids(monkeypatch, sent)
+    monkeypatch.setattr(webhook.budget, "blocked_reason", lambda sc, shop: "kill_switch")
+
+    _customer()
+    assert sent == [webhook.OPERATOR_SOON_REPLY] and calls["bot"] == 0
+    (before,) = db.calls_for("bot_conversations", "upsert")
+    _echo({"mid": "m_sent_1", "text": webhook.OPERATOR_SOON_REPLY})
+
+    assert len(db.calls_for("bot_conversations", "upsert")) == 1  # the echo wrote nothing
+    assert before.payload["needs_attention"] is True
+
+
+def test_failed_chunk_is_not_remembered_but_the_delivered_one_is(env, monkeypatch):
+    db, sent, calls = env
+    _send_with_ids(monkeypatch, sent, fail_on=2)
+    calls["result"] = TurnResult("ა" * 1000 + ". " + "ბ" * 1000)
+
+    _customer()
+
+    assert list(webhook._OUR_MIDS) == ["m_sent_1"]
+
+
+def test_send_returning_none_or_junk_is_tolerated(env, monkeypatch):
+    db, sent, calls = env  # the default fake returns None (old send_text_message contract)
+    monkeypatch.setattr(webhook, "send_text_message", lambda tok, psid, text: sent.append(text) or [None, "", 7])
+
+    _customer()
+
+    assert sent == ["llm reply"] and list(webhook._OUR_MIDS) == []
+
+
+def test_instagram_echo_without_app_id_and_unknown_mid_does_not_pause(env, caplog):
+    db, sent, calls = env
+
+    with caplog.at_level(logging.INFO, logger="app"):
+        _echo({"mid": "m-ig-1", "text": ECHO_TEXT}, obj="instagram")
+
+    assert db.calls_for("bot_conversations", "upsert") == []
+    assert any("instagram echo without app_id ignored" in r.getMessage() for r in caplog.records)
+
+
+def test_instagram_echo_with_a_foreign_app_id_is_still_the_sellers(env):
+    db, sent, calls = env
+
+    _echo({"mid": "m-ig-2", "app_id": SELLER_APP_ID, "text": ECHO_TEXT}, obj="instagram")
+
+    (save,) = db.calls_for("bot_conversations", "upsert")
+    assert save.payload["messages"][-1] == {"role": "operator", "content": ECHO_TEXT}
+    assert "bot_paused_until" in save.payload
+
+
+def test_page_echo_with_a_foreign_app_id_and_unknown_mid_is_the_sellers(env):
+    db, sent, calls = env
+    webhook._remember_our_mids(["m_something_else"])
+
+    _echo({"mid": "m-page-9", "app_id": SELLER_APP_ID, "text": ECHO_TEXT}, obj="page")
+
+    (save,) = db.calls_for("bot_conversations", "upsert")
+    assert save.payload["messages"][-1]["role"] == "operator"
+    assert "bot_paused_until" in save.payload
+
+
+def test_sent_message_id_expires_after_ttl(env):
+    db, sent, calls = env
+    webhook._OUR_MIDS["m-old"] = time.monotonic() - webhook._OUR_TTL - 1
+    webhook._remember_our_mids(["m-fresh"])
+
+    _echo({"mid": "m-fresh", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
+    assert db.calls_for("bot_conversations", "upsert") == []  # still ours
+
+    _echo({"mid": "m-old", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
+    (save,) = db.calls_for("bot_conversations", "upsert")  # forgotten -> seller's
+    assert save.payload["messages"][-1]["role"] == "operator"
+    assert "m-old" not in webhook._OUR_MIDS
+
+
+def test_sent_message_ids_are_capped(monkeypatch):
+    monkeypatch.setattr(webhook, "_OUR_MAX", 3)
+
+    webhook._remember_our_mids([f"m{i}" for i in range(5)])
+
+    assert list(webhook._OUR_MIDS) == ["m2", "m3", "m4"]
+
+
+def test_own_mid_is_recognised_even_when_fb_app_id_is_empty(env, monkeypatch, caplog):
+    db, sent, calls = env
+    _settings(monkeypatch, fb_app_id="")
+    webhook._remember_our_mids(["m-mine"])
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        _echo({"mid": "m-mine", "text": "llm reply"})
+
+    assert db.calls_for("bot_conversations", "upsert") == []
+    assert _warnings(caplog, APP_ID_WARNING) == []  # recognised before the app_id rule
+
+
+def test_every_echo_logs_its_app_id_without_psid_or_text(env, caplog):
+    db, sent, calls = env
+
+    with caplog.at_level(logging.DEBUG, logger="app"):
+        _echo({"mid": "m-l1", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
+        _echo({"mid": "m-l2", "text": ECHO_TEXT}, obj="instagram")
+
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert f"echo app_id={SELLER_APP_ID} (shop={SHOP_ID})" in infos
+    assert f"echo app_id=none (shop={SHOP_ID})" in infos
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert PSID not in joined and ECHO_TEXT not in joined
+
+
+def test_echo_failure_warning_has_class_name_but_no_traceback(env, monkeypatch, caplog):
+    db, sent, calls = env
+
+    def boom(*a, **kw):
+        raise RuntimeError(f"db error for {PSID}")
+
+    monkeypatch.setattr(webhook, "_handle_echo", boom)
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        _echo({"mid": "m-boom", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
+
+    (rec,) = [r for r in caplog.records if "echo-ს დამუშავება ვერ მოხერხდა" in r.getMessage()]
+    assert "RuntimeError" in rec.getMessage()
+    assert rec.exc_info is None
+    assert PSID not in rec.getMessage()
+
+
+def _fake_graph_returning(monkeypatch, response):
+    captured = {}
+
+    def fake_graph(method, path, **kw):
+        captured.update(method=method, path=path, **kw)
+        return response
+
+    monkeypatch.setattr(facebook, "_graph", fake_graph)
+    return captured
+
+
+def test_send_text_message_returns_the_message_id(monkeypatch):
+    captured = _fake_graph_returning(
+        monkeypatch, httpx.Response(200, json={"recipient_id": PSID, "message_id": "m_1"}),
+    )
+
+    assert facebook.send_text_message("page-token", PSID, "hello") == ["m_1"]
+    assert captured["path"] == "/me/messages"
+    assert captured["json"]["message"] == {"text": "hello"}
+
+
+@pytest.mark.parametrize("response", [
+    httpx.Response(200, json={"recipient_id": PSID}),
+    httpx.Response(200, json={"message_id": 5}),
+    httpx.Response(200, json={"message_id": ""}),
+    httpx.Response(200, json=["not", "a", "dict"]),
+    httpx.Response(200, text="<html>not json</html>"),
+    httpx.Response(200, content=b""),
+])
+def test_send_text_message_without_a_usable_message_id_returns_empty_list(monkeypatch, response):
+    _fake_graph_returning(monkeypatch, response)
+
+    assert facebook.send_text_message("page-token", PSID, "hello") == []
+
+
+def test_send_text_message_still_raises_graph_errors(monkeypatch):
+    def failing(method, path, **kw):
+        raise facebook.GraphError(400, "bad token", 190)
+
+    monkeypatch.setattr(facebook, "_graph", failing)
+
+    with pytest.raises(facebook.GraphError):
+        facebook.send_text_message("page-token", PSID, "hello")
 
 
 # ---------------------------------------------------------------- without migration 0033

@@ -85,6 +85,47 @@ def _already_handled(mid: str | None) -> bool:
         return False
 
 
+# S20-20 (A-035): ჩვენ მიერ გაგზავნილი შეტყობინებების id-ები (Send API `message_id`). ჩვენივე პასუხის echo
+# ამ id-ით ცნობადია `app_id`-ის გარეშეც (Instagram-ის echo-ს შეიძლება `app_id` არ ჰქონდეს — წინააღმდეგ
+# შემთხვევაში ბოტი საკუთარ პასუხზე თავად დაპაუზდებოდა). მეხსიერებაშია, ერთი instance; echo გაგზავნიდან
+# წამებში მოდის, ამიტომ 10 წთ ბევრად საკმარისია.
+_OUR_MIDS: "OrderedDict[str, float]" = OrderedDict()
+_OUR_LOCK = threading.Lock()
+_OUR_TTL = 600       # წამი
+_OUR_MAX = 5000      # ჩანაწერების ჭერი
+
+
+def _remember_our_mids(mids) -> None:
+    """გაგზავნილი შეტყობინებების id-ების ჩაწერა. არა-სია / ცარიელი / არა-სტრიქონი id — ჩუმად გამოტოვება."""
+    if not isinstance(mids, (list, tuple)):
+        return
+    valid = [m for m in mids if isinstance(m, str) and m]
+    if not valid:
+        return
+    now = time.monotonic()
+    with _OUR_LOCK:
+        for m in valid:
+            _OUR_MIDS.pop(m, None)
+            _OUR_MIDS[m] = now
+        while len(_OUR_MIDS) > _OUR_MAX:
+            _OUR_MIDS.popitem(last=False)
+
+
+def _is_our_mid(mid) -> bool:
+    """True — mid ბოლო `_OUR_TTL` წამში ჩვენ მიერ გაგზავნილია."""
+    if not isinstance(mid, str) or not mid:
+        return False
+    now = time.monotonic()
+    with _OUR_LOCK:
+        while _OUR_MIDS:
+            k, ts = next(iter(_OUR_MIDS.items()))
+            if now - ts > _OUR_TTL:
+                _OUR_MIDS.pop(k, None)
+            else:
+                break
+        return mid in _OUR_MIDS
+
+
 # B-3: წუთობრივი ლიმიტი — ერთმა კლიენტმა/მაღაზიამ საერთო LLM კვოტა და threadpool
 # არ უნდა ამოწუროს. ლიმიტს გადაცილებულს ჩუმად ვტოვებთ (პასუხი და LLM-ის გამოძახება არ არის).
 # მეხსიერებაშია (_SEEN_MIDS-ის მსგავსად ერთი instance-ისთვის); ბლოკირებული შეტყობინება არ ითვლება.
@@ -238,13 +279,23 @@ def _append_history(sc, shop_id: str, psid: str, new_messages: list, *, pause: b
     return False
 
 
-def _handle_echo(sc, shop: dict, ev: dict) -> None:
+def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None) -> None:
     """გამყიდველის ხელით დაწერილი პასუხი (message.is_echo): ტექსტი ისტორიაში + ბოტის პაუზა.
 
-    ჩვენი აპის საკუთარი პასუხები echo-დ ბრუნდება `app_id == FB_APP_ID`-ით — მათ ვტოვებთ.
-    ლოგში psid / ტექსტი არასდროს.
+    ჩვენი პასუხების ამოცნობა (S20-20), თანმიმდევრობით:
+    1. `mid` ჩვენ მიერ ბოლო 10 წთ-ში გაგზავნილია (`_OUR_MIDS`) — ჩვენია; მუშაობს `FB_APP_ID`-ის გარეშეც;
+    2. `app_id == FB_APP_ID` — ჩვენია; `FB_APP_ID` ცარიელია → ერთი WARNING და დანარჩენი echo-ები იგნორდება;
+    3. Instagram (`obj == "instagram"`) და `app_id` ცარიელი — იგნორდება (გამყიდველის ხელით პასუხის პაუზა
+       IG-ზე გამორთულია, სანამ რეალური payload არ დადასტურდება; Decision Log 2026-11-05);
+    4. დანარჩენი — გამყიდველია.
+    ლოგში psid / ტექსტი არასდროს; `app_id` PII არ არის.
     """
     global _ECHO_APP_ID_WARNED
+    message = ev.get("message") or {}
+    echo_app_id = str(message.get("app_id") or "").strip()
+    logger.info("echo app_id=%s (shop=%s)", echo_app_id[:32] or "none", shop.get("id"))
+    if _is_our_mid(message.get("mid")):
+        return  # ჩვენი ბოტის (ან ოპერატორის ავტო-) პასუხი
     settings = get_settings()
     app_id = (settings.fb_app_id or "").strip()
     if not app_id:
@@ -252,9 +303,11 @@ def _handle_echo(sc, shop: dict, ev: dict) -> None:
             _ECHO_APP_ID_WARNED = True
             logger.warning("FB_APP_ID not set - seller replies cannot be told apart; echo ignored")
         return
-    message = ev.get("message") or {}
-    if str(message.get("app_id") or "") == app_id:
+    if echo_app_id == app_id:
         return  # ჩვენი ბოტის პასუხი
+    if obj == "instagram" and not echo_app_id:
+        logger.info("instagram echo without app_id ignored (shop=%s)", shop.get("id"))
+        return
     psid = (ev.get("recipient") or {}).get("id")
     if not psid:
         return
@@ -528,9 +581,12 @@ def _process_events(data: dict) -> None:
             if message.get("is_echo"):
                 # A-035: გამყიდველის ხელით დაწერილი პასუხი — ისტორიაში + ბოტის პაუზა
                 try:
-                    _handle_echo(sc, shop, ev)
-                except Exception:
-                    logger.warning("echo-ს დამუშავება ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
+                    _handle_echo(sc, shop, ev, data.get("object"))
+                except Exception as e:
+                    # exc_info არა: traceback-ში psid შეიძლება აღმოჩნდეს
+                    logger.warning(
+                        "echo-ს დამუშავება ვერ მოხერხდა (shop=%s, %s)", shop.get("id"), type(e).__name__,
+                    )
                 continue
             if not sender_id or (not text and not image_urls):
                 continue
@@ -608,7 +664,7 @@ def _process_events(data: dict) -> None:
             if over_limit or bot_disabled or reason:
                 auto_reply = OPERATOR_SOON_REPLY
                 try:
-                    send_text_message(page_token, sender_id, auto_reply)
+                    _remember_our_mids(send_text_message(page_token, sender_id, auto_reply))
                 except Exception:
                     pass
                 # გამყიდველმა უნდა დაინახოს ეს კლიენტი „ყურადღება სჭირდება"-ში
@@ -655,7 +711,7 @@ def _process_events(data: dict) -> None:
             try:
                 # გრძელ პასუხს ნაწილებად ვგზავნით; ჩავარდნისას დანარჩენს აღარ ვაგზავნით
                 for part in _split_reply(reply, reply_limit):
-                    send_text_message(page_token, sender_id, part)
+                    _remember_our_mids(send_text_message(page_token, sender_id, part))
             except Exception as e:
                 # კლიენტმა პასუხი ვერ მიიღო. ვადაგასული page token ასე გამოიყურება.
                 logger.exception(
