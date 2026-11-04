@@ -455,6 +455,30 @@ def resume_bot(shop_id: uuid.UUID, psid: str, auth: CurrentAuth = Depends(get_cu
     return {"ok": True, "paused_until": None}
 
 
+@router.delete("/{shop_id}/customers/{psid}")
+def delete_customer_data(shop_id: uuid.UUID, psid: str, auth: CurrentAuth = Depends(get_current_auth)):
+    """კლიენტის მონაცემების წაშლა (A-039): გამყიდველი შლის ამ მაღაზიაში კლიენტის (PSID)
+    საუბარს და თვიურ მრიცხველს. Meta-ს Data Deletion callback კლიენტებს არ ეხება (ASID ≠ PSID)."""
+    if not re.fullmatch(r"[0-9]{1,32}", psid):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "არასწორი კლიენტის იდენტიფიკატორი")
+    owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+    sc = get_service_client()
+    try:
+        sc.table("bot_conversations").delete().eq("shop_id", str(shop_id)).eq("psid", psid).execute()
+        sc.table("bot_customers").delete().eq("shop_id", str(shop_id)).eq("psid", psid).execute()
+    except Exception as e:
+        # psid ლოგში არ იწერება
+        logger.warning("customer data deletion failed (shop=%s, %s)", shop_id, type(e).__name__)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "კლიენტის მონაცემების წაშლა ვერ მოხერხდა — სცადეთ ხელახლა.",
+        )
+    logger.info("customer data deleted (shop=%s)", shop_id)
+    return {"ok": True}
+
+
 @router.get("/{shop_id}/export")
 def export_shop_data(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
     """მონაცემთა გადატანა (portability) — გამყიდველი ჩამოტვირთავს თავის მაღაზიას,

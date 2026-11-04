@@ -382,25 +382,39 @@ def data_deletion_callback(signed_request: str = Form(...)):
 
 
 def _erase_fb_user_data(sc, user_id: str) -> None:
-    """Facebook user-ის მონაცემების წაშლა. ნებისმიერი შეცდომა ზემოთ ადის (A-017: არ იყლაპება).
+    """გამყიდველის მონაცემების წაშლა Meta Data Deletion callback-ზე. ნებისმიერი შეცდომა ზემოთ ადის
+    (A-017: არ იყლაპება).
 
-    bot_customers = კლიენტის (psid) თვიური მრიცხველი — A-030: ისიც იშლება."""
-    # 1. გამყიდველი ამ Facebook user-id-ით (connect-ზე ინახება) — გავთიშოთ გვერდი + წავშალოთ საუბრები
-    shops = sc.table("shops").select("id").eq("facebook_user_id", user_id).execute().data or []
+    `user_id` = app-scoped ID (ASID) — ის, ვინც აპს აშლის, ანუ გამყიდველი; ინახება
+    `shops.facebook_user_id`-ში connect-ისას. ეს **არ არის** Messenger-კლიენტის PSID (სხვა ID-სივრცეა,
+    კლიენტი აპში არ შედის) — Meta-ს Data Deletion Callback-ის დოკუმენტაცია; Decision Log 2026-11-04
+    (A-039). ამიტომ psid-ით წაშლა აქ აღარ არის; კლიენტის მონაცემს გამყიდველი თავად შლის
+    (`DELETE /shops/{id}/customers/{psid}`).
+
+    თითო მაღაზიაზე: webhook-ის გამოწერა იხსნება (best-effort), იშლება საუბრები და კლიენტების
+    მრიცხველები, ინულდება page/user მონაცემი და ბოტი ითიშება."""
+    shops = (
+        sc.table("shops").select("id, facebook_page_id, facebook_page_token")
+        .eq("facebook_user_id", user_id).execute().data or []
+    )
     for shop in shops:
+        if shop.get("facebook_page_id") and shop.get("facebook_page_token"):
+            try:
+                fb.unsubscribe_page(shop["facebook_page_id"], decrypt(shop["facebook_page_token"]))
+            except Exception as e:
+                # token / page id ლოგში არ იწერება
+                logger.warning("unsubscribe on data deletion failed (shop=%s, %s)", shop["id"], type(e).__name__)
         sc.table("bot_conversations").delete().eq("shop_id", shop["id"]).execute()
+        sc.table("bot_customers").delete().eq("shop_id", shop["id"]).execute()
         sc.table("shops").update(
             {
                 "facebook_page_id": None,
                 "facebook_page_token": None,
                 "instagram_account_id": None,
+                "facebook_user_id": None,
                 "bot_enabled": False,
             }
         ).eq("id", shop["id"]).execute()
-    # 2. თუ user_id კლიენტის psid-ია — მისი საუბრები
-    sc.table("bot_conversations").delete().eq("psid", user_id).execute()
-    # 3. კლიენტის თვიური მრიცხველი (psid) — შეცდომა ზემოთ ადის (request status → failed)
-    sc.table("bot_customers").delete().eq("psid", user_id).execute()
 
 
 @router.get("/data-deletion/status")
