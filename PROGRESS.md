@@ -223,7 +223,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - `extend` read→write-ია (`admin.py:522-531`) → ორი პარალელური request ვადას ორჯერ ზრდის. ღილაკი: `confirm("გავაგრძელო ვადა 30 დღით?")` → request-ის დროს `disabled` (ამ მწკრივზე).
   - ტესტი: ორმაგი click → `req` 1-ჯერ (ძველზე 2 → ვარდება); confirm=false → 0.
   - done when: საერთო frontend; `dist` იმავე commit-ში.
-- [ ] **S20-23 — should-fix (A-039, ტექსტი): `delete-data.html` / `privacy.html` — კლიენტის მრიცხველიდან ID იშლება (ანონიმიზაცია)** · owner: frontend-dev · files: `frontend/delete-data.html`, `frontend/privacy.html`, `frontend/e2e/legal.spec.js`, `frontend/dist/**` · depends: S20-18, S20-22 (`dist`)
+- [x] ✅ (e2e 8, ძველ ტექსტზე 2 ვარდება; §2 და confirmBox უცვლელი) **S20-23 — should-fix (A-039, ტექსტი): `delete-data.html` / `privacy.html` — კლიენტის მრიცხველიდან ID იშლება (ანონიმიზაცია)** · owner: frontend-dev · files: `frontend/delete-data.html`, `frontend/privacy.html`, `frontend/e2e/legal.spec.js`, `frontend/dist/**` · depends: S20-18, S20-22 (`dist`)
   - S20-18-ის შემდეგ კლიენტის წაშლა მრიცხველს არ შლის, მისგან ID-ს შლის: §1 (კლიენტი) და privacy §8 — „წაიშლება თქვენი საუბარი, ხოლო კლიენტების თვიური მრიცხველიდან — თქვენი იდენტიფიკატორი"; გამყიდველის §2 — უცვლელი (იქ წაშლა რჩება). ასევე (security nit) privacy-ში Telegram: „ტექნიკური შეტყობინებები (მაღაზიის სახელი და იდენტიფიკატორი; კლიენტის მონაცემის გარეშე)".
   - e2e: ახალი ფორმულირება ჩანს (ძველზე ვარდება).
   - done when: საერთო frontend + e2e; `dist` იმავე commit-ში.
