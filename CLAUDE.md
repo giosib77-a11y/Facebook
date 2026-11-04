@@ -22,11 +22,11 @@
 - typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (ერთჯერადი გაშვება, watch-ის გარეშე; 2242 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 2277 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
 - test frontend: `cd frontend && npm test`
-  (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; 72 ტესტი `src/**/*.test.{js,jsx}` ფაილის გვერდით)
+  (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; 79 ტესტი `src/**/*.test.{js,jsx}` ფაილის გვერდით)
 - e2e frontend: `cd frontend && npm run build && npm run test:e2e`
-  (Playwright chromium, 7 ტესტი, მხოლოდ ლოკალურად (CI-ში არა); `vite preview` :4173 აშენებულ `dist/`-ს ემსახურება; backend არ სჭირდება — API მოკია; პირველად `npx playwright install chromium`)
+  (Playwright chromium, 8 ტესტი, მხოლოდ ლოკალურად (CI-ში არა); `vite preview` :4173 აშენებულ `dist/`-ს ემსახურება; backend არ სჭირდება — API მოკია; პირველად `npx playwright install chromium`)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
 - CI: `.github/workflows/ci.yml` (Actions SHA-pinned; `requirements.lock.txt` hash-pinned) — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest` + frontend job (`npm ci`, `npm audit --omit=dev`, lint, test, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)

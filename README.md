@@ -319,7 +319,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | GET | `/shops/{id}/attention` | „ყურადღება სჭირდება" საუბრები + შეჩერებული (`paused_until`) საუბრები; `attention_count` — მხოლოდ handoff |
 | POST | `/shops/{id}/attention/{psid}/resolve` | საუბრის დახურვა (handoff-ის ნიშანიც და პაუზაც იხსნება) |
 | POST | `/shops/{id}/attention/{psid}/resume` | „ბოტის ჩართვა" — მხოლოდ პაუზის მოხსნა (503 — 0033 არ არის) |
-| DELETE | `/shops/{id}/customers/{psid}` | კლიენტის მონაცემების წაშლა (`bot_conversations` + `bot_customers`; შეკვეთები რჩება) |
+| DELETE | `/shops/{id}/customers/{psid}` | კლიენტის მონაცემების წაშლა (`bot_conversations` იშლება; `bot_customers.psid` ანონიმიზდება → `del:<uuid>`, მრიცხველი რჩება; შეკვეთები რჩება) |
 | POST | `/shops/{id}/upgrade-request` | პაკეტის მოთხოვნა |
 | POST | `/shops/{id}/downgrade-free` | უფასოზე დაბრუნება |
 | GET | `/shops/{id}/export` | მონაცემთა ექსპორტი (portability) |
@@ -433,7 +433,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0035` | 🔒 `llm_tokens_used(owner, since)` RPC + ინდექსი `llm_usage (created_at)` — LLM ბიუჯეტის შემოწმებისთვის (A-037). EXECUTE მხოლოდ `service_role`-ს. გაუშვი backend deploy-**მდე**; მის გარეშე თვიური/დღიური ბიუჯეტი გამორთულია + WARNING (kill-switch და უფასოს 30/დღე მუშაობს) |
 | `0036` | `shops.bot_status` / `bot_status_at` (nullable) — ბოტის ჯანმრთელობა (A-038). `authenticated`-ს ამ სვეტებზე UPDATE არ აქვს. გაუშვი backend deploy-**მდე**; მის გარეშე პანელში ჯანმრთელობა არ ჩანს (Telegram მუშაობს) + WARNING |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -453,13 +453,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **დედუპლიკაცია** | Meta-ს განმეორებული `mid` ბოტს ორჯერ არ ამუშავებს |
 | **Rate limiting** | per-IP sliding window საჯარო endpoint-ებზე |
 | **Abuse cap** | ერთი კლიენტი დღეში 100 შეტყობინება (უფასოზე 30) |
-| **LLM ხარჯის ჭერი** | `LLM_KILL_SWITCH`, პლატფორმის დღიური (`LLM_DAILY_TOKEN_CAP`) და მფლობელის თვიური (`LLM_MONTHLY_TOKENS_*`) ტოკენების ბიუჯეტი — ბიუჯეტის ამოწურვისას ბოტი ოპერატორის პასუხს აგზავნის (Stage 20) |
+| **LLM ხარჯის ჭერი** | `LLM_KILL_SWITCH`, პლატფორმის დღიური (`LLM_DAILY_TOKEN_CAP`), მფლობელის დღიური (`LLM_DAILY_TOKENS_PER_OWNER`, ნაგულისხმევი `1000000`, `0` = გამორთული; მისი ყველა მაღაზიის დღიური ჯამი, მოწმდება პლატფორმის ჭერამდე — ერთი მფლობელი მთელ პლატფორმას ვერ ამოწურავს) და მფლობელის თვიური (`LLM_MONTHLY_TOKENS_*`) ტოკენების ბიუჯეტი — ბიუჯეტის ამოწურვისას ბოტი ოპერატორის პასუხს აგზავნის (Stage 20) |
 | **File bombs** | Excel/CSV — 5 MB / 5 000 მწკრივი; PDF — 300 გვერდი; zip-ratio ჭერი |
 | **CSV injection** | `=`, `+`, `-`, `@` ექსპორტში ნეიტრალდება |
 | **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production) |
 | **შეცდომების გაჟონვა** | production-ში stack trace არ ბრუნდება |
 | **Dev endpoint** | `/test-chat` production-ში გამორთულია |
-| **Data Deletion** | Meta-ს callback ეხება **მხოლოდ გამყიდველს** (app-scoped ID = `shops.facebook_user_id`): მისი მაღაზიების FB მონაცემები იშლება, გვერდი ითიშება, webhook-ის გამოწერა მოიხსნება (best-effort); + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება. **Messenger-ის კლიენტის** (page-scoped ID) წაშლა — მაღაზიისთვის მიწერით (გამყიდველი პანელში: საუბარი → 🗑, `DELETE /shops/{id}/customers/{psid}`) ან ელფოსტით `chatassistbusiness@gmail.com`; საუბრები ისედაც 24 სთ-ში იშლება |
+| **Data Deletion** | Meta-ს callback ეხება **მხოლოდ გამყიდველს** (app-scoped ID = `shops.facebook_user_id`): მისი მაღაზიების FB მონაცემები იშლება, გვერდი ითიშება, webhook-ის გამოწერა მოიხსნება (best-effort); + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება. **Messenger-ის კლიენტის** (page-scoped ID) წაშლა — მაღაზიისთვის მიწერით (გამყიდველი პანელში: საუბარი → 🗑, `DELETE /shops/{id}/customers/{psid}`: საუბარი იშლება, ხოლო კლიენტის ID თვიურ მრიცხველში ანონიმიზდება — `bot_customers.psid` → `del:<uuid>`; რაოდენობა რჩება, რომ ლიმიტი არ განულდეს; გამყიდველის Meta callback კვლავ შლის) ან ელფოსტით `chatassistbusiness@gmail.com`; საუბრები ისედაც 24 სთ-ში იშლება |
 
 **კოდ-რევიუ:** 2026-08-21…23, 8 გავლა, ~6 400 ხაზი, 22 მიგნება → 16 გასწორებული.
 სრული ანგარიში: [CODE_REVIEW_FINDINGS.md](CODE_REVIEW_FINDINGS.md).
@@ -591,7 +591,7 @@ Messenger → **Configure webhooks**:
 - Callback URL: `https://<ngrok>/webhook`
 - Verify Token: იგივე, რაც `FB_VERIFY_TOKEN`
 - **Verify and Save** (backend უნდა მუშაობდეს)
-- Subscribe: **messages**, **messaging_postbacks**, **message_echoes** (Stage 20 — გამყიდველის ხელით პასუხის ამოსაცნობად; უკვე დაკავშირებულ გვერდებს echo მოუვა მხოლოდ **ხელახალი დაკავშირების** შემდეგ: პანელი → გათიშვა → დაკავშირება)
+- Subscribe: **messages**, **messaging_postbacks**, **message_echoes** (Stage 20 — გამყიდველის ხელით პასუხის ამოსაცნობად; უკვე დაკავშირებულ გვერდებს echo მოუვა მხოლოდ **ხელახალი დაკავშირების** შემდეგ: პანელი → გათიშვა → დაკავშირება). Echo-ს ამოცნობა: ჩვენი პასუხი ამოიცნობა გაგზავნილი `message_id`-ითაც; Instagram-ის echo `app_id`-ის გარეშე პაუზას არ აყენებს (გამყიდველის ხელით პასუხის პაუზა Instagram-ზე გამორთულია, სანამ რეალური payload არ გადამოწმდება); ყოველი echo-ს `app_id` ილოგება INFO-ზე — მფლობელმა ამით გადაამოწმოს Instant Reply / Business Suite-ის ქცევა
 
 ### 5. OAuth redirect
 Facebook Login → Settings → **Valid OAuth Redirect URIs:**
@@ -686,6 +686,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `TELEGRAM_BOT_TOKEN` · `TELEGRAM_CHAT_ID` | | — | 🔒 ადმინის „BOT DOWN" alert-ები (მხოლოდ მიზეზი, shop id, სახელი). ცარიელი = გამორთულია |
 | `LLM_KILL_SWITCH` | | `false` | `true` → ყველა LLM გამოძახება გაჩერებულია (ბოტი ოპერატორის პასუხს აგზავნის) |
 | `LLM_DAILY_TOKEN_CAP` | | `3000000` | პლატფორმის დღიური ტოკენების ჭერი (UTC დღე); `0` = გამორთული. ⚠️ ≈ 120 შეტყობინება მთელ პლატფორმაზე — ფასიანი მაღაზიების ზრდისას გაზარდე |
+| `LLM_DAILY_TOKENS_PER_OWNER` | | `1000000` | მფლობელის დღიური ტოკენების ჭერი (მისი ყველა მაღაზიის ჯამი, UTC დღე), მოწმდება პლატფორმის ჭერამდე; `0` = გამორთული |
 | `LLM_MONTHLY_TOKENS_FREE` · `_BASIC` · `_STANDARD` · `_BUSINESS` | | `2000000` · `12000000` · `48000000` · `180000000` | მფლობელის (ყველა მაღაზიის ჯამი) თვიური ტოკენების ბიუჯეტი პაკეტის მიხედვით; `0` = გამორთული. ბოლო ბადედ provider-ის კონსოლშიც დააყენე spend limit |
 
 🔒 = საიდუმლო. **`.env` არასდროს ჩააქოს git-ში.**
