@@ -16,7 +16,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 
 export default [
-  { ignores: ["dist/**", "node_modules/**", "coverage/**"] },
+  { ignores: ["dist/**", "node_modules/**", "coverage/**", "test-results/**", "playwright-report/**", "blob-report/**"] },
 
   {
     files: ["**/*.{js,jsx}"],
@@ -54,7 +54,7 @@ export default [
 
   {
     // Node-ის კონფიგები — ბრაუზერის გლობალები აქ არ არსებობს
-    files: ["*.config.js", "vitest.setup.js"],
+    files: ["*.config.js", "vitest.setup.js", "e2e/**/*.js"],
     languageOptions: { globals: { ...globals.node } },
   },
 

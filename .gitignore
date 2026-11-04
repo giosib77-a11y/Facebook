@@ -28,6 +28,9 @@ node_modules/
 # იხ. REACT_MIGRATION.md (ნაწილი 5) და DEPLOYMENT.md.
 build/
 .next/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 .vite/
 
 # Editor / OS
