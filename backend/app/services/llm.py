@@ -386,6 +386,12 @@ def _is_transient(exc: BaseException) -> bool:
     return False
 
 
+def _check_kill_switch() -> None:
+    """LLM_KILL_SWITCH (S20-8): every LLM call stops before any client is built."""
+    if get_settings().llm_kill_switch:
+        raise RuntimeError("LLM_KILL_SWITCH ჩართულია — ბოტი გამორთულია")
+
+
 def _settings_for(provider: str | None):
     s = get_settings()
     if provider is not None:
@@ -446,6 +452,7 @@ def generate(prompt, shop_id, provider: str | None = None, *, tools=None, steps=
     Stage 16: tools (neutral [{"name", "description", "parameters"}]), steps (in-turn transcript:
     [{"text", "calls": [ToolCall], "results": [{"id", "content", "is_error"}]}]), force_text (tools
     stay declared but may not be called), deadline (see _with_retry). None/False -> the old request."""
+    _check_kill_switch()
     s = _settings_for(provider)
     if s.llm_provider == "claude":
         request = build_claude_request(prompt, s.llm_model, tools=tools, steps=steps, force_text=force_text)
@@ -461,6 +468,7 @@ def complete(system: str, text: str, shop_id, *, max_tokens: int, provider: str 
     """One plain call (summaries, FAQ, photo description): no tools, no cache_control, same readiness
     check / retry / deadline. images=[(bytes, mime)] (Stage 18) are filtered like generate()'s; the
     request is unchanged when there are none."""
+    _check_kill_switch()
     s = _settings_for(provider)
     if s.llm_provider == "claude":
         request = build_claude_complete_request(system, text, s.llm_model, max_tokens, images)

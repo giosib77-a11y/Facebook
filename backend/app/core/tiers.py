@@ -3,13 +3,14 @@
 customers = უნიკალური Messenger-კლიენტი თვეში (მთავარი ლიმიტი).
 products  = მაქს. პროდუქტი მაღაზიაზე. None = ულიმიტო.
 shops     = მაქს. მაღაზია/გვერდი მფლობელზე (მისი უმაღლესი პაკეტით). None = ულიმიტო.
+daily_messages = ერთი კლიენტის მაქს. შეტყობინება დღეში (abuse/loop დაცვა; `daily_cap()`).
 """
 
 TIER_LIMITS = {
-    "free":     {"customers": 30,   "products": 20,   "shops": 1},
-    "basic":    {"customers": 200,  "products": 150,  "shops": 1},
-    "standard": {"customers": 800,  "products": 1000, "shops": 2},
-    "business": {"customers": 3000, "products": None, "shops": None},
+    "free":     {"customers": 30,   "products": 20,   "shops": 1,    "daily_messages": 30},
+    "basic":    {"customers": 200,  "products": 150,  "shops": 1,    "daily_messages": 100},
+    "standard": {"customers": 800,  "products": 1000, "shops": 2,    "daily_messages": 100},
+    "business": {"customers": 3000, "products": None, "shops": None, "daily_messages": 100},
 }
 
 # პაკეტის რიგი (დაბლიდან მაღლა) — უმაღლესი პაკეტის დასათვლელად
@@ -33,7 +34,8 @@ TIER_PRICES = {
     "business": 149,
 }
 
-# ერთი კლიენტის მაქს. შეტყობინება დღეში (abuse/loop დაცვა) — ყველა პაკეტში
+# ერთი კლიენტის მაქს. შეტყობინება დღეში (abuse/loop დაცვა) — ფასიანი პაკეტების მნიშვნელობა (100);
+# უფასო პაკეტზე ჭერი უფრო დაბალია — `daily_cap(tier)` (S20-8)
 DAILY_ABUSE_CAP = 100
 
 
@@ -43,6 +45,11 @@ def normalize_tier(tier: str | None) -> str:
 
 def limits_for(tier: str | None) -> dict:
     return TIER_LIMITS[normalize_tier(tier)]
+
+
+def daily_cap(tier: str | None) -> int:
+    """ერთი კლიენტის მაქს. შეტყობინება დღეში ამ პაკეტზე (უცნობი პაკეტი → free)."""
+    return TIER_LIMITS[normalize_tier(tier)]["daily_messages"]
 
 
 def bulk_import_allowed(tier: str | None) -> bool:

@@ -209,6 +209,16 @@ def _block_real_llm_clients(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_llm_budget():
+    """services/budget.py keeps a process-global cache and flags; keep tests independent."""
+    from app.services import budget
+
+    budget.reset()
+    yield
+    budget.reset()
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limits():
     """In-memory per-IP buckets are process-global; keep tests independent."""
     from app.core import ratelimit
