@@ -723,6 +723,9 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - (browser-tester, დაუდასტურებელი) headless Chromium-ში `toLocaleTimeString("ka-GE")` → „04:22 AM", თარიღი US ფორმატით — რეალურ ka-GE ბრაუზერში შესამოწმებელი; საჭიროებისას `hourCycle: "h23"` / ხელით ფორმატი.
 - (browser-tester / DESIGN.md §10) ღილაკების focus — მხოლოდ ბრაუზერის default outline (თხელი).
 
+- (code-reviewer, fix round 1) `Dashboard.jsx:295` confirm „წავშალო ამ კლიენტის საუბარი და მრიცხველი?" — S20-18-ის შემდეგ მრიცხველი არ იშლება (ანონიმიზდება): „…საუბარი და იდენტიფიკატორი? თვიური ლიმიტი არ შეიცვლება." + `Dashboard.test.jsx:56`.
+- (code-reviewer, დაუდასტურებელი) `_OUR_MIDS` / `_SEEN_MIDS` პროცესის მეხსიერებაშია — რამდენიმე uvicorn worker-ზე echo სხვა worker-ში მოხვდება; Messenger-ზე `app_id` ფარავს, IG-ზე — იგნორი (თვითპაუზა არ ხდება). ერთი instance — Accepted Risk-ის ლოგიკა.
+
 ### Stage 20 (nit, task-ების report-ებიდან)
 - (S20-1) CI-ის frontend job-ში e2e არ ეშვება: build-ის შემდეგ `npx playwright install --with-deps chromium` + `npm run test:e2e` (`.github/workflows/ci.yml`; Linux runner-ზე `--with-deps` საჭიროა).
 - (S20-3) `_paused_until` ნებისმიერ select-ის შეცდომაზე (დროებით DB outage-ზეც) „migration 0033 not applied" WARNING-ს წერს — ტექსტი ზოგადი გახდეს ან code-ით გაირჩეს.
