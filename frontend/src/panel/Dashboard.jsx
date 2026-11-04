@@ -19,6 +19,8 @@ const TABS = [
 export default function Dashboard() {
   const [tab, setTab] = useState("overview");
   const { usage, orders, products, attention } = useShopData();
+  // ძველი API-ს პასუხში needs_attention არ არის → undefined ითვლება "სჭირდება"-დ
+  const needsCount = attention.filter((a) => a.needs_attention !== false).length;
 
   return (
     <section>
@@ -41,7 +43,7 @@ export default function Dashboard() {
           <div className="stat-cards">
             <StatCard icon="👥" val={usage ? usage.monthly_customers : "—"} label="კლიენტი ამ თვეს" />
             <StatCard icon="🛒" val={orders.length} label="შეკვეთა" />
-            <StatCard icon="🔔" val={attention.length} label="ყურადღება სჭირდება" alert={attention.length > 0} />
+            <StatCard icon="🔔" val={needsCount} label="ყურადღება სჭირდება" alert={needsCount > 0} />
             <StatCard icon="📦" val={products.length} label="პროდუქტი" />
           </div>
 
@@ -223,30 +225,39 @@ function UsageBox() {
 }
 
 /* ---------- ყურადღება სჭირდება (handoff) ---------- */
-function AttentionCard() {
+export function AttentionCard() {
   const toast = useToast();
   const { shopId, attention, loadAttention } = useShopData();
   if (!attention.length) return null;
 
-  async function resolve(it) {
+  async function act(path, method, okMsg) {
     try {
-      await api("/shops/" + shopId + "/attention/" + encodeURIComponent(it.psid) + "/resolve", "POST");
-      toast("მონიშნულია მოგვარებულად");
+      await api(path, method);
+      toast(okMsg);
       loadAttention();
     } catch (err) {
       toast(err.message, true);
     }
   }
 
+  const base = (it) => "/shops/" + shopId + "/attention/" + encodeURIComponent(it.psid);
+  const resolve = (it) => act(base(it) + "/resolve", "POST", "მონიშნულია მოგვარებულად");
+  const resume = (it) => act(base(it) + "/resume", "POST", "ბოტი ჩაირთო ამ საუბარში");
+  function removeCustomer(it) {
+    if (!confirm("წავშალო ამ კლიენტის საუბარი და მრიცხველი? შეუქცევადია.")) return;
+    act("/shops/" + shopId + "/customers/" + encodeURIComponent(it.psid), "DELETE", "კლიენტის მონაცემები წაიშალა");
+  }
+
   return (
     <div className="card attention-card">
       <div className="list-header">
-        <h2 style={{ margin: 0 }}>🔔 ყურადღება სჭირდება ({attention.length})</h2>
+        <h2 style={{ margin: 0 }}>🔔 ოპერატორი სჭირდება ან ბოტი შეჩერებულია ({attention.length})</h2>
         <button className="btn btn-ghost" onClick={loadAttention}>↻</button>
       </div>
       <p className="import-hint">
         ამ საუბრებში ბოტმა ვერ უპასუხა ან კლიენტმა ოპერატორი ითხოვა — შედი Messenger/Instagram-ში
-        და უპასუხე. მოგვარების შემდეგ დააჭირე „მოგვარდა“.
+        და უპასუხე. მოგვარების შემდეგ დააჭირე „მოგვარდა“. როცა Messenger-ში თავად უპასუხებ, ბოტი ამ
+        საუბარში 12 საათით ჩუმდება — „ბოტის ჩართვა“-თი დააბრუნებ. კლიენტი წაშლას თუ ითხოვს — „🗑“.
       </p>
       <div className="product-list">
         {attention.map((it) => (
@@ -255,10 +266,24 @@ function AttentionCard() {
               <div className="product-name">💬 {it.last_message || "ბოტმა ვერ უპასუხა"}</div>
               <div className="product-meta" style={{ color: "#9ca3af" }}>
                 {it.at ? new Date(it.at).toLocaleString("ka-GE") : ""}
+                {it.paused_until && (
+                  <>
+                    {" "}
+                    <span className="badge badge-warn">
+                      ⏸ ბოტი შეჩერებულია · {new Date(it.paused_until).toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit" })}-მდე
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <div className="product-actions">
-              <button className="btn btn-primary btn-sm" onClick={() => resolve(it)}>✓ მოგვარდა</button>
+              {it.paused_until && (
+                <button className="btn btn-ghost btn-sm" onClick={() => resume(it)}>▶ ბოტის ჩართვა</button>
+              )}
+              {it.needs_attention !== false && (
+                <button className="btn btn-primary btn-sm" onClick={() => resolve(it)}>✓ მოგვარდა</button>
+              )}
+              <button className="btn btn-danger btn-sm" onClick={() => removeCustomer(it)}>🗑 კლიენტის მონაცემების წაშლა</button>
             </div>
           </div>
         ))}
