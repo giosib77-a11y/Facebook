@@ -169,7 +169,7 @@ input:focus, select:focus, textarea:focus {
 
 /* ===== Dashboard layout — sidebar + main ===== */
 .dash { display: grid; grid-template-columns: 216px 1fr; gap: 20px; align-items: start; }
-.dash-side { position: sticky; top: 78px; display: flex; flex-direction: column; gap: 14px; }
+.dash-side { min-width: 0; position: sticky; top: 78px; display: flex; flex-direction: column; gap: 14px; }
 .dash-side-foot { padding: 0 6px; font-size: .78rem; color: var(--muted); line-height: 1.5; }
 .dash-side-foot a { color: var(--primary); text-decoration: none; font-weight: 600; word-break: break-all; }
 .dash-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
@@ -317,7 +317,7 @@ input:focus, select:focus, textarea:focus {
 .order-done { border-left-color: var(--ok); }
 .order-cancelled { border-left-color: #94a3b8; opacity: .85; }
 .order-item:hover { transform: none; }
-.product-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.product-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; min-width: 0; }
 .empty-state { text-align: center; color: var(--muted); padding: 16px; }
 
 /* Loading — skeleton */
@@ -361,7 +361,8 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 480px) {
   .row-2 { grid-template-columns: 1fr; }
   .product-item { flex-direction: column; align-items: stretch; }
-  .product-actions { justify-content: flex-end; }
+  .product-actions { justify-content: flex-end; flex-shrink: 1; }
+  .product-actions .btn { flex: 1 1 100%; white-space: normal; }
 }
 
 /* იურიდიული ინფორმაცია (Meta Business Verification) */

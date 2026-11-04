@@ -119,6 +119,35 @@ test("expired → შეცდომის ბანერი; expires_soon-ი�
   expect(screen.queryByText(/ვადა იწურება/)).toBeNull();
 });
 
+test("expired → „განახლება“ same-tier request-ს აგზავნის და რეკვიზიტები ჩანს", async () => {
+  setUsage({ expired: true, expires_soon: false, paid_until: "2026-11-01T12:00:00Z" });
+  render(<Dashboard />);
+  expect(screen.getByText("GE00TEST")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "განახლება" }));
+  expect(api).toHaveBeenCalledWith("/shops/s1/upgrade-request", "POST", { tier: "starter" });
+});
+
+test("expired + pending_request → „განახლება“ არ ჩანს", () => {
+  setUsage({ expired: true, expires_soon: false, pending_request: "starter" });
+  render(<Dashboard />);
+  expect(screen.queryByRole("button", { name: "განახლება" })).toBeNull();
+});
+
+test("ორმაგი click „ბოტის ჩართვა“-ზე → api 1-ჯერ, ღილაკი disabled + is-loading", async () => {
+  let done;
+  api.mockReturnValue(new Promise((r) => { done = r; }));
+  setData([paused]);
+  render(<AttentionCard />);
+  const btn = screen.getByRole("button", { name: /ბოტის ჩართვა/ });
+  await userEvent.dblClick(btn);
+  expect(api).toHaveBeenCalledTimes(1);
+  expect(btn).toBeDisabled();
+  expect(btn).toHaveClass("is-loading");
+  done({ ok: true });
+  await vi.waitFor(() => expect(btn).not.toBeDisabled());
+  expect(btn).not.toHaveClass("is-loading");
+});
+
 test("ვადის ველების გარეშე (ძველი API / ვადა კარგია) → ბანერები და „მოქმედებს“ არა", () => {
   setUsage({ expires_soon: false, expired: false });
   render(<Dashboard />);
@@ -145,7 +174,7 @@ test.each([
   ["token_error", "⚠️ ბოტი ვერ პასუხობს — ხელახლა დააკავშირე Facebook გვერდი"],
   ["token_expired", "⚠️ ბოტი ვერ პასუხობს — ხელახლა დააკავშირე Facebook გვერდი"],
   ["send_failed", "⚠️ ბოლო პასუხი ვერ გაიგზავნა"],
-  ["budget_exhausted", "⚠️ ბოტის თვიური ლიმიტი ამოიწურა — ახალი კლიენტები ოპერატორთან გადადიან"],
+  ["budget_exhausted", "⚠️ ბოტის თვიური ლიმიტი ამოიწურა — კლიენტებს ახლა ოპერატორი პასუხობს"],
 ])("bot_status %s → გაფრთხილება", (status, text) => {
   setUsage(null, { bot_status: status });
   render(<Dashboard />);

@@ -182,6 +182,15 @@ function UsageBox() {
     }
   }
 
+  const renewBlock = (
+    <>
+      <button type="button" className="btn btn-primary btn-sm" onClick={() => request(usage.tier)}>
+        განახლება
+      </button>
+      <PayInfo usage={usage} shop={currentShop} />
+    </>
+  );
+
   return (
     <div className="usage-box">
       <div className="usage-head">
@@ -212,19 +221,13 @@ function UsageBox() {
           <div className="banner-title">
             ⏳ პაკეტის ვადა იწურება {paidUntil}-ს — გადაიხადე და გამოგზავნე ქვითარი, თორემ უფასო პაკეტზე გადახვალ
           </div>
-          {!usage.pending_request && (
-            <>
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => request(usage.tier)}>
-                განახლება
-              </button>
-              <PayInfo usage={usage} shop={currentShop} />
-            </>
-          )}
+          {!usage.pending_request && renewBlock}
         </div>
       )}
       {usage.expired && (
         <div className="banner banner-error" role="alert">
           <div className="banner-title">⚠️ პაკეტის ვადა ამოიწურა — მალე უფასო პაკეტზე გადახვალ</div>
+          {!usage.pending_request && renewBlock}
         </div>
       )}
       {usage.email_notifications === false && (
@@ -267,25 +270,37 @@ function UsageBox() {
 export function AttentionCard() {
   const toast = useToast();
   const { shopId, attention, loadAttention } = useShopData();
+  const [busy, setBusy] = useState(null); // `${psid}:${kind}` — მიმდინარე request
   if (!attention.length) return null;
 
-  async function act(path, method, okMsg) {
+  async function act(it, kind, path, method, okMsg) {
+    if (busy) return;
+    setBusy(it.psid + ":" + kind);
     try {
       await api(path, method);
       toast(okMsg);
       loadAttention();
     } catch (err) {
       toast(err.message, true);
+    } finally {
+      setBusy(null);
     }
   }
 
   const base = (it) => "/shops/" + shopId + "/attention/" + encodeURIComponent(it.psid);
-  const resolve = (it) => act(base(it) + "/resolve", "POST", "მონიშნულია მოგვარებულად");
-  const resume = (it) => act(base(it) + "/resume", "POST", "ბოტი ჩაირთო ამ საუბარში");
+  const resolve = (it) => act(it, "resolve", base(it) + "/resolve", "POST", "მონიშნულია მოგვარებულად");
+  const resume = (it) => act(it, "resume", base(it) + "/resume", "POST", "ბოტი ჩაირთო ამ საუბარში");
   function removeCustomer(it) {
+    if (busy) return;
     if (!confirm("წავშალო ამ კლიენტის საუბარი და მრიცხველი? შეუქცევადია.")) return;
-    act("/shops/" + shopId + "/customers/" + encodeURIComponent(it.psid), "DELETE", "კლიენტის მონაცემები წაიშალა");
+    act(it, "delete", "/shops/" + shopId + "/customers/" + encodeURIComponent(it.psid), "DELETE", "კლიენტის მონაცემები წაიშალა");
   }
+  // დაკლიკებული ღილაკი spinner-ია, ყველა ღილაკი request-ის დროს disabled
+  const btnProps = (it, kind) => ({
+    disabled: !!busy,
+    "aria-busy": busy === it.psid + ":" + kind,
+  });
+  const cls = (it, kind, c) => c + (busy === it.psid + ":" + kind ? " is-loading" : "");
 
   return (
     <div className="card attention-card">
@@ -317,12 +332,12 @@ export function AttentionCard() {
             </div>
             <div className="product-actions">
               {it.paused_until && (
-                <button className="btn btn-ghost btn-sm" onClick={() => resume(it)}>▶ ბოტის ჩართვა</button>
+                <button className={cls(it, "resume", "btn btn-ghost btn-sm")} {...btnProps(it, "resume")} onClick={() => resume(it)}>▶ ბოტის ჩართვა</button>
               )}
               {it.needs_attention !== false && (
-                <button className="btn btn-primary btn-sm" onClick={() => resolve(it)}>✓ მოგვარდა</button>
+                <button className={cls(it, "resolve", "btn btn-primary btn-sm")} {...btnProps(it, "resolve")} onClick={() => resolve(it)}>✓ მოგვარდა</button>
               )}
-              <button className="btn btn-danger btn-sm" onClick={() => removeCustomer(it)}>🗑 კლიენტის მონაცემების წაშლა</button>
+              <button className={cls(it, "delete", "btn btn-danger btn-sm")} {...btnProps(it, "delete")} onClick={() => removeCustomer(it)}>🗑 კლიენტის მონაცემების წაშლა</button>
             </div>
           </div>
         ))}
@@ -337,7 +352,7 @@ const BOT_HEALTH_MSG = {
   token_error: RECONNECT_MSG,
   token_expired: RECONNECT_MSG,
   send_failed: "⚠️ ბოლო პასუხი ვერ გაიგზავნა",
-  budget_exhausted: "⚠️ ბოტის თვიური ლიმიტი ამოიწურა — ახალი კლიენტები ოპერატორთან გადადიან",
+  budget_exhausted: "⚠️ ბოტის თვიური ლიმიტი ამოიწურა — კლიენტებს ახლა ოპერატორი პასუხობს",
 };
 
 function Overview({ goto }) {
