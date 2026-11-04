@@ -17,7 +17,7 @@
 3. [სტეკი](#3-სტეკი)
 4. [პროექტის სტრუქტურა](#4-პროექტის-სტრუქტურა)
 5. [ფუნქციონალი](#5-ფუნქციონალი)
-6. [API — 47 endpoint](#6-api--47-endpoint)
+6. [API — 50 endpoint](#6-api--50-endpoint)
 7. [მონაცემთა ბაზა](#7-მონაცემთა-ბაზა)
 8. [უსაფრთხოება](#8-უსაფრთხოება)
 9. [ლოკალური გაშვება](#9-ლოკალური-გაშვება)
@@ -176,7 +176,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         32 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         36 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -267,7 +267,7 @@ LangGraph გამოიყენება **მხოლოდ wiring-ად**
 
 - ლიმიტები **სერვერზე** მოწმდება (4 ადგილას), არა მხოლოდ UI-ში
 - გამოწერა **per-account**-ია, არა per-shop
-- **abuse-ჭერი:** ერთი კლიენტი დღეში მაქს. 100 შეტყობინება (loop-ის დაცვა)
+- **abuse-ჭერი:** ერთი კლიენტი დღეში მაქს. 100 შეტყობინება (უფასოზე 30) (loop-ის დაცვა)
 - უფასოზე დაბრუნებისას **მონაცემი არ იშლება** — ზედმეტ მაღაზიებზე ბოტი უბრალოდ
   ითიშება და upgrade-ზე ავტომატურად ბრუნდება
 
@@ -293,7 +293,7 @@ webhook `object` ველით არჩევს (`page` / `instagram`).
 
 ---
 
-## 6. API — 47 endpoint
+## 6. API — 50 endpoint
 
 ავტორიზაცია: `Authorization: Bearer <supabase_access_token>`.
 DB-ოპერაციები სრულდება **მომხმარებლის JWT-ით** → RLS უზრუნველყოფს იზოლაციას.
@@ -310,14 +310,16 @@ DB-ოპერაციები სრულდება **მომხმა�
 | Method | Path | აღწერა |
 |---|---|---|
 | POST | `/shops` | მაღაზიის შექმნა |
-| GET | `/shops/me` | ჩემი მაღაზიები |
+| GET | `/shops/me` | ჩემი მაღაზიები (`bot_status` / `bot_status_at` — ბოტის ჯანმრთელობა, 0036) |
 | PATCH | `/shops/{id}` | განახლება (სახელი, ენა, ბოტის ჩართვა…) |
 | POST | `/shops/{id}/knowledge` | PDF ატვირთვა → ბოტის ცოდნა; response მაშინვე ბრუნდება, FAQ ფონში იქმნება (ერთი LLM გამოძახება, როგორც წესი ~1 წუთში მზადაა; მანამდე ბოტი ძველებურად მუშაობს). ლიმიტი: 10 ატვირთვა/საათში IP-ზე, გადაჭარბებისას **429** |
 | DELETE | `/shops/{id}/knowledge` | ცოდნის და FAQ-ის წაშლა |
-| GET | `/shops/{id}/usage` | პაკეტი + კლიენტების მრიცხველი |
+| GET | `/shops/{id}/usage` | პაკეტი + კლიენტების მრიცხველი; Stage 20: `paid_until`, `expires_soon` (ბოლო 3 დღე), `expired`, `email_notifications` (SMTP მორგებულია თუ არა) |
 | GET | `/shops/{id}/analytics` | ბოტის ანალიტიკა (top-terms, შეკითხვები) |
-| GET | `/shops/{id}/attention` | „ყურადღება სჭირდება" საუბრები |
-| POST | `/shops/{id}/attention/{psid}/resolve` | საუბრის დახურვა |
+| GET | `/shops/{id}/attention` | „ყურადღება სჭირდება" საუბრები + შეჩერებული (`paused_until`) საუბრები; `attention_count` — მხოლოდ handoff |
+| POST | `/shops/{id}/attention/{psid}/resolve` | საუბრის დახურვა (handoff-ის ნიშანიც და პაუზაც იხსნება) |
+| POST | `/shops/{id}/attention/{psid}/resume` | „ბოტის ჩართვა" — მხოლოდ პაუზის მოხსნა (503 — 0033 არ არის) |
+| DELETE | `/shops/{id}/customers/{psid}` | კლიენტის მონაცემების წაშლა (`bot_conversations` + `bot_customers`; შეკვეთები რჩება) |
 | POST | `/shops/{id}/upgrade-request` | პაკეტის მოთხოვნა |
 | POST | `/shops/{id}/downgrade-free` | უფასოზე დაბრუნება |
 | GET | `/shops/{id}/export` | მონაცემთა ექსპორტი (portability) |
@@ -354,9 +356,10 @@ DB-ოპერაციები სრულდება **მომხმა�
 | Method | Path | აღწერა |
 |---|---|---|
 | GET | `/admin/check` | ადმინია თუ არა |
-| GET | `/admin/overview` | MRR, ჯამები |
+| GET | `/admin/overview` | MRR, ჯამები; `llm` — დღიური/თვიური ტოკენები, ჭერი, kill-switch, `alert` |
 | GET | `/admin/growth` | ზრდის გრაფიკი |
-| GET | `/admin/sellers` · `/admin/shops` · `/admin/orders` | სიები |
+| GET | `/admin/sellers` · `/admin/shops` · `/admin/orders` | სიები (`/admin/shops` ჩანაწერს აქვს `owner_id`, `paid_until`) |
+| POST | `/admin/subscriptions/{owner_id}/extend` | გამოწერის გაგრძელება `{days}` (1–366) |
 | GET · PATCH · DELETE | `/admin/shops/{id}` | დეტალები · პაკეტი/ბოტი · წაშლა |
 | GET | `/admin/upgrade-requests` | მოთხოვნების სია |
 | POST | `/admin/upgrade-requests/{id}/resolve` | დადასტურება/უარი |
@@ -371,7 +374,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 
 ## 7. მონაცემთა ბაზა
 
-### ცხრილები (8) — ყველას აქვს RLS
+### ცხრილები (9) — ყველას აქვს RLS
 
 | ცხრილი | რა ინახება |
 |---|---|
@@ -384,10 +387,12 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `llm_usage` | LLM-ის გამოძახებების usage: `shop_id`, `provider`, `model`, `input_tokens` (cache-ის გარეშე), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0025) |
 | `data_deletion_requests` | Meta Data Deletion მოთხოვნების სტატუსი: `code`, `status` (`pending` / `completed` / `failed`), `error`; `fb_user_id` მხოლოდ დასრულებამდე. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0029) |
 
+| `subscriptions` | გამოწერის ვადა მფლობელზე: `owner_id`, `tier`, `paid_until` (0034). `authenticated` მხოლოდ კითხულობს (RLS), წერს backend (`service_role`) და ყოველდღიური pg_cron `expire_subscriptions()` |
+
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (32)
+### მიგრაციები (36)
 
 | # | რა |
 |---|---|
@@ -423,8 +428,12 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0030` | 🔒 `pg_cron` + `purge_expired_bot_conversations(hours)` — საათში ერთხელ შლის 24 სთ-ზე ძველ საუბრებს (ღია handoff — 30 დღემდე რჩება) (A-018). EXECUTE მოხსნილია `public/anon/authenticated`-დან. იდემპოტენტურია; გაშვება ნებისმიერ დროს (backend-ის ცვლილება არ სჭირდება) |
 | `0031` | `orders.idempotency_key` (uuid, nullable) + partial UNIQUE `(shop_id, idempotency_key)` — საჯარო ფორმის განმეორებითი გაგზავნა მეორე შეკვეთას არ ქმნის (A-020). იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); backend მის გარეშეც მუშაობს — idempotency-ს გარეშე, ლოგში WARNING |
 | `0032` | 🔒 `create_shop_limited` RPC — მაღაზიის ლიმიტის შემოწმება + INSERT ატომურად (per-owner advisory lock) (A-029). EXECUTE მხოლოდ `service_role`-ს. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე backend ძველი გზით მუშაობს + ერთი WARNING |
+| `0033` | `bot_conversations.bot_paused_until` (timestamptz, nullable) — ბოტის პაუზა handoff-ის / გამყიდველის ხელით პასუხის შემდეგ, 12 სთ (Stage 20, A-035). გაუშვი backend deploy-**მდე**; მის გარეშე ძველი ქცევა (ბოტი ისევ პასუხობს) + WARNING, „ბოტის ჩართვა" → 503 |
+| `0034` | 🔒 `subscriptions` (`owner_id`, `tier`, `paid_until`) + backfill + `expire_subscriptions()` და pg_cron `expire-subscriptions` (ყოველდღე 00:05 UTC) — ფასიანი პაკეტის ვადა (A-036). EXECUTE მოხსნილია `public/anon/authenticated`-დან. იდემპოტენტურია. გაუშვი backend deploy-**მდე**; მის გარეშე პაკეტები უვადოა + WARNING, ადმინის „გაგრძელება" → 503. **deploy-ის შემდეგ ხელახლა გაუშვი** (backfill `on conflict do nothing` — არსებული ვადები უცვლელი) |
+| `0035` | 🔒 `llm_tokens_used(owner, since)` RPC + ინდექსი `llm_usage (created_at)` — LLM ბიუჯეტის შემოწმებისთვის (A-037). EXECUTE მხოლოდ `service_role`-ს. გაუშვი backend deploy-**მდე**; მის გარეშე თვიური/დღიური ბიუჯეტი გამორთულია + WARNING (kill-switch და უფასოს 30/დღე მუშაობს) |
+| `0036` | `shops.bot_status` / `bot_status_at` (nullable) — ბოტის ჯანმრთელობა (A-038). `authenticated`-ს ამ სვეტებზე UPDATE არ აქვს. გაუშვი backend deploy-**მდე**; მის გარეშე პანელში ჯანმრთელობა არ ჩანს (Telegram მუშაობს) + WARNING |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -443,13 +452,14 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **რბოლები** | მარაგი — Postgres row-lock; შეკვეთის სტატუსი — ოპტიმისტური ჩაკეტვა (409) |
 | **დედუპლიკაცია** | Meta-ს განმეორებული `mid` ბოტს ორჯერ არ ამუშავებს |
 | **Rate limiting** | per-IP sliding window საჯარო endpoint-ებზე |
-| **Abuse cap** | ერთი კლიენტი დღეში 100 შეტყობინება |
+| **Abuse cap** | ერთი კლიენტი დღეში 100 შეტყობინება (უფასოზე 30) |
+| **LLM ხარჯის ჭერი** | `LLM_KILL_SWITCH`, პლატფორმის დღიური (`LLM_DAILY_TOKEN_CAP`) და მფლობელის თვიური (`LLM_MONTHLY_TOKENS_*`) ტოკენების ბიუჯეტი — ბიუჯეტის ამოწურვისას ბოტი ოპერატორის პასუხს აგზავნის (Stage 20) |
 | **File bombs** | Excel/CSV — 5 MB / 5 000 მწკრივი; PDF — 300 გვერდი; zip-ratio ჭერი |
 | **CSV injection** | `=`, `+`, `-`, `@` ექსპორტში ნეიტრალდება |
 | **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production) |
 | **შეცდომების გაჟონვა** | production-ში stack trace არ ბრუნდება |
 | **Dev endpoint** | `/test-chat` production-ში გამორთულია |
-| **Data Deletion** | Meta-ს callback (იშლება მაღაზიის მონაცემები და `bot_customers` — psid) + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება |
+| **Data Deletion** | Meta-ს callback ეხება **მხოლოდ გამყიდველს** (app-scoped ID = `shops.facebook_user_id`): მისი მაღაზიების FB მონაცემები იშლება, გვერდი ითიშება, webhook-ის გამოწერა მოიხსნება (best-effort); + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება. **Messenger-ის კლიენტის** (page-scoped ID) წაშლა — მაღაზიისთვის მიწერით (გამყიდველი პანელში: საუბარი → 🗑, `DELETE /shops/{id}/customers/{psid}`) ან ელფოსტით `chatassistbusiness@gmail.com`; საუბრები ისედაც 24 სთ-ში იშლება |
 
 **კოდ-რევიუ:** 2026-08-21…23, 8 გავლა, ~6 400 ხაზი, 22 მიგნება → 16 გასწორებული.
 სრული ანგარიში: [CODE_REVIEW_FINDINGS.md](CODE_REVIEW_FINDINGS.md).
@@ -483,6 +493,14 @@ npm run dev      # http://localhost:5173/panel/
 npm run build    # → dist/  (ეს ჩადის git-ში!)
 npm run lint     # ESLint
 npm test         # Vitest-ის ტესტები
+```
+
+ბრაუზერის (e2e) ტესტები — Playwright, მხოლოდ ლოკალურად (CI-ში არა); backend არ სჭირდება, API-ები იმოკება:
+
+```bash
+cd frontend
+npx playwright install chromium   # ერთხელ
+npm run build && npm run test:e2e # preview აშენებულ dist/-ს ემსახურება → ჯერ build
 ```
 
 `frontend/public/config.js` — გადააკოპირე `config.example.js`-დან და შეავსე
@@ -573,7 +591,7 @@ Messenger → **Configure webhooks**:
 - Callback URL: `https://<ngrok>/webhook`
 - Verify Token: იგივე, რაც `FB_VERIFY_TOKEN`
 - **Verify and Save** (backend უნდა მუშაობდეს)
-- Subscribe: **messages**, **messaging_postbacks**
+- Subscribe: **messages**, **messaging_postbacks**, **message_echoes** (Stage 20 — გამყიდველის ხელით პასუხის ამოსაცნობად; უკვე დაკავშირებულ გვერდებს echo მოუვა მხოლოდ **ხელახალი დაკავშირების** შემდეგ: პანელი → გათიშვა → დაკავშირება)
 
 ### 5. OAuth redirect
 Facebook Login → Settings → **Valid OAuth Redirect URIs:**
@@ -662,6 +680,13 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `FRONTEND_URL` | | `localhost:5500` | |
 | `ADMIN_USER_IDS` | | — | ვინ ხედავს `/admin`-ს (Supabase user UUID-ები, მძიმით; ცარიელი = ადმინი არავინაა) |
 | `PAYMENT_IBAN` · `PAYMENT_CONTACT` | | placeholder | გადახდის რეკვიზიტები |
+| `SMTP_HOST` · `SMTP_USER` · `SMTP_PASSWORD` | | — | 🔒 email შეტყობინებები გამყიდველს (ახალი შეკვეთა, handoff). ნებისმიერი SMTP provider, მაგ. Brevo (`smtp-relay.brevo.com:587`) ან Resend SMTP (`smtp.resend.com:465`, user `resend`). ცარიელი (ან `NOTIFY_EMAIL_FROM` ცარიელი) = email გამორთულია |
+| `SMTP_PORT` | | `587` | `465` = SSL, სხვა (587) = STARTTLS |
+| `NOTIFY_EMAIL_FROM` | | — | გამგზავნი, მაგ. `ChatAssist <noreply@chatassist.ge>`; დომენი provider-ში ვერიფიცირებული უნდა იყოს (SPF/DKIM) |
+| `TELEGRAM_BOT_TOKEN` · `TELEGRAM_CHAT_ID` | | — | 🔒 ადმინის „BOT DOWN" alert-ები (მხოლოდ მიზეზი, shop id, სახელი). ცარიელი = გამორთულია |
+| `LLM_KILL_SWITCH` | | `false` | `true` → ყველა LLM გამოძახება გაჩერებულია (ბოტი ოპერატორის პასუხს აგზავნის) |
+| `LLM_DAILY_TOKEN_CAP` | | `3000000` | პლატფორმის დღიური ტოკენების ჭერი (UTC დღე); `0` = გამორთული. ⚠️ ≈ 120 შეტყობინება მთელ პლატფორმაზე — ფასიანი მაღაზიების ზრდისას გაზარდე |
+| `LLM_MONTHLY_TOKENS_FREE` · `_BASIC` · `_STANDARD` · `_BUSINESS` | | `2000000` · `12000000` · `48000000` · `180000000` | მფლობელის (ყველა მაღაზიის ჯამი) თვიური ტოკენების ბიუჯეტი პაკეტის მიხედვით; `0` = გამორთული. ბოლო ბადედ provider-ის კონსოლშიც დააყენე spend limit |
 
 🔒 = საიდუმლო. **`.env` არასდროს ჩააქოს git-ში.**
 
@@ -702,7 +727,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | # | რა | რატომ |
 |---|---|---|
-| 1 | **Frontend ტესტები არ არის** | backend-ს აქვს offline pytest (`backend/tests`, CI-ში); React-ის კოდი მხოლოდ ხელით მოწმდება |
+| 1 | **Frontend ტესტების დაფარვა ნაწილობრივია** | Vitest (72) და Playwright e2e (7, მხოლოდ ლოკალურად) ძირითად ნაკადებს ფარავს; დანარჩენი React-ის კოდი ხელით მოწმდება |
 | 2 | **React-ის კოდი ხაზ-ხაზ არ წაკითხულა** | რევიუზე შემოწმდა სტრუქტურა, `useEffect`-ები და ძველთან დიფი; `AdminPage.jsx` (539 ხაზი) და `ProductsTab.jsx` (365) ცალკე გავლას იმსახურებს |
 | 3 | **CSP header არ არის** | თეთრი სიის პრინციპი — ერთი გამორჩენა ცარიელ გვერდს იძლევა. რედიზაინისას ისედაც გადაიწერება |
 | 4 | **Rate limit მეხსიერებაშია** | deploy-ზე ნულდება; მრავალ-instance-ზე Redis/Cloudflare დასჭირდება |

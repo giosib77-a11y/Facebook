@@ -22,9 +22,11 @@
 - typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (ერთჯერადი გაშვება, watch-ის გარეშე; 1894 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 2242 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
 - test frontend: `cd frontend && npm test`
-  (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; ტესტები `src/**/*.test.{js,jsx}` ფაილის გვერდით)
+  (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; 72 ტესტი `src/**/*.test.{js,jsx}` ფაილის გვერდით)
+- e2e frontend: `cd frontend && npm run build && npm run test:e2e`
+  (Playwright chromium, 7 ტესტი, მხოლოდ ლოკალურად (CI-ში არა); `vite preview` :4173 აშენებულ `dist/`-ს ემსახურება; backend არ სჭირდება — API მოკია; პირველად `npx playwright install chromium`)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
 - CI: `.github/workflows/ci.yml` (Actions SHA-pinned; `requirements.lock.txt` hash-pinned) — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest` + frontend job (`npm ci`, `npm audit --omit=dev`, lint, test, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)
@@ -39,7 +41,7 @@
   `get_service_client()` მხოლოდ იქ, სადაც სესია არ არის (webhook, საჯარო შეკვეთა, storage, admin) —
   და მაშინ ownership ჯერ `auth.client`-ით მოწმდება ან ფილტრი კოდშია ცხადად.
 - ახალი SECURITY DEFINER ფუნქცია → იმავე მიგრაციაში `REVOKE EXECUTE ... FROM public, anon, authenticated`.
-- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0033_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
+- ახალი მიგრაცია — შემდეგი თავისუფალი ნომრით (ახლა `0037_...sql`), idempotent სადაც შესაძლებელია; README §7-ის სიაც განახლდეს.
 - Frontend-ის ცვლილება → `npm run build` და `dist/` იმავე commit-ში. 8 `.html` სახელი არ იცვლება (URL-კონტრაქტი).
 - `backend/scripts/compare_providers.py` (Stage 15) — აგენტი **არასდროს** უშვებს (არც `--dry-run`): რეალური API + ხარჯი; მხოლოდ მფლობელი (README §9); ტესტები — fake client-ებით.
 - `backend/scripts/backfill_image_descriptions.py` (Stage 18) — აგენტი **არასდროს** უშვებს (არც `--dry-run`/`--help`): რეალური API + ხარჯი + remote ბაზა; მხოლოდ მფლობელი (README §9).
