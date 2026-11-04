@@ -126,6 +126,17 @@ function ShopBar() {
 }
 
 /* ---------- გამოწერა / ლიმიტები ---------- */
+function PayInfo({ usage, shop }) {
+  return (
+    <div className="pay-info">
+      💳 გადარიცხე ანგარიშზე: <b>{usage.payment_iban || ""}</b><br />
+      📝 დანიშნულებაში მიუთითე: <b>{shop ? shop.name : ""}</b><br />
+      📩 ქვითარი გამოგზავნე: <b>{usage.payment_contact || ""}</b><br />
+      გადახდის შემდეგ ადმინი დაგიდასტურებთ და პაკეტი გააქტიურდება.
+    </div>
+  );
+}
+
 function UsageBox() {
   const toast = useToast();
   const { shopId, currentShop, usage, loadUsage, loadShops } = useShopData();
@@ -136,6 +147,8 @@ function UsageBox() {
   const near = cpct >= 90;
   const plimit = usage.product_limit == null ? "∞" : usage.product_limit;
   const prices = usage.prices || {};
+  const pu = usage.paid_until ? new Date(usage.paid_until) : null;
+  const paidUntil = pu && !isNaN(pu) ? pu.toLocaleDateString("ka-GE") : "";
 
   async function request(tier) {
     if (!confirm("გავაგზავნო „" + (TIER_NAMES[tier] || tier) + "“ პაკეტის მოთხოვნა? ადმინი დაგიდასტურებთ გადახდის შემდეგ.")) return;
@@ -191,16 +204,42 @@ function UsageBox() {
         </div>
       )}
 
+      {usage.tier !== "free" && paidUntil && (
+        <div className="usage-meta">მოქმედებს: {paidUntil}-მდე</div>
+      )}
+      {usage.expires_soon && (
+        <div className="banner" role="status">
+          <div className="banner-title">
+            ⏳ პაკეტის ვადა იწურება {paidUntil}-ს — გადაიხადე და გამოგზავნე ქვითარი, თორემ უფასო პაკეტზე გადახვალ
+          </div>
+          {!usage.pending_request && (
+            <>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => request(usage.tier)}>
+                განახლება
+              </button>
+              <PayInfo usage={usage} shop={currentShop} />
+            </>
+          )}
+        </div>
+      )}
+      {usage.expired && (
+        <div className="banner banner-error" role="alert">
+          <div className="banner-title">⚠️ პაკეტის ვადა ამოიწურა — მალე უფასო პაკეტზე გადახვალ</div>
+        </div>
+      )}
+      {usage.email_notifications === false && (
+        <div className="usage-meta">
+          <span className="badge badge-neutral" title="ახალ შეკვეთასა და ოპერატორის მოთხოვნაზე email ჯერ არ იგზავნება">
+            📭 email შეტყობინებები გამორთულია
+          </span>
+        </div>
+      )}
+
       {usage.pending_request ? (
         <div className="usage-upgrade pending">
           ⏳ მოთხოვნილია:{" "}
           <b>{TIER_NAMES[usage.pending_request] || usage.pending_request} · {prices[usage.pending_request] || ""}₾/თვე</b>
-          <div className="pay-info">
-            💳 გადარიცხე ანგარიშზე: <b>{usage.payment_iban || ""}</b><br />
-            📝 დანიშნულებაში მიუთითე: <b>{currentShop ? currentShop.name : ""}</b><br />
-            📩 ქვითარი გამოგზავნე: <b>{usage.payment_contact || ""}</b><br />
-            გადახდის შემდეგ ადმინი დაგიდასტურებთ და პაკეტი გააქტიურდება.
-          </div>
+          <PayInfo usage={usage} shop={currentShop} />
         </div>
       ) : (
         <div className="usage-upgrade">
@@ -293,11 +332,20 @@ export function AttentionCard() {
 }
 
 /* ---------- Overview ---------- */
+const RECONNECT_MSG = "⚠️ ბოტი ვერ პასუხობს — ხელახლა დააკავშირე Facebook გვერდი";
+const BOT_HEALTH_MSG = {
+  token_error: RECONNECT_MSG,
+  token_expired: RECONNECT_MSG,
+  send_failed: "⚠️ ბოლო პასუხი ვერ გაიგზავნა",
+  budget_exhausted: "⚠️ ბოტის თვიური ლიმიტი ამოიწურა — ახალი კლიენტები ოპერატორთან გადადიან",
+};
+
 function Overview({ goto }) {
   const { currentShop, orders } = useShopData();
   const fb = !!(currentShop && currentShop.facebook_page_id);
   const ig = !!(currentShop && currentShop.instagram_account_id);
   const botOn = fb && currentShop.bot_enabled !== false;
+  const healthMsg = currentShop ? BOT_HEALTH_MSG[currentShop.bot_status] : null;
   const top = orders.slice(0, 3);
 
   return (
@@ -323,15 +371,19 @@ function Overview({ goto }) {
                 </div>
               </div>
               <div className="ov-bot">
-                <span className={"led " + (botOn ? "on" : "off")} />
+                <span className={"led " + (healthMsg ? "warn" : botOn ? "on" : "off")} />
                 <div>
                   <b>{botOn ? "ბოტი აქტიურია" : "ბოტი ჯერ არ მუშაობს"}</b>
                   <br />
-                  <span>
-                    {fb
-                      ? "პასუხობს კლიენტებს ქართულად, 24/7"
-                      : "დააკავშირე Facebook გვერდი „ბოტი · არხები“ ტაბში"}
-                  </span>
+                  {healthMsg ? (
+                    <span className="ov-bot-warn">{healthMsg}</span>
+                  ) : (
+                    <span>
+                      {fb
+                        ? "პასუხობს კლიენტებს ქართულად, 24/7"
+                        : "დააკავშირე Facebook გვერდი „ბოტი · არხები“ ტაბში"}
+                    </span>
+                  )}
                 </div>
               </div>
             </>

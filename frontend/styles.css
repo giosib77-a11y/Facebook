@@ -204,8 +204,10 @@ input:focus, select:focus, textarea:focus {
 .ov-bot .led { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .ov-bot .led.on { background: var(--ok); box-shadow: 0 0 0 4px var(--primary-light); }
 .ov-bot .led.off { background: #cbd5c9; }
+.ov-bot .led.warn { background: #d97706; }
 .ov-bot b { font-size: .85rem; }
 .ov-bot span { font-size: .75rem; color: var(--muted); }
+.ov-bot span.ov-bot-warn { color: #c2410c; font-weight: 600; }
 .overview-orders { display: flex; flex-direction: column; }
 .ov-ord { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #eef3f0; font-size: .82rem; }
 .ov-ord:last-child { border-bottom: none; }
@@ -290,6 +292,16 @@ input:focus, select:focus, textarea:focus {
 .badge-on { background: #dcfce7; color: var(--ok); }
 .badge-off { background: #fee2e2; color: var(--danger); }
 .badge-warn { background: #fffbeb; color: #b45309; border: 1px solid #f59e0b; }
+.badge-neutral { background: #f1f5f9; color: var(--muted); }
+
+/* Banner-ები (Stage 20, DESIGN.md §9.3) */
+.banner { margin-top: 10px; padding: 12px 14px; border-radius: 12px; font-size: .9rem; color: var(--text); border: 1px solid #f59e0b; border-left-width: 4px; background: #fffbeb; }
+.banner-title { font-weight: 700; color: #b45309; }
+.banner-error { background: #fff6f3; border-color: var(--danger); }
+.banner-error .banner-title { color: var(--danger); }
+.banner .btn-sm { margin-top: 8px; padding: 5px 12px; }
+.banner .pay-info { margin-top: 8px; padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-radius: 8px; line-height: 1.75; }
+.usage-meta { margin-top: 6px; font-size: .85rem; color: var(--muted); }
 
 /* პროდუქტის ფოტო — thumbnail სიაში + preview ფორმაში */
 .product-thumb { width: 50px; height: 50px; border-radius: 11px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border); background: var(--bg); }
