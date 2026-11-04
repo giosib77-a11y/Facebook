@@ -359,7 +359,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 ### A-038 (N-07) — გამყიდველი და ადმინი პრობლემას ვერ იგებენ
 - **severity:** should-fix (ახალი შეკვეთა და handoff მხოლოდ პანელში ჩანს; „BOT DOWN" — მხოლოდ Render-ის ლოგში; ადრე ხუთივე მაღაზია შეუმჩნევლად გაითიშა)
 - **file:** `backend/app/api/webhook.py:358-369` (გაშიფვრის ჩავარდნა — `logger.error`), `:487-493` (გაგზავნის ჩავარდნა — `logger.exception`), `:216-218` (handoff — მხოლოდ flag), `backend/app/api/orders.py:215-246` (შეკვეთა — მხოლოდ DB)
-- **გამოსწორება:** `services/notify.py` — email გამყიდველს (Resend, `httpx`) ახალ შეკვეთაზე და handoff-ზე; Telegram ადმინს „BOT DOWN"-ზე (გაშიფვრა, ვადაგასული token, გაგზავნა); key-ის გარეშე გამორთულია; in-memory throttle; `shops.bot_status` (0036) + პანელში ჯანმრთელობა და „შეტყობინებები გამორთულია" ნიშანი. Sentry/uptime — Backlog.
+- **გამოსწორება:** `services/notify.py` — email გამყიდველს (SMTP, stdlib `smtplib`) ახალ შეკვეთაზე და handoff-ზე; Telegram ადმინს „BOT DOWN"-ზე (გაშიფვრა, ვადაგასული token, გაგზავნა); key-ის გარეშე გამორთულია; in-memory throttle; `shops.bot_status` (0036) + პანელში ჯანმრთელობა და „შეტყობინებები გამორთულია" ნიშანი. Sentry/uptime — Backlog.
 - **owner:** backend-dev, frontend-dev · **task:** S20-2, S20-10, S20-11, S20-12, S20-14
 - **status:** ღია — S20-2 / S20-10 / S20-11 / S20-12 / S20-14
 
