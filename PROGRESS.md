@@ -67,7 +67,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
 > **რიგი (≤2 ერთდროულად, მხოლოდ თანაუკვეთი `files`-ით):** S20-1 ∥ S20-2 → S20-3 ∥ S20-6 → S20-4 ∥ S20-8 → S20-5 ∥ S20-10 → S20-7 → S20-9 → S20-11 → S20-12; frontend: S20-13 (S20-1, S20-4, S20-5-ის შემდეგ; backend-ის ჯაჭვის პარალელურად შეიძლება) → S20-14 (S20-7, S20-11, S20-12-ის შემდეგ) → S20-15 (S20-9-ის შემდეგ) → S20-16; S20-17 — ყველას შემდეგ. **პირველ frontend task-მდე (S20-13) ორკესტრატორი უშვებს `designer`-ს** (`DESIGN.md` არსებული emerald dashboard-იდან); frontend-dev მას მიჰყვება.
 > **საერთო ფაილები და ჯაჭვები:** `## Shared files` (Stage 20). `AUDIT.md` (status-ის ხაზები), `PROGRESS.md`, `PROJECT.md` — მხოლოდ ორკესტრატორი, commit-ის შემდეგ.
 
-- [ ] **S20-1 — ბრაუზერის ტესტების setup (Playwright)** · owner: frontend-dev · files: `frontend/package.json` (shared), `frontend/package-lock.json` (shared), `.gitignore` (shared), `frontend/playwright.config.js` (ახალი), `frontend/e2e/**` (ახალი), `frontend/eslint.config.js` · depends: —
+- [x] ✅ (@playwright/test 1.64.1, chromium build 1248; e2e 2/2, vitest 45, lint 0 error, dist უცვლელი; API_BASE = `location.origin` → mock-ები `localhost:4173/<path>`-ზე, catch-all ბლოკავს დანარჩენს; Google Fonts წყდება, არ ითვლება) **S20-1 — ბრაუზერის ტესტების setup (Playwright)** · owner: frontend-dev · files: `frontend/package.json` (shared), `frontend/package-lock.json` (shared), `.gitignore` (shared), `frontend/playwright.config.js` (ახალი), `frontend/e2e/**` (ახალი), `frontend/eslint.config.js` · depends: —
   - `frontend/`-იდან `npm install -D @playwright/test` (ბოლო სტაბილური; lock განახლდება) და `npx playwright install chromium` (browser — მომხმარებლის cache-ში; `--with-deps` არა; გლობალური npm install არა). სხვა dependency — არა.
   - `package.json` scripts: `"test:e2e": "playwright test"`; `test` (vitest) უცვლელი.
   - `playwright.config.js`: `testDir: "./e2e"`, მხოლოდ `chromium` project, `reporter: "list"`, `outputDir: "test-results"`, `use: { baseURL: "http://localhost:4173/panel/", trace: "retain-on-failure" }`, `webServer: { command: "npm run preview -- --port 4173 --strictPort", url: "http://localhost:4173/panel/", reuseExistingServer: !process.env.CI, timeout: 60_000 }`. კომენტარი: preview არსებულ `dist`-ს ასერვირებს → ჯერ `npm run build`.
@@ -673,6 +673,12 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - `BOT_PAUSE_HOURS` / throttle-ის ინტერვალები env-ში — მოთხოვნისას.
 - `send_failed` ერთეული კლიენტის შეცდომაზეც (მაგ. გვერდი დაბლოკა) ჩნდება — Graph-ის error code-ებით გაფილტვრა (551 / 10), თუ ხმაურიანი აღმოჩნდა.
 - ადმინ პანელში ბოტის ჯანმრთელობის სვეტი (`bot_status`) ყველა მაღაზიაზე.
+
+### Stage 20 (nit, task-ების report-ებიდან)
+- (S20-1) CI-ის frontend job-ში e2e არ ეშვება: build-ის შემდეგ `npx playwright install --with-deps chromium` + `npm run test:e2e` (`.github/workflows/ci.yml`; Linux runner-ზე `--with-deps` საჭიროა).
+- (S20-3) `_paused_until` ნებისმიერ select-ის შეცდომაზე (დროებით DB outage-ზეც) „migration 0033 not applied" WARNING-ს წერს — ტექსტი ზოგადი გახდეს ან code-ით გაირჩეს.
+- (S20-3) `role: "operator"` LLM-ის ისტორიაში assistant-ად გადადის — ბოტი გამყიდველის ნათქვამს საკუთარად „ხედავს"; თუ საჭიროა გარჩევა, prompt-ის ცალკე ცვლილება.
+- (S20-6) `expire_subscriptions()` არ ეხება მფლობელს, რომელსაც `subscriptions`-ში მწკრივი არ აქვს, მაგრამ shops-ზე ფასიანი tier აქვს (მაგ. ხელით SQL-ით) — 0034-ის ხელახალი გაშვება ავსებს; ვადაგასულის გათიშული ბოტები ავტომატურად არ ბრუნდება (გეგმით).
 
 ### DESIGN.md-ის შეუსაბამობები (nit, 2026-11-04, designer; DESIGN.md §10)
 - კონტრასტი AA-ს ქვემოთ (არსებული UI): primary ღილაკი / toast-ok თეთრი `#059669`-ზე 3.76 (gradient-ის ღია ბოლოზე 2.54), `--primary` ბმული 3.76, badge-on 3.43, badge-off 3.95, `#d97706` ტექსტი 3.19, inline `#9ca3af` meta ≈2.5 — ფერის გამუქება (მაგ. `#047857`) ცალკე ვიზუალურ task-ად.
