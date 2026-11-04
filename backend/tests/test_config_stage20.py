@@ -23,6 +23,7 @@ def test_defaults():
     assert s.smtp_port == 587
     assert s.llm_kill_switch is False
     assert s.llm_daily_token_cap == 3_000_000
+    assert s.llm_daily_tokens_per_owner == 1_000_000
     assert s.llm_monthly_tokens_free == 2_000_000
     assert s.llm_monthly_tokens_basic == 12_000_000
     assert s.llm_monthly_tokens_standard == 48_000_000
@@ -41,6 +42,7 @@ def test_conftest_pins_notify_env_blank():
     assert os.environ["TELEGRAM_BOT_TOKEN"] == ""
     assert "SMTP_PORT" not in os.environ
     assert "LLM_DAILY_TOKEN_CAP" not in os.environ
+    assert "LLM_DAILY_TOKENS_PER_OWNER" not in os.environ
 
 
 def test_email_enabled_when_all_four_set():
@@ -72,7 +74,9 @@ def test_env_values_are_read(monkeypatch):
     monkeypatch.setenv("SMTP_PORT", "465")
     monkeypatch.setenv("LLM_KILL_SWITCH", "true")
     monkeypatch.setenv("LLM_MONTHLY_TOKENS_BASIC", "0")
+    monkeypatch.setenv("LLM_DAILY_TOKENS_PER_OWNER", "500000")
     s = _settings()
+    assert s.llm_daily_tokens_per_owner == 500_000
     assert s.smtp_port == 465
     assert s.llm_kill_switch is True
     assert s.llm_monthly_budget("basic") == 0  # 0 = ჭერი გამორთულია
@@ -110,7 +114,7 @@ def test_monthly_budget_unknown_tier_is_free(tier):
 
 
 @pytest.mark.parametrize("field", [
-    "llm_daily_token_cap", "llm_monthly_tokens_free", "llm_monthly_tokens_basic",
+    "llm_daily_token_cap", "llm_daily_tokens_per_owner", "llm_monthly_tokens_free", "llm_monthly_tokens_basic",
     "llm_monthly_tokens_standard", "llm_monthly_tokens_business",
 ])
 def test_negative_caps_rejected(field):
@@ -119,8 +123,9 @@ def test_negative_caps_rejected(field):
 
 
 def test_zero_caps_allowed():
-    s = _settings(llm_daily_token_cap=0, llm_monthly_tokens_free=0)
+    s = _settings(llm_daily_token_cap=0, llm_daily_tokens_per_owner=0, llm_monthly_tokens_free=0)
     assert s.llm_daily_token_cap == 0
+    assert s.llm_daily_tokens_per_owner == 0
     assert s.llm_monthly_budget("free") == 0
 
 

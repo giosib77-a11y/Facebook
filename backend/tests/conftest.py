@@ -32,6 +32,7 @@ for _name in (
     "CLAUDE_MODEL", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS",
     "SMTP_PORT", "LLM_KILL_SWITCH", "LLM_DAILY_TOKEN_CAP", "LLM_MONTHLY_TOKENS_FREE",
     "LLM_MONTHLY_TOKENS_BASIC", "LLM_MONTHLY_TOKENS_STANDARD", "LLM_MONTHLY_TOKENS_BUSINESS",
+    "LLM_DAILY_TOKENS_PER_OWNER",
 ):
     os.environ.pop(_name, None)
 # Stage 16: LangGraph/LangSmith tracing would send conversations to a third party. Never in tests.

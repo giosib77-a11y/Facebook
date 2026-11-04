@@ -175,7 +175,7 @@ def test_kill_switch_uses_operator_path_without_budget_rpc(env, monkeypatch, cap
 # ---- (4) real blocked_reason over the fake RPC -------------------------------
 def test_owner_monthly_total_above_budget_uses_operator_path(env, monkeypatch, caplog):
     db, sent, calls = env
-    _budget_settings(monkeypatch, llm_daily_token_cap=0)  # isolate the monthly rule
+    _budget_settings(monkeypatch, llm_daily_token_cap=0, llm_daily_tokens_per_owner=0)  # isolate the monthly rule
     db.rpc_responses["llm_tokens_used"] = 10_000_000  # free budget: 2_000_000
 
     with caplog.at_level(logging.WARNING, logger="app"):
@@ -187,8 +187,9 @@ def test_owner_monthly_total_above_budget_uses_operator_path(env, monkeypatch, c
     assert any("bot budget: monthly_budget" in m for m in _warnings(caplog))
 
 
-def test_global_daily_cap_uses_operator_path(env, caplog):
+def test_global_daily_cap_uses_operator_path(env, monkeypatch, caplog):
     db, sent, calls = env
+    _budget_settings(monkeypatch, llm_daily_tokens_per_owner=0)  # isolate the global rule (owner share is checked first)
     db.rpc_responses["llm_tokens_used"] = 10_000_000  # default daily cap: 3_000_000
 
     with caplog.at_level(logging.WARNING, logger="app"):

@@ -183,7 +183,7 @@ def test_kill_switch_blocks_first_without_any_rpc(env):
 
 
 def test_daily_cap_blocks_when_platform_tokens_reach_the_cap(env, caplog):
-    env.set_settings(llm_daily_token_cap=1000)
+    env.set_settings(llm_daily_token_cap=1000, llm_daily_tokens_per_owner=0)  # owner share off: RPC order is platform first
     db = SplitDb(platform=1000)
     with caplog.at_level(logging.WARNING, logger="app"):
         assert budget.blocked_reason(db, _shop("business")) == "daily_cap"
@@ -223,7 +223,7 @@ def test_eighty_percent_alert_returns_none_and_warns_once_per_day(env, caplog):
 
 
 def test_monthly_budget_blocks_a_free_owner_at_2m_tokens(env):
-    env.set_settings(llm_daily_token_cap=3_000_000)
+    env.set_settings(llm_daily_token_cap=3_000_000, llm_daily_tokens_per_owner=0)  # isolate the monthly rule
     db = SplitDb(platform=100, owners={OWNER: 2_000_000})
     assert budget.blocked_reason(db, _shop("free")) == "monthly_budget"
     params = [c.params for c in db.rpc_calls]
@@ -232,7 +232,7 @@ def test_monthly_budget_blocks_a_free_owner_at_2m_tokens(env):
 
 
 def test_monthly_budget_just_below_is_allowed_and_tier_picks_the_budget(env):
-    env.set_settings(llm_daily_token_cap=0)
+    env.set_settings(llm_daily_token_cap=0, llm_daily_tokens_per_owner=0)
     db = SplitDb(owners={OWNER: 1_999_999})
     assert budget.blocked_reason(db, _shop("free")) is None
     assert budget.blocked_reason(db, _shop("basic")) is None  # same usage, 12M budget
@@ -244,24 +244,24 @@ def test_monthly_budget_just_below_is_allowed_and_tier_picks_the_budget(env):
 
 
 def test_monthly_budget_zero_disables_it(env):
-    env.set_settings(llm_daily_token_cap=0, llm_monthly_tokens_free=0)
+    env.set_settings(llm_daily_token_cap=0, llm_daily_tokens_per_owner=0, llm_monthly_tokens_free=0)
     db = SplitDb(owners={OWNER: 10**12})
     assert budget.blocked_reason(db, _shop("free")) is None
     assert db.rpc_calls == []
 
 
 def test_daily_cap_zero_skips_the_platform_rpc(env):
-    env.set_settings(llm_daily_token_cap=0)
+    env.set_settings(llm_daily_token_cap=0, llm_daily_tokens_per_owner=0)
     db = SplitDb(platform=10**12, owners={OWNER: 5})
     assert budget.blocked_reason(db, _shop("free")) is None
     assert [c.params["p_owner"] for c in db.rpc_calls] == [OWNER]
 
 
 def test_shop_without_owner_skips_the_monthly_check(env):
-    env.set_settings(llm_daily_token_cap=0)
+    env.set_settings(llm_daily_token_cap=0)  # owner daily share stays at its default (on)
     db = SplitDb(owners={OWNER: 10**12})
     assert budget.blocked_reason(db, _shop("free", owner=None)) is None
-    assert db.rpc_calls == []
+    assert db.rpc_calls == []  # neither the owner-day nor the owner-month RPC without an owner
 
 
 def test_unavailable_spend_data_never_blocks(env, caplog):
@@ -275,11 +275,130 @@ def test_unavailable_spend_data_never_blocks(env, caplog):
 
 
 def test_budget_warnings_never_contain_the_owner_id(env, caplog):
-    env.set_settings(llm_daily_token_cap=1000)
+    # the owner-daily WARNING names the owner on purpose (S20-19), so it is off here: global alert + monthly path
+    env.set_settings(llm_daily_token_cap=1000, llm_daily_tokens_per_owner=0)
     db = SplitDb(platform=900, owners={OWNER: 2_000_000})
     with caplog.at_level(logging.WARNING, logger="app"):
         budget.blocked_reason(db, _shop("free"))
     assert OWNER not in "".join(r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# S20-19: owner daily token share
+# ---------------------------------------------------------------------------
+OTHER_OWNER = "33333333-3333-3333-3333-333333333333"
+OWNER_WARNING = "LLM owner daily token cap reached - bot switched to operator (owner=%s)"
+
+
+def test_owner_daily_cap_blocks_one_tenant_while_the_platform_is_below_its_cap(env, caplog):
+    env.set_settings()  # defaults: owner 1M/day, platform 3M/day
+    db = SplitDb(platform=1_500_000, owners={OWNER: 1_000_000})
+    with caplog.at_level(logging.WARNING, logger="app"):
+        assert budget.blocked_reason(db, _shop("business")) == "owner_daily_cap"
+    assert [c.params for c in db.rpc_calls] == [{"p_owner": OWNER, "p_since": DAY_START.isoformat()}]
+    assert _warnings(caplog) == [OWNER_WARNING % OWNER]
+    # another tenant of the same platform is not affected
+    assert budget.blocked_reason(db, _shop("business", owner=OTHER_OWNER)) is None
+
+
+def test_owner_daily_cap_just_below_is_allowed(env):
+    env.set_settings(llm_daily_token_cap=0, llm_monthly_tokens_free=0)
+    db = SplitDb(owners={OWNER: 999_999})
+    assert budget.blocked_reason(db, _shop("free")) is None
+
+
+def test_owner_daily_cap_is_checked_before_the_global_and_monthly_caps(env):
+    env.set_settings()
+    db = SplitDb(platform=10**9, owners={OWNER: 10**9})
+    assert budget.blocked_reason(db, _shop("free")) == "owner_daily_cap"
+    assert [c.params["p_owner"] for c in db.rpc_calls] == [OWNER]
+
+
+def test_kill_switch_still_beats_the_owner_daily_cap(env):
+    env.set_settings(llm_kill_switch=True)
+    db = SplitDb(owners={OWNER: 10**9})
+    assert budget.blocked_reason(db, _shop("free")) == "kill_switch"
+    assert db.rpc_calls == []
+
+
+def test_owner_daily_cap_zero_skips_the_owner_day_rpc(env):
+    env.set_settings(llm_daily_tokens_per_owner=0, llm_daily_token_cap=0, llm_monthly_tokens_free=0)
+    db = SplitDb(owners={OWNER: 10**12})
+    assert budget.blocked_reason(db, _shop("free")) is None
+    assert db.rpc_calls == []
+
+
+def test_owner_daily_cap_zero_still_checks_global_and_monthly(env):
+    env.set_settings(llm_daily_tokens_per_owner=0)
+    db = SplitDb(platform=10**12, owners={OWNER: 10**12})
+    assert budget.blocked_reason(db, _shop("free")) == "daily_cap"
+    assert OWNER not in [c.params["p_owner"] for c in db.rpc_calls]  # no owner RPC before the platform one
+
+
+def test_owner_daily_unknown_rpc_fails_open_and_continues_to_global_and_monthly(env):
+    env.set_settings(llm_daily_token_cap=1000)
+    seen = []
+
+    class Db(FakeSupabase):
+        def rpc(self, fn, params):
+            seen.append((params["p_owner"], params["p_since"]))
+            if params["p_owner"] == OWNER and params["p_since"] == DAY_START.isoformat():
+                self.rpc_errors[fn] = RuntimeError("boom")  # only the owner-day call fails
+            else:
+                self.rpc_errors.pop(fn, None)
+                self.rpc_responses[fn] = 5000 if params["p_owner"] is None else 3_000_000
+            return super().rpc(fn, params)
+
+    # owner-day unknown -> global daily (5000 >= 1000) decides
+    assert budget.blocked_reason(Db(), _shop("free")) == "daily_cap"
+    assert seen[0] == (OWNER, DAY_START.isoformat()) and seen[1] == (None, DAY_START.isoformat())
+    # owner-day unknown, global below its cap -> monthly (3M >= free 2M) decides
+    budget.reset()
+    seen.clear()
+    env.set_settings(llm_daily_token_cap=10**9)
+    assert budget.blocked_reason(Db(), _shop("free")) == "monthly_budget"
+    assert (OWNER, MONTH_START.isoformat()) in seen
+
+
+def test_owner_daily_missing_migration_never_blocks(env):
+    db = FakeSupabase()
+    db.rpc_errors["llm_tokens_used"] = RpcMissing("missing")
+    assert budget.blocked_reason(db, _shop("free")) is None
+    assert len(db.rpc_calls) == 1
+
+
+def test_shop_without_owner_skips_the_owner_daily_check(env):
+    env.set_settings(llm_daily_token_cap=0)
+    db = SplitDb(owners={OWNER: 10**12, "": 10**12})
+    assert budget.blocked_reason(db, _shop("free", owner=None)) is None
+    assert budget.blocked_reason(db, _shop("free", owner="")) is None
+    assert db.rpc_calls == []
+
+
+def test_owner_daily_warning_is_once_per_owner_per_utc_day(env, caplog):
+    env.set_settings(llm_daily_token_cap=0)
+    db = SplitDb(owners={OWNER: 2_000_000, OTHER_OWNER: 2_000_000})
+    with caplog.at_level(logging.WARNING, logger="app"):
+        for _ in range(3):
+            assert budget.blocked_reason(db, _shop()) == "owner_daily_cap"
+        assert _warnings(caplog) == [OWNER_WARNING % OWNER]
+        assert budget.blocked_reason(db, _shop(owner=OTHER_OWNER)) == "owner_daily_cap"  # own warning
+        assert _warnings(caplog) == [OWNER_WARNING % OWNER, OWNER_WARNING % OTHER_OWNER]
+        env.now = datetime(2026, 11, 6, 0, 5, 0, tzinfo=timezone.utc)
+        env.clock.now += 3600
+        assert budget.blocked_reason(db, _shop()) == "owner_daily_cap"  # next UTC day: again
+    assert _warnings(caplog)[-1] == OWNER_WARNING % OWNER
+    assert len(_warnings(caplog)) == 3
+    assert db.rpc_calls[-1].params == {"p_owner": OWNER, "p_since": "2026-11-06T00:00:00+00:00"}
+
+
+def test_owner_day_and_owner_month_totals_are_cached_separately(env):
+    env.set_settings(llm_daily_token_cap=0)
+    db = SplitDb(owners={OWNER: 10})
+    budget.blocked_reason(db, _shop("free"))
+    assert [c.params["p_since"] for c in db.rpc_calls] == [DAY_START.isoformat(), MONTH_START.isoformat()]
+    budget.blocked_reason(db, _shop("free"))
+    assert len(db.rpc_calls) == 2  # both served from the cache
 
 
 # ---------------------------------------------------------------------------

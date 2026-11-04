@@ -1,4 +1,4 @@
-"""LLM spend control (S20-8, A-037 / N-03): per-owner monthly token budget, platform daily cap.
+"""LLM spend control (S20-8, A-037 / N-03): per-owner monthly + daily token budget, platform daily cap.
 
 Reads `llm_usage` totals through the RPC `llm_tokens_used` (migration 0035) with a short in-process
 cache. Fail-open everywhere: when the RPC is missing (migration not applied) or fails, the spend checks
@@ -99,17 +99,28 @@ def _once_per_day(kind: str, today) -> bool:
     with _lock:
         if _logged_day.get(kind) == today:
             return False
+        for k in [k for k, day in _logged_day.items() if day != today]:
+            del _logged_day[k]  # yesterday's entries (one kind per owner) must not pile up
         _logged_day[kind] = today
         return True
 
 
 def blocked_reason(sc, shop: dict) -> str | None:
-    """Why the bot must not call the LLM for this shop: "kill_switch" | "daily_cap" | "monthly_budget",
-    or None (allowed, or unknown because the spend data is unavailable)."""
+    """Why the bot must not call the LLM for this shop: "kill_switch" | "owner_daily_cap" | "daily_cap" |
+    "monthly_budget", or None (allowed, or unknown because the spend data is unavailable).
+    The owner's daily share is checked before the platform cap: one tenant must not exhaust the shared pool."""
     s = get_settings()
     if s.llm_kill_switch:
         return "kill_switch"
     now = _now()
+    owner_id = shop.get("owner_id")
+    owner_cap = s.llm_daily_tokens_per_owner
+    if owner_cap > 0 and owner_id:
+        owner_today = tokens_used(sc, str(owner_id), _day_start(now))
+        if owner_today is not None and owner_today >= owner_cap:
+            if _once_per_day(f"owner:{owner_id}", now.date()):
+                logger.warning("LLM owner daily token cap reached - bot switched to operator (owner=%s)", owner_id)
+            return "owner_daily_cap"
     cap = s.llm_daily_token_cap
     if cap > 0:
         today = tokens_used(sc, None, _day_start(now))
@@ -121,7 +132,6 @@ def blocked_reason(sc, shop: dict) -> str | None:
             if today >= cap * ALERT_RATIO and _once_per_day("alert", now.date()):
                 logger.warning("LLM spend alert: %d%% of daily token cap", int(today * 100 / cap))
     budget = s.llm_monthly_budget(shop.get("subscription_tier"))
-    owner_id = shop.get("owner_id")
     if budget > 0 and owner_id:
         month = tokens_used(sc, str(owner_id), _month_start(now))
         if month is not None and month >= budget:

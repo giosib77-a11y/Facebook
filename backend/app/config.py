@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     # Stage 20 — LLM ბიუჯეტი (A-037). 0 = შესაბამისი ჭერი გამორთულია.
     llm_kill_switch: bool = False
     llm_daily_token_cap: int = Field(3_000_000, ge=0)  # გლობალური დღიური ჭერი (ყველა tenant ერთად)
+    llm_daily_tokens_per_owner: int = Field(1_000_000, ge=0)  # მფლობელის ყველა მაღაზიის დღიური ჯამი (~⅓ გლობალურის)
     llm_monthly_tokens_free: int = Field(2_000_000, ge=0)
     llm_monthly_tokens_basic: int = Field(12_000_000, ge=0)
     llm_monthly_tokens_standard: int = Field(48_000_000, ge=0)
