@@ -7,6 +7,8 @@ from cryptography.fernet import Fernet
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.tiers import normalize_tier
+
 # root .env და backend/.env — ორივეს ვცდილობთ წაკითხვას
 _ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
@@ -92,6 +94,24 @@ class Settings(BaseSettings):
     payment_iban: str = "[შენი ანგარიშის ნომერი — შეავსე PAYMENT_IBAN]"
     payment_contact: str = "[ქვითრის გამოსაგზავნი კონტაქტი — შეავსე PAYMENT_CONTACT]"
 
+    # Stage 20 — შეტყობინებები (A-038): SMTP email (ნებისმიერი provider) და Telegram.
+    # ცარიელი = არხი გამორთულია (აპი მაინც ირთვება) — იხ. email_notifications_enabled / telegram_enabled.
+    smtp_host: str = ""
+    smtp_port: int = Field(587, ge=1, le=65535)  # 465 = SSL, სხვა = STARTTLS
+    smtp_user: str = ""
+    smtp_password: str = Field("", repr=False)
+    notify_email_from: str = ""
+    telegram_bot_token: str = Field("", repr=False)
+    telegram_chat_id: str = ""
+
+    # Stage 20 — LLM ბიუჯეტი (A-037). 0 = შესაბამისი ჭერი გამორთულია.
+    llm_kill_switch: bool = False
+    llm_daily_token_cap: int = Field(3_000_000, ge=0)  # გლობალური დღიური ჭერი (ყველა tenant ერთად)
+    llm_monthly_tokens_free: int = Field(2_000_000, ge=0)
+    llm_monthly_tokens_basic: int = Field(12_000_000, ge=0)
+    llm_monthly_tokens_standard: int = Field(48_000_000, ge=0)
+    llm_monthly_tokens_business: int = Field(180_000_000, ge=0)
+
     model_config = SettingsConfigDict(
         env_file=(_ROOT_ENV, _BACKEND_ENV),
         env_file_encoding="utf-8",
@@ -128,6 +148,16 @@ class Settings(BaseSettings):
         # Render-ში ჩასმული key-ის ბოლოში \n/space HTTP header-ს ამახინჯებს (და key ლოგში ხვდება)
         return v.strip() if isinstance(v, str) else v
 
+    @field_validator(
+        "smtp_host", "smtp_user", "smtp_password", "notify_email_from",
+        "telegram_bot_token", "telegram_chat_id",
+        mode="before",
+    )
+    @classmethod
+    def _strip_notify_settings(cls, v):
+        # Render-ში ჩასმული მნიშვნელობის ბოლოში \n/space SMTP login-ს / Telegram URL-ს ამახინჯებს
+        return v.strip() if isinstance(v, str) else v
+
     @field_validator("claude_model", "openai_model", mode="before")
     @classmethod
     def _strip_llm_models(cls, v, info):
@@ -153,6 +183,19 @@ class Settings(BaseSettings):
         """არჩეული provider-ის key არაცარიელია (key-ის გარეშე ბოტი გამორთულია)."""
         key = self.anthropic_api_key if self.llm_provider == "claude" else self.openai_api_key
         return bool((key or "").strip())
+
+    @property
+    def email_notifications_enabled(self) -> bool:
+        """SMTP სრულადაა გამართული (host, user, password, from — ოთხივე არაცარიელი)."""
+        return all((self.smtp_host, self.smtp_user, self.smtp_password, self.notify_email_from))
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    def llm_monthly_budget(self, tier: str | None) -> int:
+        """თვიური ტოკენების ბიუჯეტი პაკეტზე (0 = ჭერი გამორთულია). უცნობი პაკეტი → free."""
+        return getattr(self, f"llm_monthly_tokens_{normalize_tier(tier)}")
 
     def missing_required_secrets(self) -> list[str]:
         """Production-ში სავალდებულო პარამეტრებიდან ცარიელ/არავალიდურთა ENV სახელები.

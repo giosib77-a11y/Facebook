@@ -19,6 +19,8 @@ for _name in (
     "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "ORIGIN_SECRET",
     "OPENAI_API_KEY", "FB_APP_ID", "FB_APP_SECRET", "FB_VERIFY_TOKEN", "FB_REDIRECT_URI",
     "FB_LOGIN_CONFIG_ID", "FB_TOKEN_ENCRYPTION_KEY", "PUBLIC_BASE_URL", "ADMIN_USER_IDS",
+    "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "NOTIFY_EMAIL_FROM",
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 ):
     os.environ[_name] = ""
 # LLM: default test setup = configured bot (claude + dummy key). A test of a disabled bot
@@ -26,7 +28,11 @@ for _name in (
 os.environ["ANTHROPIC_API_KEY"] = "test-anthropic-key-not-real"
 os.environ["LLM_PROVIDER"] = "claude"
 # non-string settings / defaults: an empty string would override the default (or fail to parse)
-for _name in ("CLAUDE_MODEL", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS"):
+for _name in (
+    "CLAUDE_MODEL", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS",
+    "SMTP_PORT", "LLM_KILL_SWITCH", "LLM_DAILY_TOKEN_CAP", "LLM_MONTHLY_TOKENS_FREE",
+    "LLM_MONTHLY_TOKENS_BASIC", "LLM_MONTHLY_TOKENS_STANDARD", "LLM_MONTHLY_TOKENS_BUSINESS",
+):
     os.environ.pop(_name, None)
 # Stage 16: LangGraph/LangSmith tracing would send conversations to a third party. Never in tests.
 for _name in ("LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGCHAIN_TRACING_V2", "LANGCHAIN_API_KEY"):
