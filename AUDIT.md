@@ -298,7 +298,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **file:** `backend/app/api/facebook.py:384-401` (`_erase_fb_user_data`)
 - **გამოსწორება:** `bot_customers.delete().eq("psid", user_id)` (იგივე user_id, რაც `bot_conversations`-ზე); შეცდომა ზემოთ ადის (A-017).
 - **owner:** backend-dev · **task:** S19-6
-- **status:** fixed (`b2fbf32`; ტესტი `test_data_deletion.py`)
+- **status:** fixed (`b2fbf32`; ტესტი `test_data_deletion.py`) → **superseded by A-039 (2026-11-04):** Meta-ს დოკუმენტაციით callback-ის `user_id` app-scoped ID-ია (ASID, გამყიდველი), `bot_customers.psid` / `bot_conversations.psid` — page-scoped (PSID); psid-ით წაშლა არაფერს შლიდა. S20-5-ში psid-ით ნაბიჯები იხსნება და `bot_customers` / საუბრები გამყიდველის მაღაზიის `shop_id`-ით იშლება.
 
 ### A-031 (N-21) — `dist`-ის არარსებობისას `/panel` მთელ `frontend/` წყაროს ასერვირებს
 - **severity:** nit (მხოლოდ build-ის გარეშე: `package.json`, `src/**`, `node_modules/**`, `vite.config.js` საჯაროდ ჩანს; `dist` git-შია და CI ამოწმებს)
@@ -327,6 +327,49 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **სცენარი:** README: Python 3.11+, React 18, 28 მიგრაცია; რეალურად Python 3.14 (CI 3.14.3), React 19, 31 (S19-9-ის შემდეგ 32).
 - **owner:** task-executor · **task:** S19-13
 - **status:** fixed (S19-13)
+
+---
+
+## გარე აუდიტი (PDF) — 2026-11-03, ეტაპი 2 (ბრენჩი `agent-system`)
+
+წყარო: `docs/external-audit-2026-11-03.pdf` (git-ში არ არის), ეტაპი 2 „ფული და ნდობა" (N-01, N-02, N-03, N-07) + Stage 19-ის finish-check-ის „შესამოწმებელი" (Data Deletion, Meta-ს დოკუმენტაციით დადასტურებული). ყველა მიგნება კოდში გადამოწმდა (2026-11-04, `ae00bf9`). სიმძიმე ჩვენი სკალით: critical = ფული/მონაცემი/ნდობა იკარგება ახლა. გეგმა და task-ები — `PROGRESS.md` Stage 20; გადაწყვეტილებები — `PROJECT.md` Decision Log 2026-11-04 („Stage 20").
+
+### A-035 (N-01) — handoff ბოტს არ აჩერებს; გამყიდველის ხელით პასუხი ბოტისთვის უხილავია
+- **severity:** critical (ნდობა: handoff-ის შემდეგ ბოტი ყოველ ახალ შეტყობინებას პასუხობს, სანამ გამყიდველიც წერს — გამყიდველის დაპირებას (ფასდაკლება, მიწოდების ვადა) არ იცნობს და შეიძლება ეწინააღმდეგებოდეს)
+- **file:** `backend/app/api/webhook.py:383-384` (`is_echo` → `continue`), `:466-470` (`run_turn` `needs_attention`-ის შემოწმების გარეშე), `:216-218` (`needs_attention` მხოლოდ იწერება), `backend/app/services/facebook.py:244-250` (`subscribed_fields` `message_echoes`-ის გარეშე — echo საერთოდ არ მოდის)
+- **სცენარი:** კლიენტი ითხოვს ოპერატორს → `needs_attention` → გამყიდველი Messenger-ში წერს „10% ფასდაკლება" → კლიენტის შემდეგ შეტყობინებას ბოტი პასუხობს ძველი ფასით.
+- **გამოსწორება:** `bot_conversations.bot_paused_until` (0033); handoff-ზე და გამყიდველის echo-ზე (`app_id` ≠ `FB_APP_ID`) პაუზა 12 სთ ან „მოგვარებულია"/„ბოტის ჩართვა"-მდე; echo-ს ტექსტი ისტორიაში (`role: "operator"`); `message_echoes` გამოწერაში; პანელში „ბოტი შეჩერებულია" + „ბოტის ჩართვა".
+- **owner:** backend-dev, frontend-dev · **task:** S20-3, S20-4, S20-13
+- **status:** ღია — S20-3 / S20-4 / S20-13
+
+### A-036 (N-02) — ფასიანი პაკეტი არასდროს იწურება
+- **severity:** critical (ფული: ერთი თვის გადახდით პაკეტი სამუდამოდ რჩება; `paid_until` არსად არ არის)
+- **file:** `backend/app/api/admin.py:457-469` (`resolve_upgrade_request` tier-ს `shops.subscription_tier`-ში უვადოდ წერს), `:379-383` (ადმინის tier-ის ცვლა), `backend/app/api/shops.py:265-321` (downgrade — ერთადერთი გზა უკან)
+- **გამოსწორება:** `subscriptions (owner_id, tier, paid_until)` (0034) + დღიური pg_cron (ვადაგასული → `free` + ბოტების ჭერი); არსებულ ფასიანებს `now() + 30 days`; `shops.subscription_tier` — სარკე; პანელში გაფრთხილება 3 დღით ადრე; ადმინში „ვადა" + გაგრძელება.
+- **owner:** backend-dev, frontend-dev · **task:** S20-6, S20-7, S20-14, S20-15
+- **status:** ღია — S20-6 / S20-7 / S20-14 / S20-15
+
+### A-037 (N-03) — LLM-ის ხარჯს ჭერი არ აქვს
+- **severity:** critical (ფული: `llm_usage` მხოლოდ იწერება; უფასო მაღაზია: 30 კლიენტი × 100 შეტყობინება/დღე ≈ 90 000/თვე, თითოზე ≤4 LLM გამოძახება + ფოტო + summary; Stage 14+ deploy-ის ბლოკერი)
+- **file:** `backend/app/services/llm.py:474-489` (`record_usage` — მხოლოდ ჩაწერა), `backend/app/api/webhook.py:466-470` (`run_turn` ბიუჯეტის შემოწმების გარეშე), `backend/app/core/tiers.py:37` (`DAILY_ABUSE_CAP = 100` ყველა პაკეტზე), `backend/app/services/graph.py:29` (`MAX_LLM_CALLS = 4`)
+- **გამოსწორება:** თვიური ტოკენ-ბიუჯეტი პაკეტზე (per-account, env) `run_turn`-მდე, RPC `llm_tokens_used` (0035); ამოწურვა / დღიური გლობალური ჭერი / `LLM_KILL_SWITCH` → ოპერატორის გზა; უფასოზე კლიენტის დღიური ჭერი 30; ≥80% → WARNING + ადმინ პანელი; provider-ის dashboard-ის spend limit — მფლობელი.
+- **owner:** backend-dev, frontend-dev · **task:** S20-2, S20-8, S20-9, S20-15
+- **status:** ღია — S20-2 / S20-8 / S20-9 / S20-15
+
+### A-038 (N-07) — გამყიდველი და ადმინი პრობლემას ვერ იგებენ
+- **severity:** should-fix (ახალი შეკვეთა და handoff მხოლოდ პანელში ჩანს; „BOT DOWN" — მხოლოდ Render-ის ლოგში; ადრე ხუთივე მაღაზია შეუმჩნევლად გაითიშა)
+- **file:** `backend/app/api/webhook.py:358-369` (გაშიფვრის ჩავარდნა — `logger.error`), `:487-493` (გაგზავნის ჩავარდნა — `logger.exception`), `:216-218` (handoff — მხოლოდ flag), `backend/app/api/orders.py:215-246` (შეკვეთა — მხოლოდ DB)
+- **გამოსწორება:** `services/notify.py` — email გამყიდველს (Resend, `httpx`) ახალ შეკვეთაზე და handoff-ზე; Telegram ადმინს „BOT DOWN"-ზე (გაშიფვრა, ვადაგასული token, გაგზავნა); key-ის გარეშე გამორთულია; in-memory throttle; `shops.bot_status` (0036) + პანელში ჯანმრთელობა და „შეტყობინებები გამორთულია" ნიშანი. Sentry/uptime — Backlog.
+- **owner:** backend-dev, frontend-dev · **task:** S20-2, S20-10, S20-11, S20-12, S20-14
+- **status:** ღია — S20-2 / S20-10 / S20-11 / S20-12 / S20-14
+
+### A-039 — Data Deletion: callback psid-ით შლის (სხვა ID-სივრცე); გამყიდველის ASID და webhook-ის გამოწერა რჩება; კლიენტს მცდარი გზა ეუწყება
+- **severity:** should-fix (privacy / Meta Platform Terms §3.d.i.1, §4.b: „completed"-ის შემდეგ `shops.facebook_user_id` (ASID) რჩება, გვერდი Meta-ზე გამოწერილი რჩება; `bot_conversations`/`bot_customers`-ის psid-ით წაშლა არაფერს შლის; `delete-data.html` კლიენტს „Apps and Websites"-ით ავტომატურ წაშლას ჰპირდება, რაც Messenger-ის კლიენტზე არ მუშაობს)
+- **file:** `backend/app/api/facebook.py:384-403` (`_erase_fb_user_data`: ნაბიჯები 2–3 psid-ით; ნაბიჯი 1 — `facebook_user_id` არ სუფთავდება, `unsubscribe_page` არ იძახება, `bot_customers` shop-ით არ იშლება), `frontend/delete-data.html:43-60`, `frontend/privacy.html:120-124`
+- **დადასტურება:** Meta-ს Data Deletion Callback-ის დოკუმენტაცია („app-scoped ID identifying the user"; ტრიგერი — აპის მოხსნა Apps and Websites-ში, Facebook Login-ის შემდეგ) და Messenger-ის PSID/ASID-ის განმარტება — ციტატები `PROJECT.md` Decision Log 2026-11-04.
+- **გამოსწორება:** გამყიდველის ყოველ მაღაზიაზე: `unsubscribe_page` (best-effort), საუბრები + `bot_customers` `shop_id`-ით, page/IG/token/`facebook_user_id` = null, `bot_enabled = false`; psid-ის ნაბიჯები იხსნება; კლიენტისთვის — `DELETE /shops/{id}/customers/{psid}` (გამყიდველი, RLS) + privacy/delete-data/README-ის ტექსტი.
+- **owner:** backend-dev, frontend-dev, task-executor · **task:** S20-5, S20-13, S20-16, S20-17
+- **status:** ღია — S20-5 / S20-13 / S20-16 / S20-17
 
 ---
 
