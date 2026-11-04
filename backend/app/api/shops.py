@@ -26,6 +26,7 @@ from app.core.tiers import (
     owner_shop_limit,
 )
 from app.models.shop import ShopCreate, ShopOut
+from app.services import subscriptions
 from app.services.bot_limits import enforce_bot_limit
 from app.services.knowledge import build_faq
 from app.services.pdf_extract import extract_pdf_text
@@ -209,10 +210,14 @@ def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
             pending = pr.data[0]["requested_tier"]
     except Exception:
         pass
+    # გამოწერის ვადა (A-036): RLS-ით მფლობელის საკუთარი მწკრივი; ცხრილის შეცდომა → null/false
+    sub = subscriptions.read(auth.client, auth.user_id) if tier != "free" else None
+    expiry = subscriptions.status_for(tier, (sub or {}).get("paid_until"), datetime.now(timezone.utc))
     settings = get_settings()
     return {
         "tier": tier,
         "tier_label": TIER_LABELS[tier],
+        **expiry,
         "monthly_customers": cust.count or 0,
         "customer_limit": limits["customers"],
         "products": prods.count or 0,
@@ -288,6 +293,9 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
+
+    # ვადის მწკრივიც free-ზე (ჩავარდნა → WARNING `write`-ში; response უცვლელია, ვადა მხოლოდ ინფორმაციაა)
+    subscriptions.write(get_service_client(), auth.user_id, "free", None)
 
     shop_ids = [s["id"] for s in res.data]
     try:

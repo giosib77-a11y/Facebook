@@ -4,10 +4,11 @@
 იკითხება (RLS-ს გვერდს უვლის), ამიტომ admin-შემოწმება კრიტიკულია.
 """
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.core.ratelimit import _client_ip
@@ -21,6 +22,7 @@ from app.core.tiers import (
     limits_for,
     normalize_tier,
 )
+from app.services import subscriptions
 from app.services.bot_limits import enforce_bot_limit
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
@@ -40,6 +42,10 @@ class AdminRecovery(BaseModel):
 
 class ResolveRequest(BaseModel):
     approve: bool
+
+
+class ExtendIn(BaseModel):
+    days: int = Field(ge=1, le=366)
 
 
 _warned_no_admins = False
@@ -270,6 +276,11 @@ def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
         cust_rows = sc.table("bot_customers").select("shop_id").eq("ym", ym).execute().data or []
     except Exception:
         cust_rows = []  # migration ჯერ არ გაშვებულა
+    try:
+        sub_rows = sc.table("subscriptions").select("owner_id,paid_until").execute().data or []
+        paid_until_by_owner = {str(r["owner_id"]): r.get("paid_until") for r in sub_rows}
+    except Exception:
+        paid_until_by_owner = {}  # migration 0034 ჯერ არ გაშვებულა
 
     prod_count, order_count, cust_count = {}, {}, {}
     for p in products:
@@ -285,6 +296,8 @@ def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
         result.append({
             "id": s["id"],
             "name": s.get("name"),
+            "owner_id": str(s["owner_id"]) if s.get("owner_id") else None,
+            "paid_until": paid_until_by_owner.get(str(s.get("owner_id"))),
             "owner_email": emails.get(str(s.get("owner_id"))),
             "created_at": s.get("created_at"),
             "products": prod_count.get(s["id"], 0),
@@ -380,9 +393,11 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
         q = sc.table("shops").update({"subscription_tier": payload.subscription_tier})
         (q.eq("owner_id", owner_id) if owner_id else q.eq("id", shop_id)).execute()
         if owner_id:
+            # ადმინის ხელით ცვლა: მოქმედი ფასიანი ვადა უცვლელია, ახალი ფასიანი → +30 დღე, free → ვადის გარეშე
+            subscriptions.apply_tier(sc, owner_id, payload.subscription_tier, renewal=False)
             _apply_bot_limit(sc, owner_id, payload.subscription_tier)
 
-    res = sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
+    res =sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
     row = dict(res[0]) if res else {}
     row.pop("facebook_page_token", None)  # ტოკენს/ცოდნას პასუხში არ ვაბრუნებთ
     row.pop("knowledge", None)
@@ -462,6 +477,8 @@ def resolve_upgrade_request(
         owner = sc.table("shops").select("owner_id").eq("id", r["shop_id"]).limit(1).execute().data
         if owner:
             oid = owner[0]["owner_id"]
+            # ვადა ჯერ (renewal: იგივე tier + მოქმედი ვადა → +30 დღე); ჩავარდნა approve-ს არ აჩერებს
+            subscriptions.apply_tier(sc, oid, tier, renewal=True)
             sc.table("shops").update({"subscription_tier": tier}).eq("owner_id", oid).execute()
             # გადახდა დადასტურდა → downgrade-ით გათიშული ბოტები ბრუნდება (P1-6)
             _apply_bot_limit(sc, oid, tier)
@@ -477,6 +494,36 @@ def resolve_upgrade_request(
             .eq("id", req_id).eq("status", "pending").execute()
         )
     return {"ok": True}
+
+
+@router.post("/subscriptions/{owner_id}/extend")
+def extend_subscription(
+    owner_id: uuid.UUID, payload: ExtendIn, admin: CurrentAuth = Depends(get_current_admin)
+):
+    """ფასიანი გამოწერის ვადის გაგრძელება N დღით: `max(ახლა, არსებული paid_until) + days`."""
+    sc = get_service_client()
+    oid = str(owner_id)
+    shops = sc.table("shops").select("subscription_tier").eq("owner_id", oid).execute().data or []
+    if not shops:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მფლობელი ვერ მოიძებნა")
+    tier = best_tier(s.get("subscription_tier") for s in shops)
+    if tier == "free":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "უფასო პაკეტს ვადა არ აქვს")
+
+    unavailable = HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE, "გამოწერების ცხრილი ჯერ არ არის (migration 0034)"
+    )
+    try:
+        current = subscriptions.read(sc, oid, strict=True)
+    except Exception:
+        raise unavailable
+    now = datetime.now(timezone.utc)
+    current_until = subscriptions.parse_ts((current or {}).get("paid_until"))
+    base = max(now, current_until) if current_until else now
+    paid_until = base + timedelta(days=payload.days)
+    if not subscriptions.write(sc, oid, tier, paid_until):
+        raise unavailable
+    return {"owner_id": oid, "tier": tier, "paid_until": paid_until.isoformat()}
 
 
 @router.post("/recovery")
