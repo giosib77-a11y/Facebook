@@ -14,8 +14,8 @@ from app.config import get_settings
 from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
 from app.core.tiers import daily_cap, limits_for
-from app.services.facebook import download_image, send_text_message, verify_signature
-from app.services import budget, memory
+from app.services.facebook import GraphError, download_image, send_text_message, verify_signature
+from app.services import budget, memory, notify
 from app.services.graph import run_turn
 
 router = APIRouter(tags=["messenger webhook"])
@@ -139,6 +139,36 @@ BOT_PAUSE_HOURS = 12
 _ECHO_TEXT_MAX = 2000
 _PAUSE_COLUMN_WARNED = False  # bot_paused_until-ის არარსებობის WARNING — ერთხელ პროცესზე
 _ECHO_APP_ID_WARNED = False   # FB_APP_ID-ის არარსებობის WARNING — ერთხელ პროცესზე
+
+
+_BOT_STATUS_COLUMN_WARNED = False  # shops.bot_status-ის ჩაწერა ვერ მოხერხდა (migration 0036) — ერთხელ პროცესზე
+_GRAPH_TOKEN_ERROR_CODE = 190  # Graph OAuthException: token ვადაგასულია / გაუქმებულია
+
+
+def _set_bot_status(sc, shop: dict, status: str) -> None:
+    """ბოტის ჯანმრთელობის ჩაწერა `shops.bot_status`-ში (migration 0036). არასდროს აგდებს.
+
+    ჩაწერა მხოლოდ ცვლილებაზეა: "ok" ჯანსაღ გზაზე (სტატუსი null/ok) ბაზას არ ეხება, იგივე სტატუსი
+    ხელახლა არ იწერება. migration 0036-ის გარეშე (ჩაწერა ჩავარდა) ჯანმრთელობა გამორთულია:
+    ერთი WARNING პროცესზე, მერე ჩაწერის მცდელობა აღარ არის.
+    """
+    global _BOT_STATUS_COLUMN_WARNED
+    if _BOT_STATUS_COLUMN_WARNED:
+        return
+    cur = shop.get("bot_status")
+    if cur == status or (status == "ok" and cur is None):
+        return
+    try:
+        (
+            sc.table("shops")
+            .update({"bot_status": status, "bot_status_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", shop["id"]).execute()
+        )
+    except Exception:
+        _BOT_STATUS_COLUMN_WARNED = True
+        logger.warning("shops.bot_status missing (migration 0036 not applied) - bot health disabled")
+        return
+    shop["bot_status"] = status
 
 
 def _warn_pause_missing() -> None:
@@ -479,6 +509,8 @@ def _process_events(data: dict) -> None:
                 "შეამოწმე FB_TOKEN_ENCRYPTION_KEY ან ხელახლა დააკავშირე გვერდი",
                 shop.get("id"), eid,
             )
+            _set_bot_status(sc, shop, "token_error")
+            notify.alert_bot_down(shop, "token_error")
             continue
 
         products = _load_bot_products(sc, shop["id"])
@@ -570,6 +602,8 @@ def _process_events(data: dict) -> None:
             reason = None if (over_limit or bot_disabled) else budget.blocked_reason(sc, shop)
             if reason:
                 logger.warning("bot budget: %s - operator reply (shop=%s)", reason, shop.get("id"))
+                if reason == "monthly_budget":
+                    _set_bot_status(sc, shop, "budget_exhausted")
 
             if over_limit or bot_disabled or reason:
                 auto_reply = OPERATOR_SOON_REPLY
@@ -588,6 +622,7 @@ def _process_events(data: dict) -> None:
                     )
                 except Exception:
                     logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
+                notify.notify_handoff(sc, shop)  # email მფლობელს (არასდროს აგდებს; throttled)
                 continue
 
             # შემოსული სურათების ჩამოტვირთვა (მაქს 3) — LLM-ისთვის
@@ -621,13 +656,21 @@ def _process_events(data: dict) -> None:
                 # გრძელ პასუხს ნაწილებად ვგზავნით; ჩავარდნისას დანარჩენს აღარ ვაგზავნით
                 for part in _split_reply(reply, reply_limit):
                     send_text_message(page_token, sender_id, part)
-            except Exception:
+            except Exception as e:
                 # კლიენტმა პასუხი ვერ მიიღო. ვადაგასული page token ასე გამოიყურება.
                 logger.exception(
-                    "პასუხის გაგზავნა ჩავარდა (shop=%s, psid=%s) — შესაძლოა page token ვადაგასულია",
-                    shop.get("id"), sender_id,
+                    "პასუხის გაგზავნა ჩავარდა (shop=%s) — შესაძლოა page token ვადაგასულია",
+                    shop.get("id"),
                 )
+                kind = (
+                    "token_expired"
+                    if isinstance(e, GraphError) and e.code == _GRAPH_TOKEN_ERROR_CODE
+                    else "send_failed"
+                )
+                _set_bot_status(sc, shop, kind)
+                notify.alert_bot_down(shop, kind)
                 continue
+            _set_bot_status(sc, shop, "ok")
             try:
                 _save_turn(
                     sc, shop["id"], str(sender_id), conv.messages, saved_text, reply, handoff,
@@ -636,3 +679,5 @@ def _process_events(data: dict) -> None:
             except Exception:
                 # პასუხი უკვე გაიგზავნა — მეხსიერების ჩაწერის ჩავარდნა კლიენტს არ ეხება
                 logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s)", shop.get("id"), exc_info=True)
+            if handoff:
+                notify.notify_handoff(sc, shop)  # email მფლობელს (არასდროს აგდებს; throttled)

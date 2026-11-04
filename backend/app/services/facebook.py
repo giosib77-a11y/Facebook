@@ -41,10 +41,11 @@ class GraphError(Exception):
     str()/repr() უსაფრთხოა როგორც ლოგისთვის, ისე პასუხისთვის.
     """
 
-    def __init__(self, status_code: int | None, message: str):
+    def __init__(self, status_code: int | None, message: str, code: int | None = None):
         super().__init__(status_code, message)
         self.status_code = status_code
         self.message = message
+        self.code = code  # Graph-ის error.code (მაგ. 190 — token ვადაგასულია / გაუქმებულია)
 
     def __str__(self) -> str:
         return self.message
@@ -59,6 +60,15 @@ def _graph_error_message(r: httpx.Response) -> str:
     if isinstance(message, str) and message:
         return message[:200]
     return f"HTTP {r.status_code}"
+
+
+def _graph_error_code(r: httpx.Response) -> int | None:
+    """Graph-ის JSON error.code (int), თუ არა — None."""
+    try:
+        code = r.json().get("error", {}).get("code")
+    except (ValueError, AttributeError):
+        return None
+    return code if isinstance(code, int) and not isinstance(code, bool) else None
 
 
 def _graph(method: str, path: str, **kwargs) -> httpx.Response:
@@ -85,7 +95,7 @@ def _graph(method: str, path: str, **kwargs) -> httpx.Response:
     except httpx.RequestError:
         raise GraphError(None, "network error") from None
     if not r.is_success:
-        raise GraphError(r.status_code, _graph_error_message(r)) from None
+        raise GraphError(r.status_code, _graph_error_message(r), _graph_error_code(r)) from None
     return r
 
 
