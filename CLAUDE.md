@@ -22,7 +22,7 @@
 - typecheck: `cd backend && .venv/Scripts/python.exe -m compileall -q app`
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
-  (ერთჯერადი გაშვება, watch-ის გარეშე; 2511 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
+  (ერთჯერადი გაშვება, watch-ის გარეშე; 2518 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
 - test frontend: `cd frontend && npm test`
   (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; 80 ტესტი `src/**/*.test.{js,jsx}` ფაილის გვერდით)
 - e2e frontend: `cd frontend && npm run build && npm run test:e2e`
