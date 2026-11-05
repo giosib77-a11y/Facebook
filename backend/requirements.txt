@@ -14,3 +14,5 @@ python-multipart>=0.0.9
 pypdf>=6.21.4
 # Stage 16: graph wiring only - LLM calls stay in services/llm.py (no LangChain chat models)
 langgraph>=1.2
+# Stage 22 (A-046): local JWT verification via JWKS; already locked via supabase-auth
+pyjwt[crypto]>=2.10
