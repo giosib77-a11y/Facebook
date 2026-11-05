@@ -1,5 +1,6 @@
 """Stage 20 (S20-2): SMTP / Telegram / LLM-ბიუჯეტის Settings."""
 import os
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -22,12 +23,6 @@ def test_defaults():
     s = _settings()
     assert s.smtp_port == 587
     assert s.llm_kill_switch is False
-    assert s.llm_daily_token_cap == 3_000_000
-    assert s.llm_daily_tokens_per_owner == 1_000_000
-    assert s.llm_monthly_tokens_free == 2_000_000
-    assert s.llm_monthly_tokens_basic == 12_000_000
-    assert s.llm_monthly_tokens_standard == 48_000_000
-    assert s.llm_monthly_tokens_business == 180_000_000
 
 
 def test_channels_disabled_by_default():
@@ -41,8 +36,6 @@ def test_conftest_pins_notify_env_blank():
     assert os.environ["SMTP_HOST"] == ""
     assert os.environ["TELEGRAM_BOT_TOKEN"] == ""
     assert "SMTP_PORT" not in os.environ
-    assert "LLM_DAILY_TOKEN_CAP" not in os.environ
-    assert "LLM_DAILY_TOKENS_PER_OWNER" not in os.environ
 
 
 def test_email_enabled_when_all_four_set():
@@ -73,13 +66,9 @@ def test_string_fields_are_stripped():
 def test_env_values_are_read(monkeypatch):
     monkeypatch.setenv("SMTP_PORT", "465")
     monkeypatch.setenv("LLM_KILL_SWITCH", "true")
-    monkeypatch.setenv("LLM_MONTHLY_TOKENS_BASIC", "0")
-    monkeypatch.setenv("LLM_DAILY_TOKENS_PER_OWNER", "500000")
     s = _settings()
-    assert s.llm_daily_tokens_per_owner == 500_000
     assert s.smtp_port == 465
     assert s.llm_kill_switch is True
-    assert s.llm_monthly_budget("basic") == 0  # 0 = ჭერი გამორთულია
 
 
 @pytest.mark.parametrize("port", [0, -1, 70000, 65536])
@@ -100,33 +89,20 @@ def test_repr_hides_secrets():
     assert "999:telegram-token-xyz" not in text
 
 
-def test_monthly_budget_per_tier():
+def test_token_budget_settings_removed():
+    """S21-8 (A-048): the token budget is gone — USD only (see test_config_stage21.py)."""
     s = _settings()
-    assert s.llm_monthly_budget("free") == 2_000_000
-    assert s.llm_monthly_budget("basic") == 12_000_000
-    assert s.llm_monthly_budget("standard") == 48_000_000
-    assert s.llm_monthly_budget("business") == 180_000_000
-
-
-@pytest.mark.parametrize("tier", ["nonsense", "", None, "BASIC"])
-def test_monthly_budget_unknown_tier_is_free(tier):
-    assert _settings().llm_monthly_budget(tier) == 2_000_000
-
-
-@pytest.mark.parametrize("field", [
-    "llm_daily_token_cap", "llm_daily_tokens_per_owner", "llm_monthly_tokens_free", "llm_monthly_tokens_basic",
-    "llm_monthly_tokens_standard", "llm_monthly_tokens_business",
-])
-def test_negative_caps_rejected(field):
-    with pytest.raises(ValidationError):
-        _settings(**{field: -1})
-
-
-def test_zero_caps_allowed():
-    s = _settings(llm_daily_token_cap=0, llm_daily_tokens_per_owner=0, llm_monthly_tokens_free=0)
-    assert s.llm_daily_token_cap == 0
-    assert s.llm_daily_tokens_per_owner == 0
-    assert s.llm_monthly_budget("free") == 0
+    for name in (
+        "llm_daily_token_cap", "llm_daily_tokens_per_owner", "llm_monthly_tokens_free",
+        "llm_monthly_tokens_basic", "llm_monthly_tokens_standard", "llm_monthly_tokens_business",
+        "llm_monthly_budget",
+    ):
+        assert not hasattr(s, name), name
+    example = (Path(__file__).resolve().parents[2] / ".env.example").read_text(encoding="utf-8")
+    assert "LLM_DAILY_TOKEN_CAP" not in example
+    assert "LLM_DAILY_TOKENS_PER_OWNER" not in example
+    assert "LLM_MONTHLY_TOKENS_" not in example
+    assert "LLM_DAILY_USD_CAP" in example  # the USD budget stays documented
 
 
 def test_missing_required_secrets_excludes_new_names():

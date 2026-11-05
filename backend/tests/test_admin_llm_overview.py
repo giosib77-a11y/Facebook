@@ -89,6 +89,30 @@ def test_overview_kill_switch_raises_alert(admin_db, monkeypatch):
     assert llm["alert"] is True
 
 
+def _fake_status(**kw):
+    status = {"today_usd": 0.0, "month_usd": 0.0, "daily_cap_usd": CAP, "kill_switch": False, "alert": False}
+    status.update(kw)
+    return status
+
+
+def test_overview_passes_spend_status_through(admin_db, monkeypatch):
+    status = _fake_status(today_usd=0.9, month_usd=3.0, alert=True)
+    monkeypatch.setattr(budget, "spend_status", lambda sc: dict(status))
+
+    assert _overview().json()["llm"] == status
+
+
+def test_overview_does_not_recompute_alert_from_kill_switch(admin_db, monkeypatch):
+    # spend_status already folds kill_switch into `alert`; overview must not add its own compensation.
+    status = _fake_status(kill_switch=True, alert=False)
+    monkeypatch.setattr(budget, "spend_status", lambda sc: dict(status))
+
+    llm = _overview().json()["llm"]
+
+    assert llm["kill_switch"] is True
+    assert llm["alert"] is False
+
+
 def test_overview_migration_missing_gives_null_usd(admin_db):
     class Missing(Exception):
         code = "PGRST202"

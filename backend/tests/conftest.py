@@ -30,9 +30,7 @@ os.environ["LLM_PROVIDER"] = "claude"
 # non-string settings / defaults: an empty string would override the default (or fail to parse)
 for _name in (
     "CLAUDE_MODEL", "OPENAI_MODEL", "LLM_TIMEOUT_SECONDS",
-    "SMTP_PORT", "LLM_KILL_SWITCH", "LLM_DAILY_TOKEN_CAP", "LLM_MONTHLY_TOKENS_FREE",
-    "LLM_MONTHLY_TOKENS_BASIC", "LLM_MONTHLY_TOKENS_STANDARD", "LLM_MONTHLY_TOKENS_BUSINESS",
-    "LLM_DAILY_TOKENS_PER_OWNER",
+    "SMTP_PORT", "LLM_KILL_SWITCH",
     # Stage 21: worker / CSP / USD ბიუჯეტი / ფასები — ტესტებში მხოლოდ კოდის default-ები
     "BOT_MAX_CONCURRENCY", "WEBHOOK_POLL_SECONDS", "WEBHOOK_MAX_ATTEMPTS",
     "WEBHOOK_CLAIM_STALE_SECONDS", "CSP_REPORT_ONLY", "LLM_DAILY_USD_CAP",

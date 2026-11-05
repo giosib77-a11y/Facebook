@@ -214,9 +214,8 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         tier_counts[t] = tier_counts.get(t, 0) + 1
         mrr += TIER_PRICES.get(t, 0)
 
-    # API Contract: alert = kill_switch or (today_tokens >= 80% of the daily cap)
+    # API Contract: alert = kill_switch or (today_usd >= 80% of the daily cap) — spend_status already folds both in
     llm = budget.spend_status(sc)
-    llm["alert"] = bool(llm["alert"] or llm["kill_switch"])
 
     return {
         "total_shops": len(shops),

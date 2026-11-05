@@ -116,14 +116,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field("", repr=False)
     telegram_chat_id: str = ""
 
-    # Stage 20 — LLM ბიუჯეტი (A-037). 0 = შესაბამისი ჭერი გამორთულია.
+    # Stage 20 — LLM kill-switch (A-037). ბიუჯეტი USD-შია (Stage 21, ქვემოთ).
     llm_kill_switch: bool = False
-    llm_daily_token_cap: int = Field(3_000_000, ge=0)  # გლობალური დღიური ჭერი (ყველა tenant ერთად)
-    llm_daily_tokens_per_owner: int = Field(1_000_000, ge=0)  # მფლობელის ყველა მაღაზიის დღიური ჯამი (~⅓ გლობალურის)
-    llm_monthly_tokens_free: int = Field(2_000_000, ge=0)
-    llm_monthly_tokens_basic: int = Field(12_000_000, ge=0)
-    llm_monthly_tokens_standard: int = Field(48_000_000, ge=0)
-    llm_monthly_tokens_business: int = Field(180_000_000, ge=0)
 
     # Stage 21 (A-040) — webhook_inbox worker. None = production-ში ჩართული, dev-ში გამორთული
     # (ლოკალური .env production ბაზას უკავშირდება — dev-ში worker ნაგულისხმევად არ იწყებს რიგის დამუშავებას).
@@ -266,10 +260,6 @@ class Settings(BaseSettings):
     @property
     def telegram_enabled(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
-
-    def llm_monthly_budget(self, tier: str | None) -> int:
-        """თვიური ტოკენების ბიუჯეტი პაკეტზე (0 = ჭერი გამორთულია). უცნობი პაკეტი → free."""
-        return getattr(self, f"llm_monthly_tokens_{normalize_tier(tier)}")
 
     @property
     def webhook_inbox_active(self) -> bool:
