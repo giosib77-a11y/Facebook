@@ -862,6 +862,12 @@ Stage 21 (დაგეგმილი; idempotent, მფლობელი ხ�
 - Decision: per-request Supabase client-ის საერთო `httpx.Client` Stage 22-ში **არ** კეთდება (outline-ში იყო). `ClientOptions(httpx_client=…)` იგივე client-ს auth / storage / functions-საც გადასცემს; postgrest 2.32-ში `Authorization` client-ის `headers`-შია და ყოველ მოთხოვნას ცალკე ერთვის (გადამოწმდა `.venv`-ში), მაგრამ ნებისმიერი ქვე-ბიბლიოთეკის მიერ საერთო client-ის header-ის შეცვლა სხვა მომხმარებლის JWT-ს სხვის მოთხოვნაში ჩასვამდა (tenant isolation) — „მცირე და უსაფრთხო" ცვლილება ეს არ არის. ლოკალური შემოწმება ქსელის ერთ round-trip-ს (`get_user`) ისედაც აშორებს.
 - როგორ შეიცვლება: Backlog „Stage 22" — საკუთარი `SyncPostgrestClient` საერთო client-ით + პარალელური მოთხოვნების ტესტი, latency-ის გაზომვის შემდეგ.
 
+### 2026-11-05 — Stage 22: task-ების შესრულებისას მიღებული გადაწყვეტილებები (S22-2, S22-4, S22-7)
+- S22-2: 413 — literal `413` (Starlette-ის `HTTP_413_REQUEST_ENTITY_TOO_LARGE` deprecated-ია); import-ის არსებული პროდუქტების წაკითხვა ახლა `run`-ით — DB-ის შეცდომა HTTP 403/400-ად ითარგმნება (ადრე 500).
+- S22-4: „RPC არ არის" WARNING ერთხელ პროცესზე **თითო ფუნქციაზე** (`_RPC_WARNED: set`); Python-ის fallback-ში orders / products / bot_customers-ის ჭერი 200 000 (მხოლოდ 0039-მდე; non-strict, WARNING).
+- S22-7: `JWKS_ERROR_BACKOFF_SECONDS = 30` — JWKS-ის შეცდომის შემდეგ 30 წმ ქსელს აღარ ვცდით (თორემ ავარიისას ყოველი ES256 მოთხოვნა 5 წმ timeout-ს დაელოდებოდა და threadpool-ს დაახრჩობდა); ამ დროს `get_user` (ავტორიტეტული). JWKS-ის ეტაპზე ნებისმიერი exception → `get_user`, არასდროს 401. header-ის ნებისმიერი `InvalidTokenError` (მაგ. არა-str `kid`, არასწორი `crit`) → 401, HS256-ზეც (ასეთი token ლეგიტიმური არ არის). JWKS-ის მოთხოვნას საკუთარი `User-Agent` აქვს.
+- როგორ შეიცვლება: backoff / ჭერები — მოდულის კონსტანტები, ერთი ხაზი.
+
 ### 2026-11-05 — Stage 22: migrations 0039–0040, JWT გასაღების გადართვა, deploy-ის რიგი
 - Decision: `0039_admin_stats.sql` → `0040_products_search_trgm.sql` (ორივე idempotent, ქართული header, ბოლოს შემოწმება + ROLLBACK, სტატიკური ტესტი); ორივე deploy-მდე **რეკომენდებული**, არა სავალდებულო (fallback-ები, restart-ის გარეშე გადართვა). Supabase-ის signing key-ის ES256-ზე გადართვა (Migrate JWT secret → standby ECC P-256 → ≥20 წთ → Rotate keys; legacy secret-ის revoke — არა Stage 22-ში) შეიძლება **ახლავე**, Stage 22-ის კოდისგან დამოუკიდებლად: დღევანდელი backend მხოლოდ `get_user`-ით ამოწმებს. რეკომენდებული რიგი: გადართვა → ≥24 სთ → 0039 → 0040 → deploy (`PROGRESS.md` `### Stage 22 — Deploy plan`). შემდეგი migration — `0041` (Stage 23).
 
