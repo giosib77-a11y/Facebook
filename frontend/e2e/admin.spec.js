@@ -8,7 +8,7 @@ test("ადმინ პანელი: LLM ხარჯის ბანერ
     "GET /admin/overview": {
       mrr: 29, total_shops: 1, total_sellers: 1, connected_shops: 0, total_products: 0,
       total_orders: 0, orders_30d: 0, revenue: 0,
-      llm: { today_tokens: 900, month_tokens: 12345, daily_cap: 1000, kill_switch: false, alert: true },
+      llm: { today_usd: 0.9, month_usd: 12.34, daily_cap_usd: 1, kill_switch: false, alert: true },
     },
     "GET /admin/shops": [{
       id: "s1", owner_id: "o1", name: "ტესტ მაღაზია", owner_email: "a@example.com", tier: "starter",
@@ -23,7 +23,7 @@ test("ადმინ პანელი: LLM ხარჯის ბანერ
   });
   await page.goto("admin.html");
 
-  await expect(page.getByText("⚠️ LLM ხარჯი: დღეს 900 / 1000 ტოკენი (90%)")).toBeVisible();
+  await expect(page.getByText("⚠️ LLM ხარჯი: დღეს $0.90 / $1.00 (90%)")).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "ვადა" })).toBeVisible();
   await expect(page.getByRole("button", { name: "+30 დღე" })).toBeEnabled();
   expect(net.blocked).toEqual([]);

@@ -25,10 +25,11 @@ function isExpiringSoon(paidUntil) {
 }
 
 function llmAlertText(llm) {
-  const hasToday = llm.today_tokens != null;
+  const hasToday = llm.today_usd != null;
   const pct =
-    hasToday && llm.daily_cap > 0 ? Math.round((llm.today_tokens / llm.daily_cap) * 100) + "%" : "—";
-  return `⚠️ LLM ხარჯი: დღეს ${hasToday ? llm.today_tokens : "—"} / ${llm.daily_cap} ტოკენი (${pct})`;
+    hasToday && llm.daily_cap_usd > 0 ? Math.round((llm.today_usd / llm.daily_cap_usd) * 100) + "%" : "—";
+  const today = hasToday ? "$" + llm.today_usd.toFixed(2) : "—";
+  return `⚠️ LLM ხარჯი: დღეს ${today} / $${Number(llm.daily_cap_usd).toFixed(2)} (${pct})`;
 }
 
 function Stat({ val, lbl, mrr }) {
@@ -376,8 +377,8 @@ export default function AdminPage() {
                     <Stat val={overview.revenue + " ₾"} lbl="ბრუნვა (გაუქმ. გარეშე)" />
                     {overview.llm && (
                       <Stat
-                        val={overview.llm.month_tokens != null ? overview.llm.month_tokens : "—"}
-                        lbl="LLM ტოკენი (თვე)"
+                        val={overview.llm.month_usd != null ? "$" + overview.llm.month_usd.toFixed(2) : "—"}
+                        lbl="LLM ხარჯი (თვე)"
                       />
                     )}
                     <Stat

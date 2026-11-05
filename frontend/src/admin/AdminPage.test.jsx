@@ -130,30 +130,39 @@ test("+30 days is disabled on the free tier, and no date shows as a dash", async
   expect(screen.getByRole("button", { name: "+30 დღე" })).toBeDisabled();
 });
 
-test("llm.alert shows the spend banner; null today_tokens does not produce NaN", async () => {
+test("llm.alert shows the spend banner in dollars and the monthly stat", async () => {
   data["/admin/overview"] = {
     ...OVERVIEW,
-    llm: { today_tokens: 850, month_tokens: 5000, daily_cap: 1000, kill_switch: false, alert: true },
+    llm: { today_usd: 0.85, month_usd: 12.34, daily_cap_usd: 1, kill_switch: false, alert: true },
   };
   await renderPage();
-  expect(screen.getByText("⚠️ LLM ხარჯი: დღეს 850 / 1000 ტოკენი (85%)")).toBeInTheDocument();
-  expect(screen.getByText("LLM ტოკენი (თვე)")).toBeInTheDocument();
-  expect(screen.getByText("5000")).toBeInTheDocument();
+  expect(screen.getByText("⚠️ LLM ხარჯი: დღეს $0.85 / $1.00 (85%)")).toBeInTheDocument();
+  expect(screen.getByText("LLM ხარჯი (თვე)")).toBeInTheDocument();
+  expect(screen.getByText("$12.34")).toBeInTheDocument();
 });
 
-test("llm.alert with unknown today_tokens shows a dash instead of NaN", async () => {
+test("llm.alert with unknown today_usd shows dashes instead of NaN", async () => {
   data["/admin/overview"] = {
     ...OVERVIEW,
-    llm: { today_tokens: null, month_tokens: null, daily_cap: 1000, kill_switch: false, alert: true },
+    llm: { today_usd: null, month_usd: null, daily_cap_usd: 1, kill_switch: false, alert: true },
   };
   await renderPage();
-  expect(screen.getByText("⚠️ LLM ხარჯი: დღეს — / 1000 ტოკენი (—)")).toBeInTheDocument();
+  expect(screen.getByText("⚠️ LLM ხარჯი: დღეს — / $1.00 (—)")).toBeInTheDocument();
+});
+
+test("llm.alert with zero cap shows a dash for the percent", async () => {
+  data["/admin/overview"] = {
+    ...OVERVIEW,
+    llm: { today_usd: 0.5, month_usd: 1, daily_cap_usd: 0, kill_switch: false, alert: true },
+  };
+  await renderPage();
+  expect(screen.getByText("⚠️ LLM ხარჯი: დღეს $0.50 / $0.00 (—)")).toBeInTheDocument();
 });
 
 test("kill_switch shows its banner", async () => {
   data["/admin/overview"] = {
     ...OVERVIEW,
-    llm: { today_tokens: 1, month_tokens: 1, daily_cap: 1000, kill_switch: true, alert: true },
+    llm: { today_usd: 1, month_usd: 1, daily_cap_usd: 1, kill_switch: true, alert: true },
   };
   await renderPage();
   expect(screen.getByText("LLM_KILL_SWITCH ჩართულია — ბოტი ყველგან ოპერატორზეა")).toBeInTheDocument();
