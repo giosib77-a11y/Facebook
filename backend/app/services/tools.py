@@ -1,4 +1,6 @@
-"""Bot tools (Stage 16): static specs + executors. Pure: no SDK, no LLM, no DB, no network.
+"""Bot tools (Stage 16): static specs + executors. Pure, except `search_products` on big catalogues
+(Stage 22): DB only via `services/product_search`, shop id only from `ctx.shop` (never a tool argument).
+No SDK, no LLM.
 
 Tenant isolation is structural: the executors read the shop and its products ONLY from the
 ToolContext, which the caller (graph state) built from the shop the webhook resolved. A tool
@@ -11,7 +13,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from app.services import prompt
+from app.services import product_search, prompt
 
 logger = logging.getLogger("app.tools")
 
@@ -116,7 +118,13 @@ def _valid_query(arguments: dict) -> str | None:
 def _search_products(query: str, ctx: ToolContext) -> str:
     products = ctx.products or []
     shown = query[:_QUERY_ECHO_CHARS]
-    matches = prompt.match_products(products, query, _PRODUCT_LIMIT)
+    matches = None
+    shop_id = ctx.shop.get("id")
+    if shop_id and product_search.enabled_for(len(products)):
+        # დიდი კატალოგი — Postgres (0040); None (RPC მიუწვდომელია) → მეხსიერების ძებნა
+        matches = product_search.search(str(shop_id), query, _PRODUCT_LIMIT)
+    if matches is None:
+        matches = prompt.match_products(products, query, _PRODUCT_LIMIT)
     if not matches:
         return f'No products match "{shown}". The catalogue has {len(products)} products.'
     currency = prompt.currency_of(ctx.shop)
