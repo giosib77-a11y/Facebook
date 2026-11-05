@@ -1,8 +1,10 @@
 """FastAPI entrypoint."""
+import asyncio
 import hmac
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -20,6 +22,7 @@ from app.api.shops import router as shops_router
 from app.api.webhook import router as webhook_router
 from app.config import get_settings
 from app.core.logging import setup_logging
+from app.services import inbox, inbox_worker
 
 settings = get_settings()
 setup_logging(settings.log_level)
@@ -71,14 +74,41 @@ def _docs_kwargs(s) -> dict:
     return {}
 
 
+logger = logging.getLogger("app")
+
+_WORKER_STOP_TIMEOUT = 25  # seconds; Render sends SIGKILL ~30 s after SIGTERM
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """A-040: webhook_inbox worker in the same process (only when WEBHOOK_INBOX_ENABLED / production)."""
+    s = get_settings()
+    if not s.webhook_inbox_active:
+        yield
+        return
+    stop = asyncio.Event()
+    task = asyncio.create_task(inbox_worker.run(stop))
+    logger.info("webhook worker started (concurrency=%d)", s.bot_max_concurrency)
+    try:
+        yield
+    finally:
+        stop.set()
+        inbox.wake()
+        try:
+            await asyncio.wait_for(task, _WORKER_STOP_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "webhook worker did not stop in time - unfinished events retry after WEBHOOK_CLAIM_STALE_SECONDS"
+            )
+
+
 app = FastAPI(
     title="ქართული მაღაზიების AI ბოტი — API",
     description="Multi-tenant SaaS: Facebook Messenger AI ბოტი ქართული მაღაზიებისთვის",
     version="0.1.0",
+    lifespan=lifespan,
     **_docs_kwargs(settings),
 )
-
-logger = logging.getLogger("app")
 
 # ── მოთხოვნის ზომის ლიმიტი (FA-07/FA-08) ──
 # უზარმაზარი body მეხსიერებაში რომ არ ჩაიტვირთოს — 413 ვაბრუნებთ, სანამ handler-ამდე მივა.
