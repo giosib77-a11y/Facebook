@@ -53,6 +53,7 @@ class FakeInbox:
     def __init__(self, monkeypatch, batches):
         self.batches = list(batches)
         self.claim_times = []
+        self.limits = []
         self.completed = []
         self.failed = []
         self._lock = threading.Lock()
@@ -63,6 +64,7 @@ class FakeInbox:
     def claim(self, sc, limit):
         with self._lock:
             self.claim_times.append(time.monotonic())
+            self.limits.append(limit)
             batch = self.batches.pop(0) if self.batches else []
         if isinstance(batch, Exception):
             raise batch
@@ -264,6 +266,100 @@ async def test_full_batch_claims_again_immediately(monkeypatch):
     async with _running():
         await _until(lambda: len(fake.completed) == 9)
     assert len(fake.claim_times) >= 2
+
+
+@pytest.mark.anyio
+async def test_other_conversation_not_blocked_by_running_turn(monkeypatch):
+    # a long turn of one conversation must not hold back the next claim for the others (no batch barrier)
+    fake = FakeInbox(monkeypatch, [[_row(1, psid="u1")], [_row(2, psid="u2")]])
+    release = threading.Event()
+    started = []
+
+    def process(row):
+        started.append(row["id"])
+        if row["id"] == 1:
+            release.wait(10)
+
+    monkeypatch.setattr(webhook, "process_inbox_row", process)
+    try:
+        async with _running():
+            try:
+                await _until(lambda: started == [1])
+                inbox.wake()
+                await _until(lambda: fake.completed == [2], timeout=1.0)  # row 1 is still blocked
+                assert started == [1, 2]
+            finally:
+                release.set()
+            await _until(lambda: fake.completed == [2, 1])
+    finally:
+        release.set()
+    assert fake.failed == []
+
+
+@pytest.mark.anyio
+async def test_same_conversation_row_claimed_while_running_waits_its_turn(monkeypatch):
+    fake = FakeInbox(monkeypatch, [[_row(1, psid="u1")], [_row(3, psid="u1")]])
+    release = threading.Event()
+    lock = threading.Lock()
+    active = [0]
+    overlap = [False]
+    started = []
+
+    def process(row):
+        with lock:
+            active[0] += 1
+            overlap[0] = overlap[0] or active[0] > 1
+            started.append(row["id"])
+        try:
+            if row["id"] == 1:
+                release.wait(10)
+        finally:
+            with lock:
+                active[0] -= 1
+
+    monkeypatch.setattr(webhook, "process_inbox_row", process)
+    try:
+        async with _running():
+            try:
+                await _until(lambda: started == [1])
+                inbox.wake()
+                await _until(lambda: len(fake.claim_times) >= 2, timeout=1.0)  # row 3 was claimed meanwhile ...
+                await anyio.sleep(0.2)
+                assert started == [1]  # ... but waits for row 1
+            finally:
+                release.set()
+            await _until(lambda: fake.completed == [1, 3])
+    finally:
+        release.set()
+    assert started == [1, 3]
+    assert overlap[0] is False
+
+
+@pytest.mark.anyio
+async def test_claim_limited_to_free_slots(monkeypatch):
+    # bot_max_concurrency=1 -> batch = 2
+    _patch_settings(monkeypatch, webhook_poll_seconds=60.0, bot_max_concurrency=1)
+    fake = FakeInbox(monkeypatch, [[_row(1, psid="u1"), _row(2, psid="u2")], [_row(3, psid="u3")]])
+    gates = {1: threading.Event(), 2: threading.Event(), 3: threading.Event()}
+    monkeypatch.setattr(webhook, "process_inbox_row", lambda row: gates[row["id"]].wait(10))
+    try:
+        async with _running():
+            await _until(lambda: len(fake.limits) == 1)
+            assert fake.limits == [2]
+            inbox.wake()
+            await anyio.sleep(0.2)
+            assert fake.limits == [2]  # both slots busy: nothing is claimed
+            gates[1].set()
+            await _until(lambda: fake.completed == [1], timeout=1.0)
+            await _until(lambda: len(fake.limits) == 2, timeout=1.0)
+            assert fake.limits[1] == 1  # one slot freed (row 2 still in flight)
+            for gate in gates.values():
+                gate.set()
+            await _until(lambda: sorted(fake.completed) == [1, 2, 3])
+    finally:
+        for gate in gates.values():
+            gate.set()
+    assert fake.failed == []
 
 
 def test_lifespan_worker_not_started_when_inbox_disabled(monkeypatch):
