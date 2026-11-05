@@ -143,9 +143,10 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │       │   ├── facebook.py      OAuth connect/disconnect · data deletion
 │       │   └── admin.py         მფლობელის პანელი (მხოლოდ ADMIN_USER_IDS)
 │       ├── core/
-│       │   ├── security.py      Supabase JWT → CurrentAuth (RLS-იანი კლიენტი)
+│       │   ├── security.py      Supabase JWT → CurrentAuth (RLS-იანი კლიენტი, `claims`); ES256/RS256 — ლოკალურად (jwt_verify), სხვა — ქსელური get_user; ადმინი ყოველთვის ქსელითაც
+│       │   ├── jwt_verify.py    ლოკალური JWT შემოწმება PyJWT + JWKS-ით (Stage 22); ვერ წყდება → None → get_user
 │       │   ├── supabase_client.py  anon (publishable key) / service (secret key) კლიენტები
-│       │   ├── db.py            Postgres შეცდომების → HTTP კოდები
+│       │   ├── db.py            Postgres შეცდომების → HTTP კოდები · `fetch_all` — სრული სია 1000-მწკრივიანი ჭერის გვერდებით გავლით (Stage 22)
 │       │   ├── crypto.py        Fernet — page token-ის შიფვრა
 │       │   ├── ratelimit.py     in-memory per-IP sliding window
 │       │   └── tiers.py         პაკეტები, ლიმიტები, ფასები
@@ -155,6 +156,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │           ├── tools.py         4 tool: search_products · search_knowledge · order_link · request_human
 │           ├── replies.py       შაბლონური პასუხები (მისალმება/მადლობა/ოპერატორი) + markdown-ის გასუფთავება
 │           ├── memory.py        ისტორიის შეკუმშვა: >16 შეტყობინება → ბოლო 8 + summary
+│           ├── product_search.py  `search_products` დიდ კატალოგზე (≥ `BOT_DB_SEARCH_MIN_PRODUCTS`) — RPC 0040; RPC-ის გარეშე → მეხსიერების ძებნა (Stage 22)
 │           ├── bot.py           საცნობარო ფოტოები graph-ისთვის (პროდუქტის სურათები)
 │           ├── vision.py        ფოტო → ტექსტური აღწერა (≤500 სიმბოლო, EN+KA; პროდუქტის და კლიენტის ფოტო)
 │           ├── prompt.py        სამფენიანი prompt (L1 საერთო წესები · L2 მაღაზია · L3 summary + საუბარი)
@@ -176,7 +178,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         38 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         40 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -301,6 +303,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 
 **Stage 21 — header-ები:** ყველა პასუხს აქვს `Content-Security-Policy` (`default-src 'self'; script-src 'self'; …`, `connect-src` — `'self'` + Supabase), `Cross-Origin-Resource-Policy: same-origin`, `Cache-Control: no-store` (თუ route-ს/static-ს საკუთარი არ აქვს; `/panel/assets/*` — immutable). `CSP_REPORT_ONLY=true` → იგივე policy `Content-Security-Policy-Report-Only` header-ით. `/facebook/connect/callback`-ს საკუთარი nonce-იანი CSP აქვს. ახალი endpoint არ დამატებულა.
 
+**Stage 22 — ფორმები უცვლელია** (ახალი endpoint, query-პარამეტრი და response-ის ველი არ არის; frontend არ შეცვლილა; შეცდომის ფორმატი `{"detail": "..."}`):
+- **ჭერები** (Supabase-ის 1000-მწკრივიანი ჭერის ნაცვლად სიები გვერდებად იკითხება, `core/db.fetch_all`): `GET /products` — 10 000; `GET /orders` — უახლესი 10 000; `GET /public-menu` — აქტიური პროდუქტები ≤ 5 000; ბოტის პროდუქტები (webhook) ≤ 5 000. გადაჭარბებისას — პირველი/უახლესი N + სერვერის WARNING (200), ჩუმი ჭრა არა. ადმინის სიები: მაღაზიები ≤ 20 000, სხვა ცხრილები ≤ 200 000 (მხოლოდ 0039-მდე Python-ის fallback-ში), ერთი მაღაზიის პროდუქტები ≤ 10 000. pagination-ის პარამეტრები (`limit`/`offset`) არ დამატებულა.
+- **`GET /shops/{id}/export`** — products და orders სრულად, თითო ≤ 50 000; მეტზე **413** `მონაცემი ექსპორტისთვის ძალიან დიდია — მიმართეთ მხარდაჭერას.` (ნაწილობრივი ექსპორტი არასდროს).
+- **`POST /products/import`** — არსებულ პროდუქტებთან დამთხვევა (SKU / სახელი) ახლა მთელ კატალოგზე (ადრე პირველ 1000-ზე → დუბლიკატები); მაღაზიაში > 50 000 პროდუქტი → **413** `კატალოგი ძალიან დიდია იმპორტისთვის — მიმართეთ მხარდაჭერას.`
+- **`/admin/overview` · `/admin/growth` · `/admin/shops`** — რიცხვები RPC-დან (`0039`); მის გარეშე Python-ის აგრეგაცია გვერდებით (სწორი, ნელი) + ერთი WARNING.
+- **JWT:** 401-ის ტექსტები უცვლელია; ES256/RS256 token ლოკალურად მოწმდება, დანარჩენი — ქსელური `get_user`; `/admin/*` ყოველთვის ქსელითაც (იხ. §8).
+
 ### სისტემა
 | Method | Path | აღწერა | Auth |
 |---|---|---|---|
@@ -394,7 +403,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (38)
+### მიგრაციები (40)
 
 | # | რა |
 |---|---|
@@ -436,8 +445,10 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0036` | `shops.bot_status` / `bot_status_at` (nullable) — ბოტის ჯანმრთელობა (A-038). `authenticated`-ს ამ სვეტებზე UPDATE არ აქვს. გაუშვი backend deploy-**მდე**; მის გარეშე პანელში ჯანმრთელობა არ ჩანს (Telegram მუშაობს) + WARNING |
 | `0037_webhook_inbox` | 🔒 `webhook_inbox` — მდგრადი webhook-ის რიგი + dedup `(page_id, mid)` (Stage 21, A-040); RLS ჩართული, პოლისების გარეშე, მხოლოდ `service_role`; `claim_webhook_events(...)` (`SKIP LOCKED`) და `purge_webhook_inbox()` — EXECUTE მხოლოდ `service_role`; pg_cron `purge-webhook-inbox` (`23 * * * *`, 24 სთ-ზე ძველი მწკრივები). იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ძველი in-process გზა + WARNING |
 | `0038_llm_usage_by_model` | 🔒 `llm_usage_by_model(owner, shop, since)` RPC — ხარჯი მოდელის მიხედვით USD ბიუჯეტისთვის (Stage 21, A-048). EXECUTE მხოლოდ `service_role`. გაუშვი backend deploy-**მდე** (სავალდებულოა); მის გარეშე USD ბიუჯეტი გამორთულია + WARNING (kill-switch და უფასოს 30/დღე მუშაობს), ადმინის `today_usd`/`month_usd` = `null` |
+| `0039_admin_stats` | 🔒 3 RPC (`admin_overview_stats()`, `admin_growth(p_months)`, `admin_shop_counts()`, `jsonb`) — ადმინის რიცხვები SQL-ში, 1000-მწკრივიანი ჭერის გარეშე (Stage 22, A-041). SECURITY INVOKER, `search_path = ''`; EXECUTE მხოლოდ `service_role`. იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ადმინი Python-ის აგრეგაციაზეა (გვერდებით, სწორი, ნელი) + ერთი WARNING `admin_… missing (migration 0039 not applied)`; ფუნქციის გამოჩენისთანავე გადაერთვება, restart-ის გარეშე |
+| `0040_products_search_trgm` | 🔒 `pg_trgm` (`extensions` schema) + 2 GIN trigram ინდექსი `products.name` / `description`-ზე + RPC `search_products(p_shop, p_terms, p_query, p_limit)` — ბოტის ძებნა ≥ `BOT_DB_SEARCH_MIN_PRODUCTS` (300) პროდუქტიან მაღაზიაზე ბაზაში (Stage 22, A-041). მოითხოვს `0028`-ს. SECURITY INVOKER; EXECUTE მხოლოდ `service_role`. იდემპოტენტურია. ინდექსის აგებისას `products`-ზე ჩაწერა მოკლედ იბლოკება — გაუშვი მშვიდ დროს. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ძებნა მეხსიერებაშია + ერთი WARNING, RPC-ს backend 10 წთ-ში ერთხელ ხელახლა ცდის — restart არ სჭირდება |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). Stage 21-ის run order: `0037` (რეკომენდებული) → `0038` (**სავალდებულო**, deploy-მდე) → Render-ის env-ები (§12; ტოკენის ცვლადები წაშალე) → backend + frontend deploy (თუ `0038` deploy-ის შემდეგ გაეშვა — Render restart) → შემოწმება: ლოგში `webhook worker started`, პანელი/ადმინი/`order.html`/`delete-data.html` Console-ში CSP-ის შეცდომის გარეშე (პრობლემაზე `CSP_REPORT_ONLY=true`). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). Stage 21-ის run order: `0037` (რეკომენდებული) → `0038` (**სავალდებულო**, deploy-მდე) → Render-ის env-ები (§12; ტოკენის ცვლადები წაშალე) → backend + frontend deploy (თუ `0038` deploy-ის შემდეგ გაეშვა — Render restart) → შემოწმება: ლოგში `webhook worker started`, პანელი/ადმინი/`order.html`/`delete-data.html` Console-ში CSP-ის შეცდომის გარეშე (პრობლემაზე `CSP_REPORT_ONLY=true`). Stage 22-ის run order: `0039` → `0040` (SQL Editor, თითო ცალკე; ორივე deploy-მდე **რეკომენდებული**, არა სავალდებულო — მათ გარეშე fallback-ებია და ფუნქციის გამოჩენისას restart-ის გარეშე გადაერთვება) → Render-ზე `JWT_LOCAL_VERIFY` / `BOT_DB_SEARCH_MIN_PRODUCTS` (§12; ნაგულისხმევი საკმარისია) → backend deploy. JWT გასაღების ES256-ზე გადართვა (Supabase) Stage 22-ის კოდისგან დამოუკიდებელია და შეიძლება ადრეც — ზუსტი ნაბიჯები `PROGRESS.md` → `### Stage 22 — Deploy plan`; rollback: `JWT_LOCAL_VERIFY=false` + restart. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -449,6 +460,8 @@ DB-ოპერაციები სრულდება **მომხმა�
 | დაცვა | როგორ |
 |---|---|
 | **მოიჯარეთა იზოლაცია** | RLS ყველა ცხრილზე; backend მომხმარებლის JWT-ით მიმართავს ბაზას |
+| **JWT ლოკალურად (Stage 22)** | access token-ის `alg` ∈ {ES256, RS256} **და** `kid` JWKS-შია (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, cache-ით) → ხელმოწერა, `exp` (±30 წმ), `aud`, `iss`, `sub` ლოკალურად (`core/jwt_verify.py`, PyJWT); ცუდი token → 401 fallback-ის გარეშე; `alg: none` / სხვა ალგორითმი → 401. HS256 / `kid`-ის გარეშე / უცნობი `kid` / JWKS-ის მიუწვდომლობა (შეცდომის შემდეგ 30 წმ ქსელს აღარ ვცდით) → ძველი ქსელური `get_user` (ავტორიტეტული; JWKS-ის გაუმართაობა არასდროს იძლევა 401-ს). **ადმინი (`/admin/*`) — ყოველთვის ქსელითაც** (`get_user`). **revocation-ის ნარჩენი:** გაუქმებული/გამოსული მომხმარებლის token seller endpoint-ებზე მუშაობს token-ის `exp`-მდე (≤ 1 სთ) — მიღებული რისკი (A-046), ადმინზე არა. ბერკეტი: `JWT_LOCAL_VERIFY=false` + restart → ყველა token `get_user`-ით (Stage 21-ის ქცევა). ლოგში token / `sub` / email არასდროს |
+| **სიების ჭერები** | Stage 22: Supabase-ის (PostgREST) „Max rows" = **1000** (Dashboard → Settings → API) — კოდი ამ ჭერს გვერდებით (`fetch_all`) უვლის და არ ეყრდნობა მას; ეს პარამეტრი **1000-ზე დარჩეს** (გაზრდა ზედმეტია). ცხადი ჭერები (10 000 / 5 000 / 50 000 / ადმინში 20 000…200 000) — გადაჭარბებისას WARNING ან 413, არასდროს ჩუმი ჭრა (§6) |
 | **Page token** | ინახება **დაშიფრულად** (Fernet, `FB_TOKEN_ENCRYPTION_KEY`) |
 | **webhook-ის ავთენტურობა** | `X-Hub-Signature-256` მოწმდება app secret-ით |
 | **RPC-ების ნებართვები** | `SECURITY DEFINER` ფუნქციები **მხოლოდ** `service_role`-ს — `anon`/`authenticated` მოხსნილია (მიგრაცია 0014) |
@@ -704,6 +717,8 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `WEBHOOK_MAX_ATTEMPTS` | | `3` | ერთი მოვლენის მაქს. მცდელობა, მერე `failed` (1–10) |
 | `WEBHOOK_CLAIM_STALE_SECONDS` | | `180` | `processing` მოვლენა ამ დროის შემდეგ გაჭედილად ითვლება და თავიდან ირიცხება (60–3600) |
 | `CSP_REPORT_ONLY` | | `false` | `true` → CSP მხოლოდ `Content-Security-Policy-Report-Only` რეჟიმში (არაფერს ბლოკავს) — საგანგებო გადამრთველი, კოდის გარეშე |
+| `BOT_DB_SEARCH_MIN_PRODUCTS` | | `300` | (Stage 22) ბოტის `search_products`: ამდენ ან მეტ პროდუქტიან მაღაზიაზე ძებნა Postgres-ში (RPC `0040`), ნაკლებზე — მეხსიერებაში. `0` = ყოველთვის მეხსიერებაში |
+| `JWT_LOCAL_VERIFY` | | `true` | (Stage 22) ES256/RS256 token-ის ლოკალური შემოწმება JWKS-ით. `false` → ყველა token ქსელური `get_user`-ით (Stage 21-ის ქცევა) — საგანგებო ბერკეტი (მაგ. გასაღების როტაციის შემდეგ 401-ები); restart სჭირდება |
 
 **წაიშალა (Stage 21):** `LLM_DAILY_TOKEN_CAP`, `LLM_DAILY_TOKENS_PER_OWNER`, `LLM_MONTHLY_TOKENS_*` — ბიუჯეტი ახლა USD-შია. Render-ზე წაშალე — იგნორდება, მაგრამ აბნევს.
 
@@ -751,9 +766,10 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | 3 | **CSP header არ არის** | თეთრი სიის პრინციპი — ერთი გამორჩენა ცარიელ გვერდს იძლევა. რედიზაინისას ისედაც გადაიწერება |
 | 4 | **Rate limit მეხსიერებაშია** | deploy-ზე ნულდება; მრავალ-instance-ზე Redis/Cloudflare დასჭირდება |
 | 5 | **webhook-ის დედუპლიკაცია მეხსიერებაშია** | რესტარტზე იწმინდება; სრული გადაწყვეტა რიგს (Redis) სჭირდება |
-| 6 | **ადმინ-პანელი ყველაფერს მეხსიერებაში იღებს** | 5 მაღაზია — მილიწამები, 500 — 10წმ+. მხოლოდ მფლობელი იყენებს, ამიტომ არ არის სასწრაფო |
+| 6 | **ადმინ-პანელის სიები ერთ მოთხოვნაში იტვირთება** | Stage 22-იდან overview/growth/მაღაზიების რიცხვები SQL-შია (`0039`), სიები გვერდებით და ცხადი ჭერებით (§6); სერვერული pagination (`limit`/`offset`) არ არის. მხოლოდ მფლობელი იყენებს |
 | 7 | **ვიზუალი და ლოგო არ ემთხვევა** | საიტზე ძველი ჩანთის SVG, Meta-ს აპ-იკონა კი CA-მონოგრამი |
 | 8 | **გადახდა ხელითაა** | ავტომატური billing ჯერ არ არის — მოთხოვნა → ადმინის დადასტურება |
+| 9 | **JWT revocation ≤ 1 სთ seller endpoint-ებზე** | Stage 22-იდან ES256/RS256 token ლოკალურად მოწმდება, ამიტომ გაუქმებული/წაშლილი მომხმარებლის token მუშაობს `exp`-მდე (≤ 1 სთ). ადმინზე არა (ყოველთვის `get_user`-ითაც). მიღებული რისკი A-046; საგანგებოდ — `JWT_LOCAL_VERIFY=false` (§8) |
 
 თითოეულს გამშვები პირობა აქვს — იხ. [ROADMAP.md](ROADMAP.md) → 🏗 ინფრასტრუქტურა.
 
