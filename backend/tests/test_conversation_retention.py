@@ -21,7 +21,11 @@ def _code(sql: str) -> str:
 
 def test_migration_0030_schedules_hourly_purge_with_backend_hours():
     code = _code(MIGRATION.read_text(encoding="utf-8"))
-    assert "create extension if not exists pg_cron" in code
+    assert (
+        "if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then "
+        "create extension pg_cron with schema pg_catalog;"
+    ) in code
+    assert "create extension if not exists pg_cron" not in code
     assert "select cron.schedule( 'purge-expired-bot-conversations', '17 * * * *'," in code
     assert f"public.purge_expired_bot_conversations({CONVERSATION_RETENTION_HOURS})" in code
     assert code.count("begin;") == 1 and code.count("commit;") == 1

@@ -33,7 +33,8 @@
 -- ⚠️ ვადის გასვლიდან cron-მდე ≤24 სთ პაკეტი მოქმედებს (grace).
 --
 -- იდემპოტენტურია: if not exists / drop policy if exists / on conflict do nothing / create or replace /
--- `cron.schedule` იმავე სახელით არსებულ job-ს ანახლებს (0030-ის მსგავსად) — დუბლი არ ჩნდება.
+-- `cron.schedule` იმავე სახელით არსებულ job-ს ანახლებს (0030-ის მსგავსად) — დუბლი არ ჩნდება;
+-- pg_cron იქმნება მხოლოდ თუ ჯერ არ არის (DO ბლოკი — Supabase-ის event trigger ჩართულზე ვარდება).
 -- გაშვება: მფლობელი ხელით — Supabase → SQL Editor → ჩასვი → RUN.
 -- ============================================================================
 
@@ -112,9 +113,18 @@ $$;
 
 revoke execute on function public.expire_subscriptions() from public, anon, authenticated;
 
-create extension if not exists pg_cron with schema pg_catalog;
-grant usage on schema cron to postgres;
-grant all privileges on all tables in schema cron to postgres;
+-- pg_cron ჩვეულებრივ უკვე ჩართულია (0030). `create extension` მხოლოდ მაშინ, თუ არ არის: Supabase-ის
+-- pg_cron event trigger `create extension`-ზე `if not exists`-ის დროსაც ეშვება და ჩართულ pg_cron-ზე
+-- 2BP01-ით ვარდება ("dependent privileges exist") — მთელი migration rollback-დება.
+do $$
+begin
+  if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then
+    create extension pg_cron with schema pg_catalog;
+    grant usage on schema cron to postgres;
+    grant all privileges on all tables in schema cron to postgres;
+  end if;
+end
+$$;
 
 select cron.schedule(
   'expire-subscriptions',

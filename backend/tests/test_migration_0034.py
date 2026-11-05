@@ -109,9 +109,11 @@ def test_migration_0034_free_bot_limit_matches_python_tiers():
 
 def test_migration_0034_schedules_daily_cron_once():
     code = _code_of_migration()
-    assert "create extension if not exists pg_cron with schema pg_catalog;" in code
-    assert "grant usage on schema cron to postgres;" in code
-    assert "grant all privileges on all tables in schema cron to postgres;" in code
+    # pg_cron is created only when missing (Supabase's event trigger fails on an already-enabled pg_cron)
+    guard = "if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then"
+    assert f"{guard} create extension pg_cron with schema pg_catalog;" in code
+    assert "create extension if not exists pg_cron" not in code
+    assert code.index(guard) < code.index("cron.schedule(")
     assert code.count("cron.schedule(") == 1
     assert "cron.schedule( 'expire-subscriptions', '5 0 * * *'," in code
     assert "$$select public.expire_subscriptions()$$" in code

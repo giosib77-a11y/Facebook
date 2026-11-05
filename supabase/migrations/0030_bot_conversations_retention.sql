@@ -23,15 +23,24 @@
 -- EXECUTE მოხსნილია public/anon/authenticated-დან — PostgREST-ით (`/rpc/...`) ვერავინ გამოიძახებს.
 --
 -- გაშვების რიგი: ნებისმიერ დროს (backend-ის ცვლილება არ სჭირდება; კოდი ამ ფუნქციას არ იძახებს).
--- იდემპოტენტურია: `if not exists` / `create or replace` / `cron.schedule` იმავე სახელით არსებულ job-ს ანახლებს.
+-- იდემპოტენტურია: `if not exists` / `create or replace` / `cron.schedule` იმავე სახელით არსებულ job-ს ანახლებს;
+-- pg_cron იქმნება მხოლოდ თუ ჯერ არ არის (DO ბლოკი).
 -- გაშვება: მფლობელი ხელით — Supabase → SQL Editor → ჩასვი → RUN.
 -- ============================================================================
 
 begin;
 
-create extension if not exists pg_cron with schema pg_catalog;
-grant usage on schema cron to postgres;
-grant all privileges on all tables in schema cron to postgres;
+-- `create extension` მხოლოდ თუ pg_cron ჯერ არ არის: Supabase-ის pg_cron event trigger `create extension`-ზე
+-- `if not exists`-ის დროსაც ეშვება და ჩართულ pg_cron-ზე 2BP01-ით ვარდება ("dependent privileges exist").
+do $$
+begin
+  if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then
+    create extension pg_cron with schema pg_catalog;
+    grant usage on schema cron to postgres;
+    grant all privileges on all tables in schema cron to postgres;
+  end if;
+end
+$$;
 
 create or replace function public.purge_expired_bot_conversations(p_hours integer)
 returns integer
