@@ -860,6 +860,7 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - (security-auditor ❓) `webhook_inbox_id_seq` — Supabase-ის default privileges anon/authenticated-ზე; ჰიგიენა: `revoke all on sequence ... from anon, authenticated` (exploit-ის გზა არ არის). U+0000 ტექსტში → jsonb-ის უარყოფა → legacy გზა (მოვლენა არ იკარგება).
 - (browser-tester) `privacy.html` 375px: H1-ის გრძელი სიტყვა 18px ჰორიზონტალურ scroll-ს იძლევა (`overflow-wrap: anywhere`); Stage 21-მდეც.
 - (browser-tester) `delete-data.html?code=…` არასწორ კოდზე / ქსელის შეცდომაზე ზედა მწვანე ბლოკი მაინც „✅ … მონაცემები წაიშალა"-ს წერს, ქვემოთ — „კოდი ვერ მოიძებნა" (`confirmBox` fetch-მდე ჩნდება; Stage 21-მდეც, S20-23-ში უცვლელად დარჩა); `toLocaleString("ka-GE")` ბრაუზერში ინგლისურ ფორმატს აჩვენებს.
+- (code-reviewer re-check) ერთ საუბარს ყველა სლოტის დაკავება შეუძლია: slot = მწკრივი, არა საუბარი; ერთი მომხმარებლის 16+ შეტყობინება ზედიზედ → სხვა tenant-ები წუთობით ელოდებიან (ძველ კოდშიც ასე იყო; ჩვეულებრივ burst-ზე (3–5) არა); სრული fix SQL-ში საუბრის გასაღებს მოითხოვს (ახალი migration) — Backlog / Accepted Risks.
 - (orchestrator) `budget.py:142` docstring („one shop must not exhaust the shared pool") default-ებით არ სრულდება — იხ. `## Blockers` (S-1).
 
 ### Stage 21 (nit, task-ების report-ებიდან)
@@ -1099,7 +1100,7 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 ## Run State
 - Stage: Stage 21 — გარე აუდიტი (PDF, 2026-11-03), ეტაპი 3 „მასშტაბი და დაცვა", ნაწილი 1 (A-040, A-044, A-047, A-048)
 - Finish-check this stage: done (2026-11-05: code-reviewer 0/1/6, security-auditor 0/1/3, browser-tester 0/1/2 (should-fix — ადმინის 375px, Stage 21-მდე, უკვე Backlog-ში) → S21-12 (worker-ის batch-ის ბარიერი), S21-13 (docs: ლოკალური `APP_ENV`); S-1 (ბიუჯეტის default-ები) → `## Blockers` — მფლობელის გადაწყვეტილება; nit → Backlog „Stage 21 finish-check")
-- Fix rounds this stage: 1/2
+- Fix rounds this stage: 2/2 (round 1: S21-12 `1a7f402`, S21-13 `58d3665`; მიზნობრივი re-check (code-reviewer) → S21-12-ის regression → S21-14; nit-ები: ერთი საუბარი ყველა სლოტს იკავებს (16+ შეტყობინება ზედიზედ) → Backlog)
 - Failed attempts: S21-9 — 1 (API rate limit, იმავე აგენტით გაგრძელდა → done)
 
 ## Last Session
