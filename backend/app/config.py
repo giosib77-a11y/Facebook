@@ -143,6 +143,13 @@ class Settings(BaseSettings):
         default_factory=lambda: deepcopy(DEFAULT_LLM_PRICES)
     )
 
+    # Stage 22 (A-041) — კატალოგის ზომა, რომლიდანაც `search_products` tool Postgres-ში ეძებს
+    # (RPC 0040, pg_trgm); ამაზე პატარა კატალოგი მეხსიერებაში. 0 = ყოველთვის მეხსიერებაში.
+    bot_db_search_min_products: int = Field(300, ge=0)
+    # Stage 22 (A-046) — ES256/RS256 access token-ის ლოკალური შემოწმება JWKS-ით. false = ყველა ტოკენი
+    # ძველი ქსელური `get_user`-ით (საგანგებო ბერკეტი: env + restart, კოდის გარეშე).
+    jwt_local_verify: bool = True
+
     model_config = SettingsConfigDict(
         env_file=(_ROOT_ENV, _BACKEND_ENV),
         env_file_encoding="utf-8",

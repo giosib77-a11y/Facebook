@@ -36,6 +36,8 @@ for _name in (
     "WEBHOOK_CLAIM_STALE_SECONDS", "CSP_REPORT_ONLY", "LLM_DAILY_USD_CAP",
     "LLM_DAILY_USD_SHOP_DIVISOR", "LLM_MONTHLY_USD_FREE", "LLM_MONTHLY_USD_BASIC",
     "LLM_MONTHLY_USD_STANDARD", "LLM_MONTHLY_USD_BUSINESS", "LLM_PRICES",
+    # Stage 22: ძებნა დიდ კატალოგზე / JWT ლოკალური შემოწმება — ტესტებში მხოლოდ კოდის default-ები
+    "BOT_DB_SEARCH_MIN_PRODUCTS", "JWT_LOCAL_VERIFY",
 ):
     os.environ.pop(_name, None)
 # Stage 21: webhook_inbox worker ტესტებში გამორთულია (APP_ENV ქვემოთ development-ია, მაგრამ ცხადად)
@@ -58,6 +60,10 @@ from app.main import app as fastapi_app
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
 
+# Supabase API-ის „Max rows" (default 1000)-ის ასლი: `range`-ის გარეშე select ამაზე მეტს არ აბრუნებს
+# (Stage 22, A-041). `range` ასევე ჭრის — გვერდი ≤ ამ ჭერზე, როგორც რეალურ API-ზე.
+FAKE_MAX_ROWS = 1000
+
 
 class FakeResult:
     def __init__(self, data, count=None):
@@ -75,6 +81,8 @@ class FakeQuery:
         self.payload = None
         self.filters = []
         self.kwargs = {}  # insert/upsert-ის დამატებითი არგუმენტები (on_conflict, ignore_duplicates, ...)
+        self.range_ = None  # (start, end) — `range()`-ის არგუმენტები
+        self.orders = []  # [(column, desc)] — `order()`-ის გამოძახებები თანმიმდევრობით
 
     def select(self, *columns, **kwargs):
         self.op = "select"
@@ -123,17 +131,29 @@ class FakeQuery:
     def limit(self, n):
         return self
 
-    def order(self, *args, **kwargs):
+    def order(self, column, *args, **kwargs):
+        self.orders.append((column, bool(kwargs.get("desc", False))))
+        return self
+
+    def range(self, start, end):
+        # postgrest-py-ის რეალური builder-ი `offset`/`limit`-ს ამატებს (არ ცვლის) — ხელახლა გამოყენება
+        # query-ს აფუჭებს, ამიტომ fake-იც ორმაგ გამოძახებაზე ვარდება
+        if self.range_ is not None:
+            raise AssertionError("range() called twice on one query - build a fresh query per page")
+        self.range_ = (start, end)
         return self
 
     def execute(self):
         self._db.calls.append(self)
         if (self.table, self.op) in self._db.errors:
             raise self._db.errors[(self.table, self.op)]
-        return FakeResult(
-            self._db.responses.get((self.table, self.op), []),
-            count=self._db.counts.get((self.table, self.op)),
-        )
+        data = self._db.responses.get((self.table, self.op), [])
+        if self.op == "select" and isinstance(data, list):
+            if self.range_ is not None:
+                start, end = self.range_
+                data = data[start:end + 1]
+            data = data[:FAKE_MAX_ROWS]
+        return FakeResult(data, count=self._db.counts.get((self.table, self.op)))
 
 
 class FakeRpc:
