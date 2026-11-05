@@ -373,6 +373,93 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 
 ---
 
+## გარე აუდიტი (PDF) — 2026-11-03, ეტაპი 3 (ბრენჩი `agent-system`)
+
+წყარო: `docs/external-audit-2026-11-03.pdf` (git-ში არ არის), ეტაპი 3 „მასშტაბი და დაცვა" (N-04, N-05, N-06 ნარჩენი, N-08, N-09, N-10, N-12, N-18) + მფლობელის დამატებები: A-037-ის გაგრძელება (ბიუჯეტი დოლარში) და `admin.py` / `shops.py`-ის coverage. ყველა მიგნება კოდში გადამოწმდა 2026-11-05 (`5235045`). სიმძიმე ჩვენი სკალით (CLAUDE.md); PDF-ის სიმძიმე ფრჩხილებში. ეტაპი 3 ოთხ stage-ად: **Stage 21** — A-040, A-044, A-047, A-048 (დეტალური გეგმა `PROGRESS.md`); **Stage 22** — A-041, A-046; **Stage 23** — A-043, A-045, A-049; **Stage 24** — A-042 (outline — `PROGRESS.md` `## Upcoming stages`). გადაწყვეტილებები — `PROJECT.md` Decision Log 2026-11-05 („Stage 21").
+
+### A-040 (N-05) — webhook-ის მოვლენა 200-მდე არსად ინახება; ბოტი პანელთან ერთ threadpool-ს იყენებს; dedup მეხსიერებაშია
+- **severity:** should-fix (PDF: საშუალო) — ყოველ deploy-ზე / restart-ზე / OOM-ზე დამუშავების რიგში მყოფი შეტყობინება იკარგება (კლიენტი პასუხს ვერ იღებს); ~40 პარალელურ საუბარზე (turn ≤45 წმ) anyio-ს საერთო 40 თრედი ივსება და პანელის API იყინება; dedup restart-ზე ნულდება → Meta-ს retry ორმაგ პასუხს იძლევა.
+- **file:** `backend/app/api/webhook.py:499-517` (`receive_webhook` → `BackgroundTasks.add_task(_process_events, data)` — მოვლენა მხოლოდ მეხსიერებაშია), `:30-33`, `:68-85`, `:594` (`_SEEN_MIDS` — process-memory dedup), `:520-740` (`_process_events` სინქრონულია, საერთო pool-ში), `backend/app/services/graph.py:32` (`TURN_BUDGET_SECONDS = 45.0`); `PROJECT.md` Accepted Risks #1, #6; Decision Log 2026-08 („webhook-ის dedup მეხსიერებაში").
+- **გამოსწორება:** ცხრილი `webhook_inbox` (0037) — `unique (page_id, mid)` = dedup ბაზაში; `POST /webhook` ხელმოწერის შემდეგ მოვლენებს `insert … on conflict do nothing`-ით წერს და მერე აბრუნებს 200-ს; worker იმავე პროცესში (FastAPI lifespan, asyncio task) RPC `claim_webhook_events` (`FOR UPDATE SKIP LOCKED`, stale `processing` ხელახლა) → დამუშავება ცალკე `CapacityLimiter`-ით (`BOT_MAX_CONCURRENCY`, default 8) → `done` (payload იშლება) / retry backoff-ით / `failed` (`WEBHOOK_MAX_ATTEMPTS`); startup-ზე პირველი claim მაშინვე (restart-ის შემდეგ დაუმუშავებელი მოვლენები); retention pg_cron 24 სთ. production-ის გარეთ (ან ცხრილის გარეშე) — ძველი in-process გზა (ბოტის limiter-ით) + WARNING.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** `test_webhook_inbox.py::test_post_webhook_persists_events_before_200` (upsert `webhook_inbox`-ში `on_conflict="page_id,mid"`, `ignore_duplicates=True`; `_process_events` request-ში არ იძახება), `::test_inbox_path_never_uses_memory_dedup`, `test_inbox_worker.py::test_startup_claims_without_wake` (restart recovery), `::test_bot_work_runs_on_dedicated_limiter` (`limiter.total_tokens == BOT_MAX_CONCURRENCY`), `test_migration_0037.py` (`unique (page_id, mid)`, `for update skip locked`).
+- **owner:** backend-dev · **task:** S21-1, S21-2, S21-3, S21-4
+- **status:** ⏳ დაგეგმილია — Stage 21
+
+### A-041 (N-04) — Supabase-ის 1000-მწკრივიანი ჭერი მონაცემს ჩუმად ჭრის
+- **severity:** should-fix (PDF: საშუალო) — business პაკეტზე პროდუქტი ულიმიტოა (`core/tiers.py:13`), standard-ზე 1000: ბოტი/პანელი/საჯარო ფორმა/ექსპორტი >1000-ზე ნაწილს ჩუმად კარგავს; ადმინის შემოსავალი და შეკვეთების რაოდენობა ყველა შეკვეთის Python-ში წაკითხვით ითვლება და 1000-ის შემდეგ არასწორია.
+- **file:** `.range(` app-ში არსად არის (grep, 2026-11-05). `backend/app/api/webhook.py:447-458` (`_load_bot_products`), `backend/app/api/products.py:415-424` (`list_products`), `backend/app/api/orders.py:266-284` (`list_orders`), `:56-72` (`public_menu`), `backend/app/api/shops.py:497-514` (`export_shop_data`), `backend/app/api/admin.py:185-232` (`overview` — ყველა `orders` მწკრივი), `:249-267` (`growth`), `:270-285` (`all_shops` — ყველა products/orders მწკრივი დასათვლელად).
+- **გამოსწორება:** helper `core/db.fetch_all(query, page_size=1000)` `.range()`-ით (ჭერით) ხუთივე ადგილას; ადმინის overview/growth/shops-ის რიცხვები — SQL აგრეგაცია RPC-ით (migration 0039, EXECUTE მხოლოდ service_role); დიდ კატალოგზე ბოტის ძებნა Postgres-ში — `pg_trgm` (0040, extension guard) + RPC, prompt-ში მხოლოდ შედეგი. FakeSupabase-ს `.range()`.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** fake-ში 2 500 პროდუქტი/შეკვეთა (`.range()`-ის slice) → `_load_bot_products` / `list_products` / `list_orders` / `public_menu` / export აბრუნებს 2 500-ს (ძველზე 1 000); overview-ს `total_orders` / `revenue` RPC-იდან (ძველზე Python-ის ჯამი).
+- **owner:** backend-dev · **task:** Stage 22
+- **status:** ⏳ დაგეგმილია — Stage 22 (outline)
+
+### A-042 (N-08) — მიგრაციები ხელითაა; RLS და grant-ები რეალურ Postgres-ზე არ ტესტდება; „migration არ გაშვებულა" fallback-ები
+- **severity:** should-fix (PDF: საშუალო) — მთავარი დაცვა (RLS, column grant-ები, RPC-ების EXECUTE) რეგრესიაზე მხოლოდ სტატიკური SQL-ის ტესტით მოწმდება; app-ში ~52 „migration 00xx not applied" fallback/ხსენება 10 ფაილში (grep) — ორი ქცევა ერთ კოდში; Playwright CI-ში არ ეშვება.
+- **file:** `supabase/` — `config.toml` და `tests/` არ არის; `backend/tests/test_migration_00*.py` — ტექსტის შემოწმება; `.github/workflows/ci.yml:12-61` (supabase/pgTAP/e2e ნაბიჯი არ არის); fallback-ები: `api/webhook.py`, `api/shops.py`, `api/admin.py`, `api/facebook.py`, `api/orders.py`, `services/budget.py`, `services/vision.py`, `services/subscriptions.py`, `models/shop.py`, `main.py`.
+- **გამოსწორება:** Supabase CLI (`supabase/config.toml`, არსებული `supabase/migrations/`), CI-ში `supabase start` + `supabase test db` — pgTAP ყველა `public` ცხრილზე (RLS ჩართულია, პოლისები, `anon`/`authenticated` grant-ები, RPC EXECUTE); fallback-ების წაშლა მას შემდეგ, რაც მფლობელი დაადასტურებს, რომ 0001…ბოლო ლაივშია; Playwright CI-ში (`npx playwright install --with-deps chromium`). Docker/CLI ლოკალურად შეიძლება არ იყოს → CI-ის შედეგს მფლობელი ამოწმებს.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** pgTAP — `anon`-ს არცერთ ცხრილზე insert/update/delete; `authenticated` სხვის მაღაზიას ვერ კითხულობს; `llm_usage`/`webhook_inbox`/`admin_audit_log`-ზე `authenticated` select = false (ძველზე ტესტები არ არსებობს → CI-ის ნაბიჯი ვარდება); Python — fallback-ის გზის ტესტები იცვლება „ცხრილი არ არის → 503/შეცდომა"-ით.
+- **owner:** task-executor, backend-dev · **task:** Stage 24
+- **status:** ⏳ დაგეგმილია — Stage 24 (outline; ბოლო — ყველა წინა migration-ის შემდეგ)
+
+### A-043 (N-06, ნარჩენი) — ადმინზე MFA (`aal2`) არ მოწმდება; audit log არ არის; `/admin/recovery` ბმულს ადმინს აბრუნებს
+- **severity:** should-fix (PDF: საშუალო) — ადმინის პაროლის მოპარვა = ყველა გამყიდველის PII + ნებისმიერი ანგარიშის აღდგენის ბმული, კვალის გარეშე. `pending`-ის შემოწმება **უკვე გასწორდა** (A-024, Stage 19) — აქ აღარ არის.
+- **file:** `backend/app/api/admin.py:54-64` (`get_current_admin` — მხოლოდ `ADMIN_USER_IDS`), `:534-544` (`seller_recovery` → `{"action_link": …}`; შეცდომაზე `f"…: {e}"` — Backlog-ის nit), ადმინის ყველა ცვლილება (`update_shop`, `delete_shop`, `resolve_upgrade_request`, `extend_subscription`, `seller_recovery`) — ჩანაწერის გარეშე; `frontend/src/admin/AdminPage.jsx:191-195` (`prompt(... action_link)`).
+- **გამოსწორება:** `get_current_admin` — JWT-ის `aal == "aal2"` (A-046-ის ლოკალური claims; `ADMIN_REQUIRE_MFA`, default true production-ში) → 403 სხვა შემთხვევაში; ადმინ პანელში TOTP-ის ჩართვა/შესვლა (supabase-js `auth.mfa.*`); `admin_audit_log` (0041; RLS, მხოლოდ service_role) ყველა ცვლილებაზე; recovery — ბმული იქმნება სერვერზე და **გამყიდველს** email-ით მიდის (`notify.send_email`, SMTP), პასუხში ბმული არ არის; SMTP გამორთულია → 503.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** `aal: "aal1"` claim-ით ადმინის endpoint → 403 (ძველზე 200); `PATCH /admin/shops/{id}` → `admin_audit_log` insert (ძველზე 0); `POST /admin/recovery` → პასუხში `action_link` არ არის და `notify.send_email` 1-ჯერ გამყიდველის მისამართზე (ძველზე ბმული ბრუნდება).
+- **owner:** backend-dev, frontend-dev · **task:** Stage 23
+- **status:** ⏳ დაგეგმილია — Stage 23 (outline; MFA-ს ჩართვა deploy-მდე — მფლობელი, `## Blockers`)
+
+### A-044 (N-12) — CSP არ არის, token-ები localStorage-შია
+- **severity:** should-fix (PDF: დაბალი; „ყველაზე მნიშვნელოვანი დაბალი") — Supabase-ის სესია localStorage-შია, ამიტომ ნებისმიერი XSS = ანგარიშის ხელში ჩაგდება; CSP ამის ბოლო ბადეა. Accepted Risk #25 იხურება (მფლობელის მოთხოვნა).
+- **file:** `backend/app/main.py:243-255` (`security_headers`: nosniff, XFO, Referrer, Permissions, HSTS — CSP არა), `backend/app/api/facebook.py:49-74` (`_finish` — inline `<script>`, CSP-ს nonce სჭირდება), `frontend/delete-data.html:124` (inline `<script>` — `script-src 'self'`-ზე გაიჭედება), `frontend/*.html` (Google Fonts — `fonts.googleapis.com` / `fonts.gstatic.com`; JSON-LD `type="application/ld+json"` CSP-ით არ იბლოკება).
+- **გამოსწორება:** ყველა პასუხზე `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' <SUPABASE_URL> <wss://SUPABASE_HOST>; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'` (`CSP_REPORT_ONLY=true` → `…-Report-Only`, საგანგებო ბერკეტი) + `Cross-Origin-Resource-Policy: same-origin` + API პასუხებზე `Cache-Control: no-store` (static-ს თავისი რჩება); OAuth callback-ის HTML — საკუთარი CSP `script-src 'nonce-…'`-ით; `delete-data.html`-ის script — გარე ფაილად. COOP **არა** (FB popup-ის `window.opener` გაწყდებოდა — Decision Log).
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** `test_security_headers.py::test_csp_header_on_every_response` (ზუსტი policy `/status`-ზე და `/panel/`-ზე), `::test_oauth_callback_uses_nonce_csp` (`<script nonce="X">` და header-ში `'nonce-X'`), `::test_report_only_switch`; e2e `csp.spec.js` — 8 გვერდი production-ის CSP-ით, `securitypolicyviolation` = 0 (ძველ `delete-data.html`-ზე inline script → violation).
+- **owner:** backend-dev, frontend-dev · **task:** S21-5, S21-9
+- **status:** ⏳ დაგეგმილია — Stage 21
+
+### A-045 (N-09) — ერთზე მეტი გვერდის მქონე გამყიდველი ვერ უკავშირდება
+- **severity:** should-fix (PDF: საშუალო) — სააგენტო / რამდენიმე გვერდის მფლობელი საერთოდ ვერ აკავშირებს გვერდს (ჩვეულებრივი გამოყენება → შეცდომა).
+- **file:** `backend/app/api/facebook.py:220-224` (`len(pages) > 1` → `multiple_pages`), `frontend/src/panel/fbConnect.js` (შედეგის დამუშავება).
+- **გამოსწორება:** callback ≥2 გვერდზე token-ებს არ ინახავს — აბრუნებს `fb: "choose"`-ს მოკლევადიანი (10 წთ) ხელმოწერილი selection token-ით (HKDF-ის ცალკე label, A-047; შიგნით გვერდების id/სახელი + დაშიფრული user token, nonce-ზე მიბმული); პანელი აჩვენებს სიას; `POST /facebook/connect/select {selection, page_id}` → არსებული connect-ის ნაბიჯები არჩეულ გვერდზე.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** 2 გვერდი → `_finish("choose", …)` (ძველზე `multiple_pages`); `select` არჩეული გვერდით → subscribe + shop update; ვადაგასული/სხვისი/გაყალბებული selection → 400; Vitest — სია და არჩევა.
+- **owner:** backend-dev, frontend-dev · **task:** Stage 23
+- **status:** ⏳ დაგეგმილია — Stage 23 (outline)
+
+### A-046 (N-10) — ყოველ მოთხოვნაზე ახალი Supabase client + `auth.get_user` ქსელით
+- **severity:** nit (PDF: საშუალო) — ამ მასშტაბზე შეცდომა არ ჩანს (Accepted Risk, Stage 12: „`get_current_auth` ყოველ მოთხოვნაზე ახალ client-ს ქმნის"); ზრდისას — latency + Auth-ის rate limit. აუცილებელი წინაპირობაა A-043-ის `aal`-ისთვის (claims ლოკალურად).
+- **file:** `backend/app/core/security.py:43-69` (`create_client` + `client.auth.get_user(token)` ყოველ მოთხოვნაზე), `backend/app/core/supabase_client.py:16-25`.
+- **გამოსწორება:** `core/jwt_verify.py` — ES256/RS256 ტოკენი ლოკალურად (`pyjwt`, უკვე დაყენებულია `supabase-auth`-ის დამოკიდებულებად — `requirements.txt`-ში ცხადად ცხადდება, lock-ში უკვე hash-ითაა), JWKS `<SUPABASE_URL>/auth/v1/.well-known/jwks.json` (cache 10 წთ, უცნობ `kid`-ზე ერთი refetch), `aud = authenticated`, `iss`, `exp`; HS256 (legacy) → ძველი `get_user` გზა; per-request PostgREST client საერთო `httpx.Client`-ით (თუ postgrest-py ამას სწორად არ უჭერს მხარს — მხოლოდ ვერიფიკაცია იცვლება, report).
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** ტესტში გენერირებული EC გასაღები + `httpx.MockTransport` JWKS → ვალიდური ტოკენი `get_user`-ის გამოძახების გარეშე (ძველზე `get_user` 1-ჯერ); ვადაგასული / სხვა `aud` / უცნობი `kid` → 401; `CurrentAuth.claims["aal"]`.
+- **owner:** backend-dev · **task:** Stage 22
+- **status:** ⏳ დაგეგმილია — Stage 22 (outline; Supabase-ზე asymmetric JWT signing keys — მფლობელი, `## Blockers`)
+
+### A-047 (N-18) — FB app secret პირდაპირ ჩვენს ხელმოწერებს ემსახურება (OAuth state, deletion code)
+- **severity:** nit (PDF: დაბალი) — ექსპლოიტირებადი გზა არ არის (ყველა HMAC სწორია), მაგრამ ერთ გასაღებს domain separation არ აქვს: OAuth state და deletion code ერთი და იგივე HMAC გასაღებით იწერება (ფორმატები განსხვავდება).
+- **file:** `backend/app/services/facebook.py:148-176` (`sign_state` / `verify_state` — `fb_app_secret`), `backend/app/api/facebook.py:93-126` (`_deletion_secret` → `make_deletion_code` / `verify_deletion_code`; uid hash-იც იმავე secret-ით).
+- **არ იცვლება (გადამოწმდა):** `appsecret_proof` (`services/facebook.py:84-92`) — Meta-ს განსაზღვრული ფორმულაა `HMAC-SHA256(app_secret, access_token)`; გასაღების შეცვლა Graph-ის ყველა გამოძახებას გატეხს. ასევე `X-Hub-Signature-256` (`:105-113`) და `signed_request` (`:122-142`) — Meta-ს კონტრაქტი. PDF-ის „სამი მიზნიდან" HKDF ეხება მხოლოდ ჩვენს ორ კონსტრუქციას.
+- **გამოსწორება:** `core/crypto.derive_key(label)` — HKDF-SHA256 (`cryptography`, უკვე პირდაპირ გამოიყენება Fernet-ისთვის), IKM = `FB_APP_SECRET`, info = `chatassist:oauth-state:v1` / `chatassist:deletion-code:v1`; state — მხოლოდ ახალი გასაღები (TTL 10 წთ); deletion code — ახალი გასაღებით იქმნება, მოწმდება ჯერ ახლით, მერე ძველით (უკვე გაცემული კოდები ~13 თვე მოქმედებს; ძველის წაშლა ≥2027-12-10 — Backlog).
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** `test_hkdf_keys.py::test_state_not_signed_with_raw_app_secret` (raw secret-ით ხელმოწერილი state უარყოფილია), `::test_new_deletion_code_uses_derived_key`, `::test_legacy_deletion_code_still_verifies`, `::test_state_and_deletion_keys_are_separated`, `::test_appsecret_proof_unchanged` (რეგრესია).
+- **owner:** backend-dev · **task:** S21-6
+- **status:** ⏳ დაგეგმილია — Stage 21
+
+### A-048 (N-03, A-037-ის გაგრძელება) — ბიუჯეტი ტოკენებშია და ფულს არ ასახავს
+- **severity:** should-fix — `budget.py` ოთხივე ტოკენს თანაბრად ითვლის: cache_read (Claude-ზე ~0.1× input-ის ფასი) ზედმეტად ითვლება, output (5×) — ნაკლებად; ჭერი dollar-ის ხარჯს არ ემთხვევა და მფლობელს provider-ის ანგარიშთან შედარება არ შეუძლია; თვიური ბიუჯეტი per-account-ია, მფლობელმა კი „მაღაზიაზე" მოითხოვა.
+- **file:** `backend/app/services/budget.py:62-139` (`tokens_used` / `blocked_reason` — ტოკენები), `backend/app/config.py:108-114` (`LLM_DAILY_TOKEN_CAP`, `LLM_DAILY_TOKENS_PER_OWNER`, `LLM_MONTHLY_TOKENS_*`), `supabase/migrations/0035_llm_usage_budget.sql:30-41` (ერთი ჯამი, model-ის გარეშე), `backend/app/api/admin.py:217-219` (`overview.llm` ტოკენებში + `alert`-ის kill-switch-ის კომპენსაცია — Backlog-ის S20-9 nit).
+- **გამოსწორება:** RPC `llm_usage_by_model(p_owner, p_shop, p_since)` (0038) → `(provider, model, input, output, cache_read, cache_write)` ჯამები; ფასი Python-ში `LLM_PRICES`-იდან (USD / 1M ტოკენი, თითო მოდელზე `input`/`output`/`cache_read`/`cache_write`; env JSON default-ებს მოდელის დონეზე ანაცვლებს; უცნობი მოდელი → ცნობილთა მაქსიმუმი + WARNING); default-ები (მფლობელის): თვიური **მაღაზიაზე** free $0.30 / basic $2.50 / standard $8 / business $25, გლობალური დღიური $1, მფლობელის დღიური წილი $0.50 — ყველა env-ით; რიგი და fail-open სემანტიკა უცვლელი; ტოკენის env-ები იშლება; `overview.llm` — USD.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** `test_budget.py::test_cost_uses_per_model_prices` (1M output = $0.50, 1M cache_read = $0.01), `::test_monthly_usd_budget_is_per_shop` (იგივე მფლობელის სხვა მაღაზიის ხარჯი არ ითვლება), `::test_owner_daily_usd_share`, `::test_global_daily_usd_cap`, `::test_unknown_model_priced_at_max`; `test_admin_llm_overview.py` — `today_usd` / `daily_cap_usd`; `test_migration_0038.py`.
+- **owner:** backend-dev, frontend-dev · **task:** S21-1, S21-7, S21-8, S21-10
+- **status:** ⏳ დაგეგმილია — Stage 21
+
+### A-049 (N-06/დანართი — coverage) — `admin.py` და `shops.py`-ის ტესტებით დაფარვა დაბალია
+- **severity:** nit — PDF (3c7cd9a): სულ 83%, `admin.py` 42%, `shops.py` 63%. მიმდინარე მნიშვნელობა **ვერ გადამოწმდა**: coverage-ის ხელსაწყო (`coverage` / `pytest-cov`) venv-ში და `requirements-dev.txt`-ში არ არის; Stage 19–20-მა ორივე ფაილს ტესტები დაუმატა.
+- **file:** `backend/app/api/admin.py`, `backend/app/api/shops.py`, `backend/requirements-dev.txt`.
+- **გამოსწორება:** dev-only `pytest-cov` (Decision Log-ით), ტესტები დაუფარავ გზებზე (A-043-ის ცვლილებების შემდეგ — ერთხელ), CI-ში `--cov=app.api.admin --cov=app.api.shops --cov-fail-under=85` ცალკე ნაბიჯად.
+- **ტესტი, რომელიც ძველ კოდზე ვარდება:** CI-ის ნაბიჯი `--cov-fail-under=85` ორივე ფაილზე (ძველზე < 85 → ვარდება; რიცხვი task-ის report-ში).
+- **owner:** backend-dev · **task:** Stage 23
+- **status:** ⏳ დაგეგმილია — Stage 23 (outline)
+
+---
+
 ## /fix — 2026-10-18 (A-001, A-002)
 
 - ბრენჩი: `agent-system` (მფლობელის არჩევანი; `fix/` ბრენჩი არ შექმნილა). commit-ები: `69290f0` (A-002), `6a80cb9` (A-001).
