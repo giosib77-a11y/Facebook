@@ -19,7 +19,10 @@ def _sig(body: bytes, secret: str = SECRET) -> str:
 @pytest.fixture
 def processed(monkeypatch):
     """Fixed app secret; background processing is replaced so nothing external runs."""
-    monkeypatch.setattr(webhook, "get_settings", lambda: SimpleNamespace(fb_app_secret=SECRET))
+    # inbox inactive → legacy background path (in-memory), nothing touches the database
+    monkeypatch.setattr(
+        webhook, "get_settings", lambda: SimpleNamespace(fb_app_secret=SECRET, webhook_inbox_active=False),
+    )
     calls = []
     monkeypatch.setattr(webhook, "_process_events", lambda data: calls.append(data))
     return calls

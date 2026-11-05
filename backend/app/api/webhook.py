@@ -8,6 +8,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+import anyio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
 
 from app.config import get_settings
@@ -15,7 +16,7 @@ from app.core.crypto import decrypt
 from app.core.supabase_client import get_service_client
 from app.core.tiers import daily_cap, limits_for
 from app.services.facebook import GraphError, download_image, send_text_message, verify_signature
-from app.services import budget, memory, notify
+from app.services import budget, inbox, memory, notify
 from app.services.graph import run_turn
 
 router = APIRouter(tags=["messenger webhook"])
@@ -27,6 +28,7 @@ logger = logging.getLogger("app")
 # შეზღუდვა: მეხსიერებაშია, ე.ი. ერთი instance-ის ფარგლებში მუშაობს. Render-ზე
 # ერთი instance გვაქვს, ამიტომ პრაქტიკულ შემთხვევებს ფარავს. მრავალ-instance-ზე
 # გადასვლისას → Redis ან ბაზის ცხრილი.
+# S21-3: მხოლოდ legacy გზა; inbox-ის გზაზე dedup — `webhook_inbox unique (page_id, mid)` (0037).
 _SEEN_MIDS: "OrderedDict[str, float]" = OrderedDict()
 _SEEN_LOCK = threading.Lock()
 _SEEN_TTL = 600      # წამი — ამაზე ძველს ვივიწყებთ
@@ -279,7 +281,7 @@ def _append_history(sc, shop_id: str, psid: str, new_messages: list, *, pause: b
     return False
 
 
-def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None) -> None:
+def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None, *, dedup: bool = True) -> None:
     """გამყიდველის ხელით დაწერილი პასუხი (message.is_echo): ტექსტი ისტორიაში + ბოტის პაუზა.
 
     ჩვენი პასუხების ამოცნობა (S20-20), თანმიმდევრობით:
@@ -311,7 +313,7 @@ def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None) -> None:
     psid = (ev.get("recipient") or {}).get("id")
     if not psid:
         return
-    if _already_handled(message.get("mid")):
+    if dedup and _already_handled(message.get("mid")):
         return
     text = message.get("text")
     text = text.strip()[:_ECHO_TEXT_MAX] if isinstance(text, str) else ""
@@ -512,13 +514,62 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     if data.get("object") not in ("page", "instagram"):
         return {"status": "ignored"}
 
-    # Facebook ელოდება სწრაფ 200-ს — დამუშავება ფონზე
-    background_tasks.add_task(_process_events, data)
+    # Facebook ელოდება სწრაფ 200-ს. inbox ჩართულია → მოვლენა ბაზაში ინახება 200-მდე, დამუშავებას worker
+    # აკეთებს (restart-ზეც არ იკარგება); გამორთულია / ბაზა მიუწვდომელია → ძველი გზა: ფონური დამუშავება
+    if settings.webhook_inbox_active:
+        rows = inbox.rows_from_payload(data)
+        if not rows:
+            return {"status": "ok"}  # შესანახი მოვლენა არ არის (postback / read / delivery / mid-ის გარეშე)
+        try:
+            await anyio.to_thread.run_sync(inbox.enqueue, get_service_client(), rows)
+        except Exception as exc:
+            _warn_inbox_unavailable(exc)
+            background_tasks.add_task(_process_events_limited, data)
+        else:
+            inbox.wake()
+        return {"status": "ok"}
+
+    background_tasks.add_task(_process_events_limited, data)
     return {"status": "ok"}
 
 
-def _process_events(data: dict) -> None:
-    """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
+_INBOX_MISSING_WARNED = False  # webhook_inbox-ის არარსებობის WARNING — ერთხელ პროცესზე
+_INBOX_MISSING_CODES = ("PGRST205", "42P01")
+
+
+def _warn_inbox_unavailable(exc: Exception) -> None:
+    """enqueue ჩავარდა: ცხრილი არ არის (migration 0037) → ერთი WARNING პროცესზე; სხვა შეცდომა → ყოველ ჯერზე.
+    ლოგში მხოლოდ exception-ის კლასი (ტექსტში payload / psid შეიძლება იყოს)."""
+    global _INBOX_MISSING_WARNED
+    if getattr(exc, "code", None) in _INBOX_MISSING_CODES:
+        if _INBOX_MISSING_WARNED:
+            return
+        _INBOX_MISSING_WARNED = True
+        logger.warning("webhook_inbox missing (migration 0037 not applied) - in-memory processing")
+        return
+    logger.warning("webhook_inbox enqueue failed (%s) - in-memory processing", type(exc).__name__)
+
+
+async def _process_events_limited(data: dict) -> None:
+    """ფონური (legacy) დამუშავება thread-ში, ბოტის საერთო limiter-ით (BOT_MAX_CONCURRENCY)."""
+    await anyio.to_thread.run_sync(_process_events, data, limiter=inbox.bot_limiter())
+
+
+def process_inbox_row(row: dict) -> None:
+    """webhook_inbox-ის ერთი მწკრივის დამუშავება (worker იძახებს thread-ში). dedup — ბაზაში (unique), არა მეხსიერებაში.
+    შეცდომა ზემოთ ადის → worker `inbox.fail`-ს იძახებს."""
+    event = row.get("event")
+    if event is None:
+        return
+    _process_events(
+        {"object": row["object"], "entry": [{"id": row["page_id"], "messaging": [event]}]},
+        dedup=False,
+    )
+
+
+def _process_events(data: dict, *, dedup: bool = True) -> None:
+    """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა.
+    dedup=False (inbox-ის გზა) — მეხსიერების `_already_handled` არ გამოიყენება."""
     sc = get_service_client()
     reply_limit = _REPLY_LIMITS.get(data.get("object"), _REPLY_LIMITS["page"])
     for entry in data.get("entry", []):
@@ -581,7 +632,7 @@ def _process_events(data: dict) -> None:
             if message.get("is_echo"):
                 # A-035: გამყიდველის ხელით დაწერილი პასუხი — ისტორიაში + ბოტის პაუზა
                 try:
-                    _handle_echo(sc, shop, ev, data.get("object"))
+                    _handle_echo(sc, shop, ev, data.get("object"), dedup=dedup)
                 except Exception as e:
                     # exc_info არა: traceback-ში psid შეიძლება აღმოჩნდეს
                     logger.warning(
@@ -591,14 +642,13 @@ def _process_events(data: dict) -> None:
             if not sender_id or (not text and not image_urls):
                 continue
             # Meta-ს გამეორებული მოვლენა — ერთხელ უკვე ვუპასუხეთ (P1-3)
-            if _already_handled(message.get("mid")):
+            if dedup and _already_handled(message.get("mid")):
                 logger.info("გამეორებული შეტყობინება იგნორდა (mid=%s)", message.get("mid"))
                 continue
             # B-3: წუთობრივი ლიმიტი — ბაზისა და LLM-ის წინ, რომ spam იაფად მოიჭრას
             if _rate_limited(str(shop["id"]), str(sender_id)):
                 logger.warning(
-                    "წუთობრივი ლიმიტი გადაჭარბდა — შეტყობინება გამოტოვებულია (shop=%s, psid=%s)",
-                    shop.get("id"), sender_id,
+                    "წუთობრივი ლიმიტი გადაჭარბდა — შეტყობინება გამოტოვებულია (shop=%s)", shop.get("id"),
                 )
                 continue
 
