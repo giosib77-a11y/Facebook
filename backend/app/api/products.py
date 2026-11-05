@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from postgrest.exceptions import APIError
 
 from app.core import ratelimit
-from app.core.db import run
+from app.core.db import TooManyRows, fetch_all, run
 from app.core.ratelimit import rate_limit
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -35,6 +35,9 @@ MAX_IMAGES_PER_SHOP = 200
 MAX_IMAGE_STORAGE_PER_SHOP = 100 * 1024 * 1024  # 100MB
 # Stage 18: ფოტოს აღწერის LLM-გამოძახებები მაღაზიაზე საათში (დარჩენილი ფოტო ინახება აღწერის გარეშე)
 IMAGE_DESCRIBE_PER_HOUR = 30
+# A-041: ცხადი ჭერი; გადაჭარბება — WARNING / 413, არა ჩუმი ჭრა (Supabase-ის 1000-მწკრივიანი ჭერი → `fetch_all`)
+_LIST_MAX = 10_000
+_IMPORT_EXISTING_MAX = 50_000
 
 
 def _sniff_image_mime(content: bytes) -> str | None:
@@ -345,9 +348,24 @@ def import_products(
 
     # ── ჭკვიანი sync (upsert): არსებულს ვანახლებთ, ახალს ვამატებთ, დუბლიკატს არ ვქმნით ──
     # შედარება: ჯერ SKU-ით (თუ აქვს), მერე სახელით (case-insensitive).
-    existing = (
-        auth.client.table("products").select("id,sku,name").eq("shop_id", str(shop_id)).execute().data
-    )
+    # A-041: ყველა არსებული პროდუქტი (გვერდებად) — 1000-ზე მეტ კატალოგში დამთხვევა ჩუმად იკარგებოდა
+    # და ფაილი დუბლიკატებს ქმნიდა; ჭერზე მეტი → 413 (ნაწილობრივი შედარება არასდროს)
+    try:
+        existing = fetch_all(
+            lambda: (
+                auth.client.table("products").select("id,sku,name")
+                .eq("shop_id", str(shop_id)).order("id")
+            ),
+            max_rows=_IMPORT_EXISTING_MAX,
+            strict=True,
+            label="import existing",
+            execute=run,
+        )
+    except TooManyRows:
+        raise HTTPException(
+            413,  # Starlette-ის კონსტანტის სახელი ვერსიებს შორის იცვლება (deprecation)
+            "კატალოგი ძალიან დიდია იმპორტისთვის — მიმართეთ მხარდაჭერას.",
+        )
     by_sku, by_name = {}, {}
     for e in existing:
         esku = (e.get("sku") or "").strip().lower()
@@ -417,11 +435,13 @@ def list_products(
     shop_id: uuid.UUID | None = Query(default=None, description="ფილტრი კონკრეტული მაღაზიით"),
 ):
     """აბრუნებს მომხმარებლის ყველა პროდუქტს (RLS ფილტრავს); არასავალდებულო shop_id ფილტრით."""
-    query = auth.client.table("products").select("*")
-    if shop_id is not None:
-        query = query.eq("shop_id", str(shop_id))
-    res = run(query.order("created_at"))
-    return res.data
+    def make_query():
+        query = auth.client.table("products").select("*")
+        if shop_id is not None:
+            query = query.eq("shop_id", str(shop_id))
+        return query.order("created_at").order("id")
+
+    return fetch_all(make_query, max_rows=_LIST_MAX, label="list_products", execute=run)
 
 
 @router.put("/{product_id}", response_model=ProductOut)

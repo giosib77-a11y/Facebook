@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.core.db import run
+from app.core.db import TooManyRows, fetch_all, run
 from app.core.ratelimit import rate_limit
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -35,6 +35,8 @@ router = APIRouter(prefix="/shops", tags=["shops"])
 logger = logging.getLogger("app")
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10MB
+# A-041: ცხადი ჭერი; გადაჭარბება — 413, არა ჩუმი ჭრა (ცხრილზე; ექსპორტი — products და orders ცალ-ცალკე)
+_EXPORT_MAX = 50_000
 
 # ანალიტიკისთვის — ხშირი სასაუბრო სიტყვები (თემად არ ჩავთვლით)
 _ANALYTICS_STOPWORDS = {
@@ -505,13 +507,27 @@ def export_shop_data(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current
     shop_row = dict(shop.data[0])
     shop_row.pop("facebook_page_token", None)  # საიდუმლო — არ გადის ექსპორტში
 
-    products = run(
-        auth.client.table("products").select("*").eq("shop_id", str(shop_id)).order("name")
-    ).data
-    orders = run(
-        auth.client.table("orders").select("*").eq("shop_id", str(shop_id))
-        .order("created_at", desc=True)
-    ).data
+    # A-041: სრული ექსპორტი გვერდებად; ჭერზე მეტი → 413 (ნაწილობრივი ექსპორტი ჩუმად — არასდროს)
+    try:
+        products = fetch_all(
+            lambda: (
+                auth.client.table("products").select("*").eq("shop_id", str(shop_id))
+                .order("name").order("id")
+            ),
+            max_rows=_EXPORT_MAX, strict=True, label="export products", execute=run,
+        )
+        orders = fetch_all(
+            lambda: (
+                auth.client.table("orders").select("*").eq("shop_id", str(shop_id))
+                .order("created_at", desc=True).order("id", desc=True)
+            ),
+            max_rows=_EXPORT_MAX, strict=True, label="export orders", execute=run,
+        )
+    except TooManyRows:
+        raise HTTPException(
+            413,  # Starlette-ის კონსტანტის სახელი ვერსიებს შორის იცვლება (deprecation)
+            "მონაცემი ექსპორტისთვის ძალიან დიდია — მიმართეთ მხარდაჭერას.",
+        )
 
     payload = {
         "exported_at": datetime.now(timezone.utc).isoformat(),

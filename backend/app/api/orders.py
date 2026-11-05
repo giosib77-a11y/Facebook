@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from postgrest.exceptions import APIError
 
-from app.core.db import run
+from app.core.db import fetch_all, run
 from app.core.ratelimit import check_rate_limit, rate_limit, register_window
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -43,6 +43,10 @@ register_window(_ORDER_DAY_BUCKET, _ORDER_DAY_WINDOW)  # sweep-მა დღი�
 # დაკლებულია (გაუქმებისას ბრუნდება); new-ის მარაგს არ ეხება, გაუქმებისას არაფერი ბრუნდება.
 DELETABLE_STATUSES = ("done", "cancelled")
 
+# A-041: ცხადი ჭერი; გადაჭარბება — WARNING / 413, არა ჩუმი ჭრა (Supabase-ის 1000-მწკრივიანი ჭერი → `fetch_all`)
+_LIST_MAX = 10_000
+_MENU_MAX = 5000
+
 
 def _valid_phone(phone: str | None) -> bool:
     """მხოლოდ ციფრები, space, +, -, (, ) და 9–15 ციფრი."""
@@ -60,14 +64,17 @@ def public_menu(shop_id: uuid.UUID):
     shop = sc.table("shops").select("id,name,currency").eq("id", str(shop_id)).limit(1).execute()
     if not shop.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
-    products = (
-        sc.table("products")
-        .select("id,name,price,quantity,description")
-        .eq("shop_id", str(shop_id))
-        .eq("is_active", True)
-        .order("name")
-        .execute()
-        .data
+    products = fetch_all(
+        lambda: (
+            sc.table("products")
+            .select("id,name,price,quantity,description")
+            .eq("shop_id", str(shop_id))
+            .eq("is_active", True)
+            .order("name")
+            .order("id")
+        ),
+        max_rows=_MENU_MAX,
+        label=f"public_menu shop={shop_id}",
     )
     return {"shop": shop.data[0], "products": products}
 
@@ -276,12 +283,16 @@ def list_orders(
     შერჩეული. პარამეტრი **არასავალდებულოა** — გამოტოვებისას ძველი ქცევა რჩება
     (უკან თავსებადი).
     """
-    query = auth.client.table("orders").select("*").order("created_at", desc=True)
-    if shop_id is not None:
-        query = query.eq("shop_id", str(shop_id))
-    if status_filter:
-        query = query.eq("status", status_filter)
-    return run(query).data
+    def make_query():
+        query = auth.client.table("orders").select("*").order("created_at", desc=True).order("id", desc=True)
+        if shop_id is not None:
+            query = query.eq("shop_id", str(shop_id))
+        if status_filter:
+            query = query.eq("status", status_filter)
+        return query
+
+    # უახლესი _LIST_MAX შეკვეთა (გადაჭარბებისას WARNING)
+    return fetch_all(make_query, max_rows=_LIST_MAX, label="list_orders", execute=run)
 
 
 @router.patch("/orders/{order_id}", response_model=OrderOut)

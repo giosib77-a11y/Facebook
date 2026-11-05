@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, R
 
 from app.config import get_settings
 from app.core.crypto import decrypt
+from app.core.db import fetch_all
 from app.core.supabase_client import get_service_client
 from app.core.tiers import daily_cap, limits_for
 from app.services.facebook import GraphError, download_image, send_text_message, verify_signature
@@ -446,12 +447,21 @@ def _save_turn(
 _BOT_PRODUCT_COLUMNS = "id,name,price,quantity,sku,description,image_url"
 
 
+# A-041: ცხადი ჭერი; გადაჭარბება — WARNING (პირველი N პროდუქტი), არა ჩუმი ჭრა. Supabase-ის 1000-მწკრივიანი
+# ჭერის გამო `fetch_all` კითხულობს გვერდებად. დიდ კატალოგზე ძებნა Postgres-შია (0040) და ჭერს არ ექვემდებარება.
+_BOT_PRODUCTS_MAX = 5000
+
+
 def _load_bot_products(sc, shop_id: str) -> list:
     """მაღაზიის აქტიური პროდუქტები ბოტისთვის. migration 0028-ის გარეშე — `image_description`-ის გარეშე."""
     def select(columns: str):
-        return (
-            sc.table("products").select(columns)
-            .eq("shop_id", shop_id).eq("is_active", True).execute().data
+        return fetch_all(
+            lambda: (
+                sc.table("products").select(columns)
+                .eq("shop_id", shop_id).eq("is_active", True).order("id")
+            ),
+            max_rows=_BOT_PRODUCTS_MAX,
+            label=f"bot products shop={shop_id}",
         )
 
     try:
