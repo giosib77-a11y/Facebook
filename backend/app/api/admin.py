@@ -5,12 +5,14 @@
 """
 import logging
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.core.db import fetch_all
 from app.core.ratelimit import _client_ip
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -26,6 +28,15 @@ from app.services import budget, subscriptions
 from app.services.bot_limits import enforce_bot_limit
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
+
+# A-041: ცხადი ჭერი; გადაჭარბება — WARNING (fetch_all), არა ჩუმი ჭრა
+_ADMIN_SHOPS_MAX = 20_000      # shops / subscriptions და სხვა მცირე ცხრილები
+_ADMIN_ORDERS_MAX = 200_000    # orders / products / bot_customers (მხოლოდ Python-ის fallback-ში)
+_ADMIN_PRODUCTS_MAX = 10_000   # ერთი მაღაზიის პროდუქტები (shop_detail)
+
+# 0039-ის RPC-ები (admin_overview_stats / admin_growth / admin_shop_counts) არ არის ბაზაში
+_RPC_MISSING_CODES = ("PGRST202", "42883")
+_RPC_WARNED: set[str] = set()  # ფუნქცია, რომლისთვისაც WARNING უკვე დაიწერა (ერთხელ პროცესზე)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger("app")
@@ -182,12 +193,34 @@ def client_ip(request: Request, admin: CurrentAuth = Depends(get_current_admin))
     }
 
 
-@router.get("/overview")
-def overview(admin: CurrentAuth = Depends(get_current_admin)):
-    """საერთო მაჩვენებლები — მთელი პლატფორმა."""
-    sc = get_service_client()
-    shops = sc.table("shops").select("id,owner_id,facebook_page_id,subscription_tier").execute().data or []
-    orders = sc.table("orders").select("total,status,created_at").execute().data or []
+def _admin_rpc(sc, fn: str, params: dict | None = None) -> dict | None:
+    """ადმინის SQL-აგრეგაცია (migration 0039): dict, ან None → გამომძახებელი Python-ის გზაზე გადადის.
+
+    RPC ყოველ მოთხოვნაზე ისევ ცდება (flag მხოლოდ WARNING-ს აჩუმებს) — migration-ის შემდეგ restart არ სჭირდება.
+    ფუნქცია არ არის (PGRST202 / 42883) → None + ერთი WARNING პროცესზე ფუნქციაზე; სხვა შეცდომა ადის (500).
+    """
+    try:
+        data = sc.rpc(fn, params or {}).execute().data
+    except Exception as exc:
+        if getattr(exc, "code", None) not in _RPC_MISSING_CODES:
+            raise
+        if fn not in _RPC_WARNED:
+            _RPC_WARNED.add(fn)
+            logger.warning("%s missing (migration 0039 not applied) - Python aggregation", fn)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _overview_python(sc) -> dict:
+    """0039-ის გარეშე: იგივე რიცხვები Python-ში, გვერდ-გვერდ (fetch_all) — ნელია, მაგრამ სწორი."""
+    shops = fetch_all(
+        lambda: sc.table("shops").select("id,owner_id,facebook_page_id,subscription_tier").order("id"),
+        max_rows=_ADMIN_SHOPS_MAX, label="admin overview shops",
+    )
+    orders = fetch_all(
+        lambda: sc.table("orders").select("total,status,created_at").order("id"),
+        max_rows=_ADMIN_ORDERS_MAX, label="admin overview orders",
+    )
     products = sc.table("products").select("id", count="exact").limit(1).execute()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
@@ -199,24 +232,11 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         if ts and ts >= cutoff:
             orders_30d += 1
 
-    # MRR + პაკეტების განაწილება — გამოწერა per-account-ია (ერთი გადახდა ფარავს
-    # მფლობელის ყველა მაღაზიას), ამიტომ მფლობელობით ვთვლით, არა მაღაზიაზე —
-    # თორემ მრავალ-მაღაზიიანი მფლობელი MRR-ს ხელოვნურად ბერავს.
     owner_tiers: dict[str, list] = {}
     for s in shops:
         oid = s.get("owner_id")
         if oid:
             owner_tiers.setdefault(str(oid), []).append(s.get("subscription_tier"))
-    mrr = 0
-    tier_counts = {"free": 0, "basic": 0, "standard": 0, "business": 0}
-    for tiers in owner_tiers.values():
-        t = best_tier(tiers)
-        tier_counts[t] = tier_counts.get(t, 0) + 1
-        mrr += TIER_PRICES.get(t, 0)
-
-    # API Contract: alert = kill_switch or (today_usd >= 80% of the daily cap) — spend_status already folds both in
-    llm = budget.spend_status(sc)
-
     return {
         "total_shops": len(shops),
         "total_sellers": len({s["owner_id"] for s in shops if s.get("owner_id")}),
@@ -224,7 +244,41 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
         "total_products": products.count or 0,
         "total_orders": len(orders),
         "orders_30d": orders_30d,
-        "revenue": round(revenue, 2),
+        "revenue": revenue,
+        "owner_tiers": dict(Counter(best_tier(t) for t in owner_tiers.values())),
+    }
+
+
+@router.get("/overview")
+def overview(admin: CurrentAuth = Depends(get_current_admin)):
+    """საერთო მაჩვენებლები — მთელი პლატფორმა."""
+    sc = get_service_client()
+    stats = _admin_rpc(sc, "admin_overview_stats")
+    if stats is None:
+        stats = _overview_python(sc)
+
+    # MRR + პაკეტების განაწილება — გამოწერა per-account-ია (ერთი გადახდა ფარავს
+    # მფლობელის ყველა მაღაზიას), ამიტომ მფლობელობით ვთვლით, არა მაღაზიაზე —
+    # თორემ მრავალ-მაღაზიიანი მფლობელი MRR-ს ხელოვნურად ბერავს.
+    # `owner_tiers` = {პაკეტი: მფლობელების რაოდენობა} (SQL-იდან ან Python-იდან); ფასი — TIER_PRICES (ერთი წყარო).
+    mrr = 0
+    tier_counts = {"free": 0, "basic": 0, "standard": 0, "business": 0}
+    for tier, n in (stats.get("owner_tiers") or {}).items():
+        t, n = normalize_tier(tier), int(n or 0)
+        tier_counts[t] = tier_counts.get(t, 0) + n
+        mrr += TIER_PRICES.get(t, 0) * n
+
+    # API Contract: alert = kill_switch or (today_usd >= 80% of the daily cap) — spend_status already folds both in
+    llm = budget.spend_status(sc)
+
+    return {
+        "total_shops": int(stats.get("total_shops") or 0),
+        "total_sellers": int(stats.get("total_sellers") or 0),
+        "connected_shops": int(stats.get("connected_shops") or 0),
+        "total_products": int(stats.get("total_products") or 0),
+        "total_orders": int(stats.get("total_orders") or 0),
+        "orders_30d": int(stats.get("orders_30d") or 0),
+        "revenue": round(float(stats.get("revenue") or 0), 2),
         "mrr": mrr,
         "tier_counts": tier_counts,
         "llm": llm,
@@ -250,9 +304,24 @@ def growth(admin: CurrentAuth = Depends(get_current_admin), months: int = 6):
     """ბოლო N თვის ზრდა — ახალი მაღაზიები + შეკვეთები თვეობრივად."""
     months = max(1, min(months, 24))
     sc = get_service_client()
-    shops = sc.table("shops").select("created_at").execute().data or []
-    orders = sc.table("orders").select("created_at").execute().data or []
     yms = _last_months(months)
+    data = _admin_rpc(sc, "admin_growth", {"p_months": months})
+    if data is not None:
+        # SQL მხოლოდ მონაცემიან თვეებს აბრუნებს — ნულებს აქ ვავსებთ; _last_months-ს გარეთა გასაღებები იგნორდება
+        def _n(ym: str, key: str) -> int:
+            row = data.get(ym)
+            return int((row.get(key) if isinstance(row, dict) else 0) or 0)
+
+        return [{"ym": ym, "shops": _n(ym, "shops"), "orders": _n(ym, "orders")} for ym in yms]
+
+    shops = fetch_all(
+        lambda: sc.table("shops").select("created_at,id").order("id"),
+        max_rows=_ADMIN_SHOPS_MAX, label="admin growth shops",
+    )
+    orders = fetch_all(
+        lambda: sc.table("orders").select("created_at,id").order("id"),
+        max_rows=_ADMIN_ORDERS_MAX, label="admin growth orders",
+    )
     sh = {ym: 0 for ym in yms}
     od = {ym: 0 for ym in yms}
     for s in shops:
@@ -270,29 +339,53 @@ def growth(admin: CurrentAuth = Depends(get_current_admin), months: int = 6):
 def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
     """ყველა მაღაზიის სია — მფლობელი, აქტივობა, სტატუსი."""
     sc = get_service_client()
-    shops = sc.table("shops").select("*").order("created_at", desc=True).execute().data or []
-    products = sc.table("products").select("shop_id").execute().data or []
-    orders = sc.table("orders").select("shop_id").execute().data or []
+    shops = fetch_all(
+        lambda: sc.table("shops").select("*").order("created_at", desc=True).order("id"),
+        max_rows=_ADMIN_SHOPS_MAX, label="admin shops",
+    )
     emails = _email_map(sc)
 
-    ym = datetime.now(timezone.utc).strftime("%Y-%m")
     try:
-        cust_rows = sc.table("bot_customers").select("shop_id").eq("ym", ym).execute().data or []
-    except Exception:
-        cust_rows = []  # migration ჯერ არ გაშვებულა
-    try:
-        sub_rows = sc.table("subscriptions").select("owner_id,paid_until").execute().data or []
+        sub_rows = fetch_all(
+            lambda: sc.table("subscriptions").select("owner_id,paid_until").order("owner_id"),
+            max_rows=_ADMIN_SHOPS_MAX, label="admin subscriptions",
+        )
         paid_until_by_owner = {str(r["owner_id"]): r.get("paid_until") for r in sub_rows}
     except Exception:
         paid_until_by_owner = {}  # migration 0034 ჯერ არ გაშვებულა
 
     prod_count, order_count, cust_count = {}, {}, {}
-    for p in products:
-        prod_count[p["shop_id"]] = prod_count.get(p["shop_id"], 0) + 1
-    for o in orders:
-        order_count[o["shop_id"]] = order_count.get(o["shop_id"], 0) + 1
-    for c in cust_rows:
-        cust_count[c["shop_id"]] = cust_count.get(c["shop_id"], 0) + 1
+    counts = _admin_rpc(sc, "admin_shop_counts")
+    if counts is not None:
+        # SQL-ში დათვლილი (1000-იანი ჭერის გარეშე); RPC-ში არმყოფი მაღაზია → 0
+        for sid, c in counts.items():
+            if isinstance(c, dict):
+                prod_count[sid] = int(c.get("products") or 0)
+                order_count[sid] = int(c.get("orders") or 0)
+                cust_count[sid] = int(c.get("customers") or 0)
+    else:
+        products = fetch_all(
+            lambda: sc.table("products").select("shop_id").order("id"),
+            max_rows=_ADMIN_ORDERS_MAX, label="admin shops products",
+        )
+        orders = fetch_all(
+            lambda: sc.table("orders").select("shop_id").order("id"),
+            max_rows=_ADMIN_ORDERS_MAX, label="admin shops orders",
+        )
+        ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        try:
+            cust_rows = fetch_all(
+                lambda: sc.table("bot_customers").select("shop_id").eq("ym", ym).order("shop_id").order("psid"),
+                max_rows=_ADMIN_ORDERS_MAX, label="admin shops customers",
+            )
+        except Exception:
+            cust_rows = []  # migration ჯერ არ გაშვებულა
+        for p in products:
+            prod_count[p["shop_id"]] = prod_count.get(p["shop_id"], 0) + 1
+        for o in orders:
+            order_count[o["shop_id"]] = order_count.get(o["shop_id"], 0) + 1
+        for c in cust_rows:
+            cust_count[c["shop_id"]] = cust_count.get(c["shop_id"], 0) + 1
 
     result = []
     for s in shops:
@@ -320,7 +413,10 @@ def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
 def all_sellers(admin: CurrentAuth = Depends(get_current_admin)):
     """ყველა რეგისტრირებული მომხმარებელი — email, დადასტურება, ბოლო შესვლა, მაღაზიები."""
     sc = get_service_client()
-    shops = sc.table("shops").select("owner_id").execute().data or []
+    shops = fetch_all(
+        lambda: sc.table("shops").select("owner_id").order("id"),
+        max_rows=_ADMIN_SHOPS_MAX, label="admin sellers shops",
+    )
     shop_count: dict = {}
     for s in shops:
         oid = str(s.get("owner_id"))
@@ -348,7 +444,11 @@ def recent_orders(admin: CurrentAuth = Depends(get_current_admin), limit: int = 
     orders = (
         sc.table("orders").select("*").order("created_at", desc=True).limit(limit).execute().data or []
     )
-    shops = sc.table("shops").select("id,name").execute().data or []
+    # მხოლოდ ამ ≤200 შეკვეთის მაღაზიები (არა მთელი ცხრილი — 1000-იანი ჭერი სახელებს გამოტოვებდა)
+    shop_ids = sorted({o["shop_id"] for o in orders if o.get("shop_id")})
+    shops = (
+        sc.table("shops").select("id,name").in_("id", shop_ids).execute().data or [] if shop_ids else []
+    )
     name_map = {s["id"]: s.get("name") for s in shops}
     for o in orders:
         o["shop_name"] = name_map.get(o.get("shop_id"))
@@ -362,7 +462,10 @@ def shop_detail(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
     shop = sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
     if not shop:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
-    products = sc.table("products").select("*").eq("shop_id", shop_id).order("name").execute().data or []
+    products = fetch_all(
+        lambda: sc.table("products").select("*").eq("shop_id", shop_id).order("name").order("id"),
+        max_rows=_ADMIN_PRODUCTS_MAX, label="admin shop products",
+    )
     orders = (
         sc.table("orders").select("*").eq("shop_id", shop_id)
         .order("created_at", desc=True).limit(20).execute().data or []
@@ -447,7 +550,11 @@ def list_upgrade_requests(admin: CurrentAuth = Depends(get_current_admin)):
         )
     except Exception:
         return []  # migration 0005 ჯერ არ გაშვებულა
-    shops = sc.table("shops").select("id,name,subscription_tier,owner_id").execute().data or []
+    shop_ids = sorted({r["shop_id"] for r in reqs if r.get("shop_id")})
+    shops = (
+        sc.table("shops").select("id,name,subscription_tier,owner_id").in_("id", shop_ids).execute().data or []
+        if shop_ids else []
+    )
     smap = {s["id"]: s for s in shops}
     emails = _email_map(sc)
     for r in reqs:
