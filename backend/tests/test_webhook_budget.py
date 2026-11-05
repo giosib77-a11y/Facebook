@@ -69,7 +69,15 @@ def _warnings(caplog):
 
 
 def _budget_rpcs(db):
-    return [c for c in db.rpc_calls if c.fn == "llm_tokens_used"]
+    return [c for c in db.rpc_calls if c.fn == "llm_usage_by_model"]
+
+
+def _spend(usd):
+    """llm_usage_by_model rows costing `usd` at the default Claude output price ($0.50 / 1M tokens)."""
+    return [{
+        "provider": "anthropic", "model": "claude-haiku-5-5", "input_tokens": 0,
+        "output_tokens": round(usd * 2_000_000), "cache_read_tokens": 0, "cache_write_tokens": 0,
+    }]
 
 
 def _assert_operator_outcome(db, sent, calls):
@@ -173,24 +181,36 @@ def test_kill_switch_uses_operator_path_without_budget_rpc(env, monkeypatch, cap
 
 
 # ---- (4) real blocked_reason over the fake RPC -------------------------------
-def test_owner_monthly_total_above_budget_uses_operator_path(env, monkeypatch, caplog):
+def test_shop_monthly_spend_above_budget_uses_operator_path(env, monkeypatch, caplog):
     db, sent, calls = env
-    _budget_settings(monkeypatch, llm_daily_token_cap=0, llm_daily_tokens_per_owner=0)  # isolate the monthly rule
-    db.rpc_responses["llm_tokens_used"] = 10_000_000  # free budget: 2_000_000
+    _budget_settings(monkeypatch, llm_daily_usd_cap=0, llm_daily_usd_shop_divisor=0)  # isolate the monthly rule
+    db.rpc_responses["llm_usage_by_model"] = _spend(5.0)  # free budget: $0.30
 
     with caplog.at_level(logging.WARNING, logger="app"):
         _run()
 
     _assert_operator_outcome(db, sent, calls)
     (rpc,) = _budget_rpcs(db)
-    assert rpc.params["p_owner"] == OWNER
+    assert rpc.params["p_shop"] == SHOP_ID and rpc.params["p_owner"] is None
     assert any("bot budget: monthly_budget" in m for m in _warnings(caplog))
+
+
+def test_shop_daily_cap_uses_operator_path(env, monkeypatch, caplog):
+    db, sent, calls = env
+    _budget_settings(monkeypatch, llm_daily_usd_cap=0)  # isolate the shop day rule (checked first)
+    db.rpc_responses["llm_usage_by_model"] = _spend(0.05)  # free: $0.30 / 10 = $0.03 a day
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        _run()
+
+    _assert_operator_outcome(db, sent, calls)
+    assert any("bot budget: shop_daily_cap" in m and SHOP_ID in m for m in _warnings(caplog))
 
 
 def test_global_daily_cap_uses_operator_path(env, monkeypatch, caplog):
     db, sent, calls = env
-    _budget_settings(monkeypatch, llm_daily_tokens_per_owner=0)  # isolate the global rule (owner share is checked first)
-    db.rpc_responses["llm_tokens_used"] = 10_000_000  # default daily cap: 3_000_000
+    _budget_settings(monkeypatch, llm_daily_usd_shop_divisor=0)  # isolate the global rule (shop day cap is checked first)
+    db.rpc_responses["llm_usage_by_model"] = _spend(5.0)  # default daily cap: $1.00
 
     with caplog.at_level(logging.WARNING, logger="app"):
         _run()
@@ -201,7 +221,7 @@ def test_global_daily_cap_uses_operator_path(env, monkeypatch, caplog):
 
 def test_spend_below_budget_answers_normally(env):
     db, sent, calls = env
-    db.rpc_responses["llm_tokens_used"] = 1_000
+    db.rpc_responses["llm_usage_by_model"] = _spend(0.001)
 
     _run()
 
@@ -259,7 +279,7 @@ def test_paused_conversation_does_not_consult_budget(env, monkeypatch):
 # ---- (6) fail-open -----------------------------------------------------------
 def test_budget_rpc_error_keeps_bot_answering(env, caplog):
     db, sent, calls = env
-    db.rpc_errors["llm_tokens_used"] = RuntimeError("db down")
+    db.rpc_errors["llm_usage_by_model"] = RuntimeError("db down")
 
     with caplog.at_level(logging.WARNING, logger="app"):
         _run()
@@ -277,7 +297,7 @@ def test_missing_migration_keeps_bot_answering(env):
     class Missing(Exception):
         code = "PGRST202"
 
-    db.rpc_errors["llm_tokens_used"] = Missing("function not found")
+    db.rpc_errors["llm_usage_by_model"] = Missing("function not found")
 
     _run()
 

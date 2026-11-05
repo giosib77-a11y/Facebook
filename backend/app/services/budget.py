@@ -1,8 +1,10 @@
-"""LLM spend control (S20-8, A-037 / N-03): per-owner monthly + daily token budget, platform daily cap.
+"""LLM spend control in USD (S21-7, A-048 / N-03; Stage 20 token budget replaced): per-shop daily cap, platform daily
+cap, per-shop monthly budget.
 
-Reads `llm_usage` totals through the RPC `llm_tokens_used` (migration 0035) with a short in-process
-cache. Fail-open everywhere: when the RPC is missing (migration not applied) or fails, the spend checks
-are skipped (None) rather than switching every bot off. The kill-switch needs no database at all.
+Reads `llm_usage` totals per (provider, model) through the RPC `llm_usage_by_model` (migration 0038), prices them with
+`Settings.llm_price(model)` (USD / 1M tokens) and keeps a short in-process cache. Fail-open everywhere: when the RPC is
+missing (migration not applied) or fails, the spend checks are skipped (None) rather than switching every bot off.
+The kill-switch needs no database at all.
 
 Used by the webhook (S20-9); `llm.py` only checks the kill-switch itself.
 """
@@ -17,11 +19,19 @@ logger = logging.getLogger("app")
 
 ALERT_RATIO = 0.8  # share of the daily cap at which one WARNING per UTC day is logged
 CACHE_SECONDS = 60
+PER_MILLION = 1_000_000
+ROW_FIELDS = {  # llm_usage_by_model column -> price key
+    "input_tokens": "input",
+    "output_tokens": "output",
+    "cache_read_tokens": "cache_read",
+    "cache_write_tokens": "cache_write",
+}
 
 _lock = threading.Lock()
-_cache: dict[tuple[str, datetime], tuple[float, int | None]] = {}  # key -> (expires monotonic, value)
-_rpc_missing = False  # migration 0035 not applied: no more RPC attempts in this process
+_cache: dict[tuple[str, str, datetime], tuple[float, float | None]] = {}  # key -> (expires monotonic, USD)
+_rpc_missing = False  # migration 0038 not applied: no more RPC attempts in this process
 _logged_day: dict[str, object] = {}  # WARNING kind ("cap" / "alert") -> UTC date it was last logged
+_unknown_models: set[str] = set()  # models already warned about (priced at the maximum)
 
 
 def reset() -> None:
@@ -30,6 +40,7 @@ def reset() -> None:
     with _lock:
         _cache.clear()
         _logged_day.clear()
+        _unknown_models.clear()
         _rpc_missing = False
 
 
@@ -45,25 +56,43 @@ def _month_start(now: datetime) -> datetime:
     return _day_start(now).replace(day=1)
 
 
-def _parse_total(data) -> int:
-    """RPC `.data` -> int >= 0. Accepts int, numeric str, [{"llm_tokens_used": n}], None (-> 0)."""
-    if isinstance(data, list):
-        if not data:
-            return 0
-        first = data[0]
-        data = first.get("llm_tokens_used") if isinstance(first, dict) else first
-    if data is None:
+def _tokens(value) -> int:
+    """One token counter -> int >= 0. None -> 0; a bool or a non-number raises (caller: unknown spend)."""
+    if value is None:
         return 0
-    if isinstance(data, bool):
+    if isinstance(value, bool):
         raise ValueError("unexpected boolean")
-    return max(0, int(data))
+    return max(0, int(value))
 
 
-def tokens_used(sc, owner_id: str | None, since: datetime) -> int | None:
-    """Total tokens (all four llm_usage counters) since `since`: of one owner's shops, or the whole
-    platform when owner_id is None. None = unknown (migration missing / DB error) -> caller fails open."""
+def _price_rows(data, settings) -> float:
+    """RPC `.data` (list of per-(provider, model) token sums) -> USD. Raises on a malformed result."""
+    if data is None:
+        return 0.0
+    if not isinstance(data, list):
+        raise ValueError("unexpected result shape")
+    total = 0.0
+    for row in data:
+        if not isinstance(row, dict):
+            raise ValueError("unexpected row shape")
+        model = str(row.get("model") or "")
+        if model not in settings.llm_prices:
+            with _lock:
+                first = model not in _unknown_models
+                _unknown_models.add(model)
+            if first:
+                logger.warning("LLM model %r has no price - priced at the maximum of the known models", model)
+        price = settings.llm_price(model)
+        for column, key in ROW_FIELDS.items():
+            total += _tokens(row.get(column)) * price[key] / PER_MILLION
+    return round(total, 6)
+
+
+def cost_usd(sc, *, owner_id: str | None = None, shop_id: str | None = None, since: datetime) -> float | None:
+    """Spend in USD since `since`: of one shop, of one owner's shops, or of the whole platform (both None).
+    None = unknown (migration missing / DB error / bad result) -> caller fails open."""
     global _rpc_missing
-    key = (str(owner_id) if owner_id else "*", since)
+    key = (f"owner:{owner_id}" if owner_id else "", f"shop:{shop_id}" if shop_id else "", since)
     now = time.monotonic()
     with _lock:
         if _rpc_missing:
@@ -71,12 +100,14 @@ def tokens_used(sc, owner_id: str | None, since: datetime) -> int | None:
         hit = _cache.get(key)
         if hit is not None and hit[0] > now:
             return hit[1]
-    value: int | None
+    value: float | None
     try:
-        res = sc.rpc("llm_tokens_used", {
-            "p_owner": str(owner_id) if owner_id else None, "p_since": since.isoformat(),
+        res = sc.rpc("llm_usage_by_model", {
+            "p_owner": str(owner_id) if owner_id else None,
+            "p_shop": str(shop_id) if shop_id else None,
+            "p_since": since.isoformat(),
         }).execute()
-        value = _parse_total(getattr(res, "data", None))
+        value = _price_rows(getattr(res, "data", None), get_settings())
     except Exception as exc:
         value = None
         if getattr(exc, "code", None) == "PGRST202":
@@ -84,12 +115,12 @@ def tokens_used(sc, owner_id: str | None, since: datetime) -> int | None:
                 first = not _rpc_missing
                 _rpc_missing = True
             if first:
-                logger.warning("llm_tokens_used missing (migration 0035 not applied) - LLM budget disabled")
+                logger.warning("llm_usage_by_model missing (migration 0038 not applied) - LLM budget disabled")
             return None
-        logger.warning("llm_tokens_used failed - LLM budget check skipped (%s)", type(exc).__name__)
+        logger.warning("llm_usage_by_model failed - LLM budget check skipped (%s)", type(exc).__name__)
     with _lock:
         for k in [k for k, (expires, _) in _cache.items() if expires <= now]:
-            del _cache[k]  # expired entries must not pile up (one key per owner and period)
+            del _cache[k]  # expired entries must not pile up (one key per shop and period)
         _cache[key] = (now + CACHE_SECONDS, value)
     return value
 
@@ -100,56 +131,56 @@ def _once_per_day(kind: str, today) -> bool:
         if _logged_day.get(kind) == today:
             return False
         for k in [k for k, day in _logged_day.items() if day != today]:
-            del _logged_day[k]  # yesterday's entries (one kind per owner) must not pile up
+            del _logged_day[k]  # yesterday's entries must not pile up
         _logged_day[kind] = today
         return True
 
 
 def blocked_reason(sc, shop: dict) -> str | None:
-    """Why the bot must not call the LLM for this shop: "kill_switch" | "owner_daily_cap" | "daily_cap" |
+    """Why the bot must not call the LLM for this shop: "kill_switch" | "shop_daily_cap" | "daily_cap" |
     "monthly_budget", or None (allowed, or unknown because the spend data is unavailable).
-    The owner's daily share is checked before the platform cap: one tenant must not exhaust the shared pool."""
+    The shop's own daily cap is checked before the platform cap: one shop must not exhaust the shared pool."""
     s = get_settings()
     if s.llm_kill_switch:
         return "kill_switch"
     now = _now()
-    owner_id = shop.get("owner_id")
-    owner_cap = s.llm_daily_tokens_per_owner
-    if owner_cap > 0 and owner_id:
-        owner_today = tokens_used(sc, str(owner_id), _day_start(now))
-        if owner_today is not None and owner_today >= owner_cap:
-            if _once_per_day(f"owner:{owner_id}", now.date()):
-                logger.warning("LLM owner daily token cap reached - bot switched to operator (owner=%s)", owner_id)
-            return "owner_daily_cap"
-    cap = s.llm_daily_token_cap
+    shop_id = shop.get("id")
+    tier = shop.get("subscription_tier")
+    shop_cap = s.llm_daily_usd_shop_cap(tier)
+    if shop_cap > 0 and shop_id:
+        shop_today = cost_usd(sc, shop_id=str(shop_id), since=_day_start(now))
+        if shop_today is not None and shop_today >= round(shop_cap, 6):
+            return "shop_daily_cap"
+    cap = s.llm_daily_usd_cap
     if cap > 0:
-        today = tokens_used(sc, None, _day_start(now))
+        today = cost_usd(sc, since=_day_start(now))
         if today is not None:
             if today >= cap:
                 if _once_per_day("cap", now.date()):
-                    logger.warning("LLM daily token cap reached - bot switched to operator")
+                    logger.warning("LLM daily USD cap reached - bot switched to operator")
                 return "daily_cap"
             if today >= cap * ALERT_RATIO and _once_per_day("alert", now.date()):
-                logger.warning("LLM spend alert: %d%% of daily token cap", int(today * 100 / cap))
-    budget = s.llm_monthly_budget(shop.get("subscription_tier"))
-    if budget > 0 and owner_id:
-        month = tokens_used(sc, str(owner_id), _month_start(now))
-        if month is not None and month >= budget:
+                logger.warning("LLM spend alert: %d%% of daily USD cap", int(today * 100 / cap))
+    monthly = s.llm_monthly_usd_budget(tier)
+    if monthly > 0 and shop_id:
+        month = cost_usd(sc, shop_id=str(shop_id), since=_month_start(now))
+        if month is not None and month >= round(monthly, 6):
             return "monthly_budget"
     return None
 
 
 def spend_status(sc) -> dict:
-    """Platform spend for the admin overview. today_tokens / month_tokens are None when unknown."""
+    """Platform spend for the admin overview (USD). today_usd / month_usd are None when unknown.
+    `alert` = kill-switch on, or today's spend at 80% of the daily cap."""
     s = get_settings()
     now = _now()
-    today = tokens_used(sc, None, _day_start(now))
-    month = tokens_used(sc, None, _month_start(now))
-    cap = s.llm_daily_token_cap
+    today = cost_usd(sc, since=_day_start(now))
+    month = cost_usd(sc, since=_month_start(now))
+    cap = s.llm_daily_usd_cap
     return {
-        "today_tokens": today,
-        "month_tokens": month,
-        "daily_cap": cap,
+        "today_usd": None if today is None else round(today, 4),
+        "month_usd": None if month is None else round(month, 4),
+        "daily_cap_usd": cap,
         "kill_switch": s.llm_kill_switch,
-        "alert": bool(cap > 0 and today is not None and today >= cap * ALERT_RATIO),
+        "alert": bool(s.llm_kill_switch or (cap > 0 and today is not None and today >= cap * ALERT_RATIO)),
     }
