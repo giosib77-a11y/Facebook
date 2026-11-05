@@ -176,7 +176,7 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         36 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         38 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -299,6 +299,8 @@ webhook `object` ველით არჩევს (`page` / `instagram`).
 DB-ოპერაციები სრულდება **მომხმარებლის JWT-ით** → RLS უზრუნველყოფს იზოლაციას.
 სრული ინტერაქტიული დოკუმენტაცია: `/docs` (OpenAPI; `/docs`, `/redoc`, `/openapi.json` მხოლოდ dev-ში — production-ში გამორთულია)
 
+**Stage 21 — header-ები:** ყველა პასუხს აქვს `Content-Security-Policy` (`default-src 'self'; script-src 'self'; …`, `connect-src` — `'self'` + Supabase), `Cross-Origin-Resource-Policy: same-origin`, `Cache-Control: no-store` (თუ route-ს/static-ს საკუთარი არ აქვს; `/panel/assets/*` — immutable). `CSP_REPORT_ONLY=true` → იგივე policy `Content-Security-Policy-Report-Only` header-ით. `/facebook/connect/callback`-ს საკუთარი nonce-იანი CSP აქვს. ახალი endpoint არ დამატებულა.
+
 ### სისტემა
 | Method | Path | აღწერა | Auth |
 |---|---|---|---|
@@ -345,7 +347,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | Method | Path | აღწერა |
 |---|---|---|
 | GET | `/webhook` | Meta-ს ვერიფიკაცია (challenge) |
-| POST | `/webhook` | შემოსული შეტყობინებები (X-Hub-Signature-256) |
+| POST | `/webhook` | შემოსული შეტყობინებები (X-Hub-Signature-256). გარე კონტრაქტი უცვლელია (200 / 403 / 400 / 413); Stage 21-დან 200 `webhook_inbox`-ში ჩაწერის **შემდეგ** იგზავნება, პასუხს worker აგზავნის (at-least-once, ტიპურად ≤1 წმ) |
 | GET | `/facebook/connect/start` | OAuth-ის დაწყება |
 | GET | `/facebook/connect/callback` | token-ის შენახვა + webhook subscribe |
 | POST | `/facebook/disconnect` | გვერდის გათიშვა + Meta-ს webhook subscription-ის მოხსნა (`DELETE /{page_id}/subscribed_apps`, best-effort) |
@@ -356,7 +358,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | Method | Path | აღწერა |
 |---|---|---|
 | GET | `/admin/check` | ადმინია თუ არა |
-| GET | `/admin/overview` | MRR, ჯამები; `llm` — დღიური/თვიური ტოკენები, ჭერი, kill-switch, `alert` |
+| GET | `/admin/overview` | MRR, ჯამები; `llm` (Stage 21, USD) — `today_usd`, `month_usd` (`null` — 0038-ის გარეშე / შეცდომაზე), `daily_cap_usd`, `kill_switch`, `alert` (kill-switch ან დღიური ≥ 80% ჭერის) |
 | GET | `/admin/growth` | ზრდის გრაფიკი |
 | GET | `/admin/sellers` · `/admin/shops` · `/admin/orders` | სიები (`/admin/shops` ჩანაწერს აქვს `owner_id`, `paid_until`) |
 | POST | `/admin/subscriptions/{owner_id}/extend` | გამოწერის გაგრძელება `{days}` (1–366) |
@@ -392,7 +394,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (36)
+### მიგრაციები (38)
 
 | # | რა |
 |---|---|
@@ -432,8 +434,10 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0034` | 🔒 `subscriptions` (`owner_id`, `tier`, `paid_until`) + backfill + `expire_subscriptions()` და pg_cron `expire-subscriptions` (ყოველდღე 00:05 UTC) — ფასიანი პაკეტის ვადა (A-036). EXECUTE მოხსნილია `public/anon/authenticated`-დან. იდემპოტენტურია. გაუშვი backend deploy-**მდე**; მის გარეშე პაკეტები უვადოა + WARNING, ადმინის „გაგრძელება" → 503. **deploy-ის შემდეგ ხელახლა გაუშვი** (backfill `on conflict do nothing` — არსებული ვადები უცვლელი) |
 | `0035` | 🔒 `llm_tokens_used(owner, since)` RPC + ინდექსი `llm_usage (created_at)` — LLM ბიუჯეტის შემოწმებისთვის (A-037). EXECUTE მხოლოდ `service_role`-ს. გაუშვი backend deploy-**მდე**; მის გარეშე თვიური/დღიური ბიუჯეტი გამორთულია + WARNING (kill-switch და უფასოს 30/დღე მუშაობს) |
 | `0036` | `shops.bot_status` / `bot_status_at` (nullable) — ბოტის ჯანმრთელობა (A-038). `authenticated`-ს ამ სვეტებზე UPDATE არ აქვს. გაუშვი backend deploy-**მდე**; მის გარეშე პანელში ჯანმრთელობა არ ჩანს (Telegram მუშაობს) + WARNING |
+| `0037_webhook_inbox` | 🔒 `webhook_inbox` — მდგრადი webhook-ის რიგი + dedup `(page_id, mid)` (Stage 21, A-040); RLS ჩართული, პოლისების გარეშე, მხოლოდ `service_role`; `claim_webhook_events(...)` (`SKIP LOCKED`) და `purge_webhook_inbox()` — EXECUTE მხოლოდ `service_role`; pg_cron `purge-webhook-inbox` (`23 * * * *`, 24 სთ-ზე ძველი მწკრივები). იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ძველი in-process გზა + WARNING |
+| `0038_llm_usage_by_model` | 🔒 `llm_usage_by_model(owner, shop, since)` RPC — ხარჯი მოდელის მიხედვით USD ბიუჯეტისთვის (Stage 21, A-048). EXECUTE მხოლოდ `service_role`. გაუშვი backend deploy-**მდე** (სავალდებულოა); მის გარეშე USD ბიუჯეტი გამორთულია + WARNING (kill-switch და უფასოს 30/დღე მუშაობს), ადმინის `today_usd`/`month_usd` = `null` |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). Stage 21-ის run order: `0037` (რეკომენდებული) → `0038` (**სავალდებულო**, deploy-მდე) → Render-ის env-ები (§12; ტოკენის ცვლადები წაშალე) → backend + frontend deploy (თუ `0038` deploy-ის შემდეგ გაეშვა — Render restart) → შემოწმება: ლოგში `webhook worker started`, პანელი/ადმინი/`order.html`/`delete-data.html` Console-ში CSP-ის შეცდომის გარეშე (პრობლემაზე `CSP_REPORT_ONLY=true`). ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -453,10 +457,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **დედუპლიკაცია** | Meta-ს განმეორებული `mid` ბოტს ორჯერ არ ამუშავებს |
 | **Rate limiting** | per-IP sliding window საჯარო endpoint-ებზე |
 | **Abuse cap** | ერთი კლიენტი დღეში 100 შეტყობინება (უფასოზე 30) |
-| **LLM ხარჯის ჭერი** | `LLM_KILL_SWITCH`, პლატფორმის დღიური (`LLM_DAILY_TOKEN_CAP`), მფლობელის დღიური (`LLM_DAILY_TOKENS_PER_OWNER`, ნაგულისხმევი `1000000`, `0` = გამორთული; მისი ყველა მაღაზიის დღიური ჯამი, მოწმდება პლატფორმის ჭერამდე — ერთი მფლობელი მთელ პლატფორმას ვერ ამოწურავს) და მფლობელის თვიური (`LLM_MONTHLY_TOKENS_*`) ტოკენების ბიუჯეტი — ბიუჯეტის ამოწურვისას ბოტი ოპერატორის პასუხს აგზავნის (Stage 20) |
+| **LLM ხარჯის ჭერი (USD)** | Stage 21: ბიუჯეტი დოლარშია (`llm_usage`-ის ტოკენები × ფასი, მოდელის მიხედვით — `LLM_PRICES`). `LLM_KILL_SWITCH`; გლობალური დღიური `LLM_DAILY_USD_CAP` ($1, ყველა tenant ერთად); მაღაზიის თვიური `LLM_MONTHLY_USD_*` პაკეტის მიხედვით; მაღაზიის დღიური = თვიური ÷ `LLM_DAILY_USD_SHOP_DIVISOR` (10 → free $0.03 / basic $0.25 / standard $0.80 / business $2.50), მიზეზი `shop_daily_cap`. ამოწურვისას ბოტი ოპერატორის პასუხს აგზავნის. საჭიროა `0038` — მის გარეშე ბიუჯეტი გამორთულია + WARNING |
+| **webhook-ის რიგი** | Stage 21: `message.mid`-იანი მოვლენა ჯერ `webhook_inbox`-ში (0037) ინახება და მხოლოდ მერე იგზავნება 200; worker იმავე პროცესში (FastAPI lifespan) იღებს `SKIP LOCKED`-ით. **at-least-once**: restart / deploy / რამდენიმე instance მოვლენას ვერ კარგავს; განმეორებული `(page_id, mid)` იგნორდება; ჩაწერის შეცდომაზე — ძველი in-process დამუშავება. `event` (შეტყობინება, PSID) დამუშავებისთანავე `null`, მწკრივები 24 სთ-ში იშლება (pg_cron `purge-webhook-inbox`); ლოგში payload/PSID/ტექსტი არასდროს |
+| **CSP** | Stage 21: ყველა პასუხზე `Content-Security-Policy` (`script-src 'self'` — inline/eval არა), + `Cross-Origin-Resource-Policy: same-origin`, `Cache-Control: no-store` (სადაც route-ს საკუთარი არ აქვს). OAuth callback-ის HTML — ერთჯერადი nonce. COOP არ არის (FB OAuth popup). საგანგებოდ: `CSP_REPORT_ONLY=true` + restart |
+| **გასაღებების გამოყოფა (HKDF)** | Stage 21: OAuth `state` და Data Deletion კოდი HKDF-SHA256-ით გამოყვანილი გასაღებებით (IKM = `FB_APP_SECRET`). Meta-ს კონტრაქტის HMAC-ები (`appsecret_proof`, `X-Hub-Signature-256`, `signed_request`) უცვლელად app secret-ს იყენებს. Stage 21-მდე გაცემული deletion კოდები ვერიფიცირდება 2027-12-10-მდე; deploy-მდე დაწყებული OAuth connect (≤10 წთ) → `invalid_state`, ხელახლა სცადე |
 | **File bombs** | Excel/CSV — 5 MB / 5 000 მწკრივი; PDF — 300 გვერდი; zip-ratio ჭერი |
 | **CSV injection** | `=`, `+`, `-`, `@` ექსპორტში ნეიტრალდება |
-| **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production) |
+| **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production); CSP — იხ. ქვემოთ |
 | **შეცდომების გაჟონვა** | production-ში stack trace არ ბრუნდება |
 | **Dev endpoint** | `/test-chat` production-ში გამორთულია |
 | **Data Deletion** | Meta-ს callback ეხება **მხოლოდ გამყიდველს** (app-scoped ID = `shops.facebook_user_id`): მისი მაღაზიების FB მონაცემები იშლება, გვერდი ითიშება, webhook-ის გამოწერა მოიხსნება (best-effort); + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება. **Messenger-ის კლიენტის** (page-scoped ID) წაშლა — მაღაზიისთვის მიწერით (გამყიდველი პანელში: საუბარი → 🗑, `DELETE /shops/{id}/customers/{psid}`: საუბარი იშლება, ხოლო კლიენტის ID თვიურ მრიცხველში ანონიმიზდება — `bot_customers.psid` → `del:<uuid>`; რაოდენობა რჩება, რომ ლიმიტი არ განულდეს; გამყიდველის Meta callback კვლავ შლის) ან ელფოსტით `chatassistbusiness@gmail.com`; საუბრები ისედაც 24 სთ-ში იშლება |
@@ -685,9 +692,18 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `NOTIFY_EMAIL_FROM` | | — | გამგზავნი, მაგ. `ChatAssist <noreply@chatassist.ge>`; დომენი provider-ში ვერიფიცირებული უნდა იყოს (SPF/DKIM) |
 | `TELEGRAM_BOT_TOKEN` · `TELEGRAM_CHAT_ID` | | — | 🔒 ადმინის „BOT DOWN" alert-ები (მხოლოდ მიზეზი, shop id, სახელი). ცარიელი = გამორთულია |
 | `LLM_KILL_SWITCH` | | `false` | `true` → ყველა LLM გამოძახება გაჩერებულია (ბოტი ოპერატორის პასუხს აგზავნის) |
-| `LLM_DAILY_TOKEN_CAP` | | `3000000` | პლატფორმის დღიური ტოკენების ჭერი (UTC დღე); `0` = გამორთული. ⚠️ ≈ 120 შეტყობინება მთელ პლატფორმაზე — ფასიანი მაღაზიების ზრდისას გაზარდე |
-| `LLM_DAILY_TOKENS_PER_OWNER` | | `1000000` | მფლობელის დღიური ტოკენების ჭერი (მისი ყველა მაღაზიის ჯამი, UTC დღე), მოწმდება პლატფორმის ჭერამდე; `0` = გამორთული |
-| `LLM_MONTHLY_TOKENS_FREE` · `_BASIC` · `_STANDARD` · `_BUSINESS` | | `2000000` · `12000000` · `48000000` · `180000000` | მფლობელის (ყველა მაღაზიის ჯამი) თვიური ტოკენების ბიუჯეტი პაკეტის მიხედვით; `0` = გამორთული. ბოლო ბადედ provider-ის კონსოლშიც დააყენე spend limit |
+| `LLM_DAILY_USD_CAP` | | `1.0` | (Stage 21) გლობალური დღიური ჭერი USD-ში, ყველა tenant ერთად (UTC დღე); `0` = გამორთული. ⚠️ ფასიანი მაღაზიების ზრდისას გაზარდე |
+| `LLM_DAILY_USD_SHOP_DIVISOR` | | `10` | მაღაზიის დღიური ჭერი = თვიური ÷ ეს რიცხვი (free $0.03 / basic $0.25 / standard $0.80 / business $2.50); `0` = გამორთული |
+| `LLM_MONTHLY_USD_FREE` · `_BASIC` · `_STANDARD` · `_BUSINESS` | | `0.30` · `2.50` · `8` · `25` | თითო მაღაზიის თვიური ბიუჯეტი USD-ში პაკეტის მიხედვით; `0` = გამორთული. ბოლო ბადედ provider-ის კონსოლშიც დააყენე spend limit |
+| `LLM_PRICES` | | ცარიელი (კოდის default-ები) | ფასები USD / 1M ტოკენი, JSON, მაგ. `{"claude-haiku-5-5":{"input":0.10,"output":0.50,"cache_read":0.01,"cache_write":0.20}}`; მითითებული მოდელი მთლიანად იცვლება, დანარჩენი რჩება |
+| `WEBHOOK_INBOX_ENABLED` | | ცარიელი | ცარიელი = production-ში ჩართული, dev-ში გამორთული. **Render-ზე არ დააყენო.** ლოკალურად არ ჩართო: ლოკალური `.env` production ბაზას უკავშირდება და worker production-ის რიგს დაამუშავებდა |
+| `BOT_MAX_CONCURRENCY` | | `8` | ბოტის ერთდროული გაშვებების ლიმიტი (1–32) |
+| `WEBHOOK_POLL_SECONDS` | | `10` | worker-ის რიგის შემოწმების ინტერვალი, წმ (1–300) |
+| `WEBHOOK_MAX_ATTEMPTS` | | `3` | ერთი მოვლენის მაქს. მცდელობა, მერე `failed` (1–10) |
+| `WEBHOOK_CLAIM_STALE_SECONDS` | | `180` | `processing` მოვლენა ამ დროის შემდეგ გაჭედილად ითვლება და თავიდან ირიცხება (60–3600) |
+| `CSP_REPORT_ONLY` | | `false` | `true` → CSP მხოლოდ `Content-Security-Policy-Report-Only` რეჟიმში (არაფერს ბლოკავს) — საგანგებო გადამრთველი, კოდის გარეშე |
+
+**წაიშალა (Stage 21):** `LLM_DAILY_TOKEN_CAP`, `LLM_DAILY_TOKENS_PER_OWNER`, `LLM_MONTHLY_TOKENS_*` — ბიუჯეტი ახლა USD-შია. Render-ზე წაშალე — იგნორდება, მაგრამ აბნევს.
 
 🔒 = საიდუმლო. **`.env` არასდროს ჩააქოს git-ში.**
 
