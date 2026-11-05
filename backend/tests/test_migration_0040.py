@@ -99,6 +99,17 @@ def test_migration_0040_terms_are_filtered_capped_and_escaped():
         assert f"{column} ilike" in code, column
 
 
+def test_migration_0040_any_uses_array_column_not_double_parenthesised_subquery():
+    # S22-10: `x ilike any((select arr from pats))` is parsed by Postgres as the subquery form ANY (subquery)
+    # (text ~~* text[] -> "operator does not exist"), so CREATE FUNCTION fails. The array must come from a column.
+    code = _code(MIGRATION.read_text(encoding="utf-8"))
+    assert "any((select" not in code
+    assert "cross join pats" in code
+    assert code.count("any(pats.arr)") == 4
+    assert "unnest(pats.arr)" in code
+    assert "(select arr from pats)" not in code
+
+
 def test_migration_0040_scores_by_matched_terms_and_uses_similarity_only_as_tie_break():
     code = _code(MIGRATION.read_text(encoding="utf-8"))
     assert "count(*)" in code and "::integer" in code

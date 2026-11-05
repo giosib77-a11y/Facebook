@@ -83,21 +83,25 @@ as $$
     select coalesce(array_agg(terms.pat), '{}'::text[]) as arr from terms
   ),
   matched as (
+    -- `cross join pats` და არა `ilike any((select arr from pats))`: ორმაგი ფრჩხილი Postgres-ში ANY (subquery) ფორმად
+    -- იკითხება (text ~~* text[] → "operator does not exist"). `pats` ყოველთვის ზუსტად 1 მწკრივია (აგრეგატი GROUP BY-ის
+    -- გარეშე, term-ების გარეშეც '{}'), ამიტომ cross join პროდუქტს არ კარგავს და არ ამრავლებს.
     select p.id, p.name, p.price, p.quantity, p.sku, p.description,
            -- ქულა: რამდენი term გვხვდება რომელიმე ველში (prompt.match_products: ერთი term ერთხელ ითვლება)
            (select count(*)
-              from unnest((select arr from pats)) as x(pt)
+              from unnest(pats.arr) as x(pt)
              where p.name ilike x.pt
                 or p.description ilike x.pt
                 or p.sku ilike x.pt
                 or p.image_description ilike x.pt)::integer as score
       from public.products p
+     cross join pats
      where p.shop_id = p_shop
        and p.is_active
-       and (p.name ilike any((select arr from pats))
-            or p.description ilike any((select arr from pats))
-            or p.sku ilike any((select arr from pats))
-            or p.image_description ilike any((select arr from pats)))
+       and (p.name ilike any(pats.arr)
+            or p.description ilike any(pats.arr)
+            or p.sku ilike any(pats.arr)
+            or p.image_description ilike any(pats.arr))
   )
   select m.id, m.name, m.price, m.quantity, m.sku, m.description, m.score
     from matched m
