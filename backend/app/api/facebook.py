@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Res
 from fastapi.responses import HTMLResponse
 
 from app.config import get_settings
-from app.core.crypto import decrypt, encrypt
+from app.core.crypto import KEY_DELETION_CODE, decrypt, derive_key, encrypt
 from app.core.db import run
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -97,17 +97,24 @@ _DELETION_TABLE = "data_deletion_requests"
 
 
 def _deletion_secret() -> bytes:
+    """A-047: deletion code-ის საკუთარი HKDF გასაღები (ცარიელი secret → RuntimeError, S11-6)."""
+    return derive_key(KEY_DELETION_CODE, get_settings().fb_app_secret)
+
+
+def _legacy_deletion_secret() -> bytes:
+    """A-047-მდე გაცემული კოდები raw FB_APP_SECRET-ით იყო ხელმოწერილი."""
     secret = get_settings().fb_app_secret
     if not secret:
-        raise RuntimeError("FB_APP_SECRET is not configured")  # S11-6: guessable fallback removed
+        raise RuntimeError("FB_APP_SECRET is not configured")
     return secret.encode()
 
 
 def make_deletion_code(user_id: str) -> str:
     """ხელმოწერილი, შემოწმებადი დადასტურების კოდი. user_id ღიად არ გადის (hash-დება)."""
-    uid_hash = hashlib.sha256(str(user_id).encode() + _deletion_secret()).hexdigest()[:12]
+    secret = _deletion_secret()
+    uid_hash = hashlib.sha256(str(user_id).encode() + secret).hexdigest()[:12]
     raw = base64.urlsafe_b64encode(f"{uid_hash}:{int(time.time())}".encode()).decode().rstrip("=")
-    sig = hmac.new(_deletion_secret(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+    sig = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()[:16]
     return f"{raw}.{sig}"
 
 
@@ -115,11 +122,19 @@ def verify_deletion_code(code: str) -> dict | None:
     """აბრუნებს {"requested_at": ISO} თუ კოდი ნამდვილია, სხვა შემთხვევაში None."""
     try:
         raw, sig = (code or "").rsplit(".", 1)
-        secret = _deletion_secret()
+        secrets_to_try = (_deletion_secret(), _legacy_deletion_secret())
     except (ValueError, RuntimeError):
         return None  # არავალიდური ფორმატი ან secret არ არის → კოდი არ მოწმდება
-    expected = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()[:16]
-    if not hmac.compare_digest(expected, sig):
+    # uid_hash არსად გამოიყენება ძებნისთვის (ცხრილი `code`-ით იძებნება) — მხოლოდ ხელმოწერა მოწმდება.
+    # ჯერ ახალი გასაღები, მერე legacy (raw secret) — ძველი კოდები (Meta-ს განმხილველის ბმული) მოქმედებს.
+    # TODO(2027-12-10): remove legacy branch (codes older than _DELETION_CODE_TTL)
+    valid = False
+    for secret in secrets_to_try:
+        expected = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()[:16]
+        if hmac.compare_digest(expected, sig):
+            valid = True
+            break
+    if not valid:
         return None
     try:
         padded = raw + "=" * (-len(raw) % 4)

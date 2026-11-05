@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.config import get_settings
+from app.core.crypto import KEY_OAUTH_STATE, derive_key
 
 logger = logging.getLogger("app")
 
@@ -80,6 +81,7 @@ def _graph(method: str, path: str, **kwargs) -> httpx.Response:
     FA-02: access_token-იან ყოველ გამოძახებას ემატება appsecret_proof
     (HMAC-SHA256 token-ის, app secret-ით) — მოპარული token secret-ის გარეშე
     გამოუსადეგარია. caller-ის params dict არ იცვლება (ასლს ვაგზავნით).
+    A-047: Meta-ს ფორმულა raw app secret-ს მოითხოვს — HKDF-ის გასაღები აქ არ გამოდგება.
     """
     params = kwargs.get("params")
     if params and "access_token" in params:
@@ -103,7 +105,7 @@ def _graph(method: str, path: str, **kwargs) -> httpx.Response:
 # X-Hub-Signature-256 ვერიფიკაცია
 # ---------------------------------------------------------------------------
 def verify_signature(app_secret: str, raw_body: bytes, signature_header: str | None) -> bool:
-    """ამოწმებს, რომ მოთხოვნა მართლა Facebook-იდან მოვიდა (app secret-ით)."""
+    """ამოწმებს, რომ მოთხოვნა მართლა Facebook-იდან მოვიდა (raw app secret-ით — Meta-ს ფორმულა, A-047)."""
     if not app_secret:
         return False  # ცარიელი გასაღებით HMAC გაყალბებადია — fail closed (S11-6)
     if not signature_header or not signature_header.startswith("sha256="):
@@ -123,7 +125,8 @@ def parse_signed_request(signed_request: str, app_secret: str) -> dict | None:
     """Meta-ს `signed_request`-ის ვერიფიკაცია/გახსნა (Data Deletion callback-ისთვის).
 
     ფორმატი: "<base64url_signature>.<base64url_payload>". ხელმოწერა = HMAC-SHA256
-    payload-ის (base64url სტრიქონის) app_secret-ით. აბრუნებს payload dict-ს
+    payload-ის (base64url სტრიქონის) raw app_secret-ით (Meta-ს ფორმულა, A-047 — HKDF არა).
+    აბრუნებს payload dict-ს
     ან None თუ ფორმატი/ხელმოწერა არასწორია.
     """
     if not app_secret:
@@ -146,24 +149,25 @@ def parse_signed_request(signed_request: str, app_secret: str) -> dict | None:
 # OAuth state — ხელმოწერილი (CSRF + shop/user-ის გადატანა)
 # ---------------------------------------------------------------------------
 def sign_state(data: dict) -> str:
-    app_secret = get_settings().fb_app_secret
-    if not app_secret:
-        raise RuntimeError("FB_APP_SECRET is not configured")  # S11-6
-    secret = app_secret.encode()
+    # A-047: state-ს საკუთარი HKDF გასაღები აქვს (raw app secret Meta-ს ფორმულებისთვისაა).
+    # ცარიელი secret → RuntimeError (S11-6)
+    secret = derive_key(KEY_OAUTH_STATE, get_settings().fb_app_secret)
     raw = base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
     sig = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()
     return f"{raw}.{sig}"
 
 
 def verify_state(state: str, max_age_seconds: int = 600) -> dict | None:
-    app_secret = get_settings().fb_app_secret
-    if not app_secret:
+    try:
+        secret = derive_key(KEY_OAUTH_STATE, get_settings().fb_app_secret)
+    except RuntimeError:
         return None  # fail closed (S11-6)
     try:
         raw, sig = state.rsplit(".", 1)
     except ValueError:
         return None
-    secret = app_secret.encode()
+    # raw secret-ით ხელმოწერილი (ძველი) state უკვე არ მიიღება: TTL 10 წთ, ამიტომ deploy-ისას
+    # დაწყებული connect → invalid_state, მომხმარებელი თავიდან დააჭერს "დაკავშირებას".
     expected = hmac.new(secret, raw.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, sig):
         return None
