@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.core.db import fetch_all
 from app.core.ratelimit import _client_ip
-from app.core.security import CurrentAuth, get_current_auth
+from app.core.security import CurrentAuth, confirm_with_auth_server, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.core.tiers import (
     TIER_LABELS,
@@ -63,7 +63,11 @@ _warned_no_admins = False
 
 
 def get_current_admin(auth: CurrentAuth = Depends(get_current_auth)) -> CurrentAuth:
-    """ამოწმებს, რომ ავტორიზებული მომხმარებლის user_id ADMIN_USER_IDS-შია."""
+    """ამოწმებს, რომ ავტორიზებული მომხმარებლის user_id ADMIN_USER_IDS-შია.
+
+    მაღალი პრივილეგია, დაბალი ტრაფიკი: ლოკალურად შემოწმებული token ყოველთვის მოწმდება Auth server-თანაც —
+    sign-out / ban / წაშლა ადმინზე მაშინვე მოქმედებს. არა-ადმინი ქსელის გარეშე იჭრება (403).
+    """
     global _warned_no_admins
     settings = get_settings()
     admin_ids = settings.admin_user_id_set
@@ -72,6 +76,8 @@ def get_current_admin(auth: CurrentAuth = Depends(get_current_auth)) -> CurrentA
         logger.warning("ADMIN_USER_IDS is empty in production — admin panel is disabled")
     if (auth.user_id or "").strip().lower() not in admin_ids:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "წვდომა მხოლოდ ადმინისთვის")
+    if auth.verified_by == "local":
+        confirm_with_auth_server(auth)
     return auth
 
 
