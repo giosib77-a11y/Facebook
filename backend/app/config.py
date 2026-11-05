@@ -1,11 +1,14 @@
 """აპლიკაციის პარამეტრები — იკითხება .env-დან (pydantic-settings)."""
+import json
+import math
+from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from cryptography.fernet import Fernet
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.tiers import normalize_tier
 
@@ -15,6 +18,15 @@ _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 # APP_ENV-ის ერთადერთი მნიშვნელობები, რომლებიც production-ის დაცვებს თიშავს (A-019)
 NON_PRODUCTION_ENVS = ("development", "dev", "test")
+
+# Stage 21 (A-048): LLM-ის ფასები, USD / 1M ტოკენი. Claude cache_write 2× input — 1 საათიანი
+# write (კონსერვატიული). gpt-6-luna — UNVERIFIED (provider-ის ფასი გადასამოწმებელია).
+# შეცვლა — env `LLM_PRICES` (JSON), მოდელის დონეზე ჩანაცვლებით.
+PRICE_KEYS = ("input", "output", "cache_read", "cache_write")
+DEFAULT_LLM_PRICES: dict[str, dict[str, float]] = {
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.20},
+    "gpt-6-luna": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.10},
+}
 
 
 class Settings(BaseSettings):
@@ -113,11 +125,72 @@ class Settings(BaseSettings):
     llm_monthly_tokens_standard: int = Field(48_000_000, ge=0)
     llm_monthly_tokens_business: int = Field(180_000_000, ge=0)
 
+    # Stage 21 (A-040) — webhook_inbox worker. None = production-ში ჩართული, dev-ში გამორთული
+    # (ლოკალური .env production ბაზას უკავშირდება — dev-ში worker ნაგულისხმევად არ იწყებს რიგის დამუშავებას).
+    webhook_inbox_enabled: bool | None = None
+    bot_max_concurrency: int = Field(8, ge=1, le=32)  # ბოტის ერთდროული გაშვებების ლიმიტი
+    webhook_poll_seconds: float = Field(10.0, ge=1, le=300)
+    webhook_max_attempts: int = Field(3, ge=1, le=10)
+    webhook_claim_stale_seconds: int = Field(180, ge=60, le=3600)
+
+    # Stage 21 (A-044) — CSP: true → Content-Security-Policy-Report-Only (დაბლოკვის გარეშე)
+    csp_report_only: bool = False
+
+    # Stage 21 (A-048) — LLM ბიუჯეტი USD-ში. 0 = შესაბამისი ჭერი გამორთულია.
+    llm_daily_usd_cap: float = Field(1.0, ge=0, allow_inf_nan=False)  # გლობალური დღიური ჭერი
+    # მაღაზიის დღიური ჭერი = თვიური ბიუჯეტი ÷ ეს რიცხვი; 0 = მაღაზიის დღიური ჭერი გამორთულია
+    llm_daily_usd_shop_divisor: float = Field(10.0, ge=0, allow_inf_nan=False)
+    llm_monthly_usd_free: float = Field(0.30, ge=0, allow_inf_nan=False)
+    llm_monthly_usd_basic: float = Field(2.50, ge=0, allow_inf_nan=False)
+    llm_monthly_usd_standard: float = Field(8.0, ge=0, allow_inf_nan=False)
+    llm_monthly_usd_business: float = Field(25.0, ge=0, allow_inf_nan=False)
+    # NoDecode: JSON-ს ვაპარსავთ თავად, რომ არასწორი მნიშვნელობა ValidationError-ად ჩავარდეს (და არ გაჟონოს)
+    llm_prices: Annotated[dict[str, dict[str, float]], NoDecode] = Field(
+        default_factory=lambda: deepcopy(DEFAULT_LLM_PRICES)
+    )
+
     model_config = SettingsConfigDict(
         env_file=(_ROOT_ENV, _BACKEND_ENV),
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,  # ValidationError-ში input_value არ ჩანს (LLM_PRICES, key-ები)
     )
+
+    @field_validator("webhook_inbox_enabled", mode="before")
+    @classmethod
+    def _blank_inbox_flag_is_none(cls, v):
+        # ცარიელი env (`WEBHOOK_INBOX_ENABLED=`) = არ არის დაყენებული → გარემოს მიხედვით
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("llm_prices", mode="before")
+    @classmethod
+    def _merge_llm_prices(cls, v):
+        # შეტყობინებაში მხოლოდ სახელი LLM_PRICES — მნიშვნელობა არასდროს
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return deepcopy(DEFAULT_LLM_PRICES)
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except ValueError:
+                raise ValueError("LLM_PRICES must be a valid JSON object") from None
+        if not isinstance(v, dict):
+            raise ValueError("LLM_PRICES must be a JSON object of models")
+        merged = deepcopy(DEFAULT_LLM_PRICES)
+        for model, prices in v.items():
+            if not isinstance(model, str) or not model.strip() or not isinstance(prices, dict):
+                raise ValueError("LLM_PRICES: each model needs an object with prices")
+            if set(prices) != set(PRICE_KEYS):
+                raise ValueError(f"LLM_PRICES: each model needs exactly the keys {', '.join(PRICE_KEYS)}")
+            clean: dict[str, float] = {}
+            for key in PRICE_KEYS:
+                p = prices[key]
+                if isinstance(p, bool) or not isinstance(p, (int, float)) or not math.isfinite(p) or p < 0:
+                    raise ValueError("LLM_PRICES: prices must be finite numbers >= 0")
+                clean[key] = float(p)
+            merged[model] = clean
+        return merged
 
     @field_validator("llm_provider", mode="before")
     @classmethod
@@ -197,6 +270,30 @@ class Settings(BaseSettings):
     def llm_monthly_budget(self, tier: str | None) -> int:
         """თვიური ტოკენების ბიუჯეტი პაკეტზე (0 = ჭერი გამორთულია). უცნობი პაკეტი → free."""
         return getattr(self, f"llm_monthly_tokens_{normalize_tier(tier)}")
+
+    @property
+    def webhook_inbox_active(self) -> bool:
+        """webhook_inbox worker ჩართულია: ცხადი მნიშვნელობა, თორემ production-ში დიახ, dev-ში არა."""
+        if self.webhook_inbox_enabled is None:
+            return self.is_production
+        return self.webhook_inbox_enabled
+
+    def llm_monthly_usd_budget(self, tier: str | None) -> float:
+        """თვიური ბიუჯეტი USD-ში პაკეტზე (0 = ჭერი გამორთულია). უცნობი პაკეტი → free."""
+        return getattr(self, f"llm_monthly_usd_{normalize_tier(tier)}")
+
+    def llm_daily_usd_shop_cap(self, tier: str | None) -> float:
+        """მაღაზიის დღიური ჭერი USD-ში = თვიური ÷ გამყოფი. გამყოფი 0 → 0.0 (ჭერი გამორთულია)."""
+        if self.llm_daily_usd_shop_divisor == 0:
+            return 0.0
+        return self.llm_monthly_usd_budget(tier) / self.llm_daily_usd_shop_divisor
+
+    def llm_price(self, model: str) -> dict[str, float]:
+        """მოდელის ფასი (USD / 1M ტოკენი). უცნობი მოდელი → ცნობილთა თითო ველის მაქსიმუმი (კონსერვატიული)."""
+        known = self.llm_prices.get(model)
+        if known is not None:
+            return dict(known)
+        return {key: max(p[key] for p in self.llm_prices.values()) for key in PRICE_KEYS}
 
     def missing_required_secrets(self) -> list[str]:
         """Production-ში სავალდებულო პარამეტრებიდან ცარიელ/არავალიდურთა ENV სახელები.

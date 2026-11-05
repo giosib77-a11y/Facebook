@@ -33,8 +33,15 @@ for _name in (
     "SMTP_PORT", "LLM_KILL_SWITCH", "LLM_DAILY_TOKEN_CAP", "LLM_MONTHLY_TOKENS_FREE",
     "LLM_MONTHLY_TOKENS_BASIC", "LLM_MONTHLY_TOKENS_STANDARD", "LLM_MONTHLY_TOKENS_BUSINESS",
     "LLM_DAILY_TOKENS_PER_OWNER",
+    # Stage 21: worker / CSP / USD ბიუჯეტი / ფასები — ტესტებში მხოლოდ კოდის default-ები
+    "BOT_MAX_CONCURRENCY", "WEBHOOK_POLL_SECONDS", "WEBHOOK_MAX_ATTEMPTS",
+    "WEBHOOK_CLAIM_STALE_SECONDS", "CSP_REPORT_ONLY", "LLM_DAILY_USD_CAP",
+    "LLM_DAILY_USD_SHOP_DIVISOR", "LLM_MONTHLY_USD_FREE", "LLM_MONTHLY_USD_BASIC",
+    "LLM_MONTHLY_USD_STANDARD", "LLM_MONTHLY_USD_BUSINESS", "LLM_PRICES",
 ):
     os.environ.pop(_name, None)
+# Stage 21: webhook_inbox worker ტესტებში გამორთულია (APP_ENV ქვემოთ development-ია, მაგრამ ცხადად)
+os.environ["WEBHOOK_INBOX_ENABLED"] = "false"
 # Stage 16: LangGraph/LangSmith tracing would send conversations to a third party. Never in tests.
 for _name in ("LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGCHAIN_TRACING_V2", "LANGCHAIN_API_KEY"):
     os.environ.pop(_name, None)
@@ -69,13 +76,14 @@ class FakeQuery:
         self.op = None
         self.payload = None
         self.filters = []
+        self.kwargs = {}  # insert/upsert-ის დამატებითი არგუმენტები (on_conflict, ignore_duplicates, ...)
 
     def select(self, *columns, **kwargs):
         self.op = "select"
         return self
 
-    def insert(self, payload):
-        self.op, self.payload = "insert", payload
+    def insert(self, payload, **kwargs):
+        self.op, self.payload, self.kwargs = "insert", payload, kwargs
         return self
 
     def update(self, payload):
@@ -86,8 +94,8 @@ class FakeQuery:
         self.op = "delete"
         return self
 
-    def upsert(self, payload):
-        self.op, self.payload = "upsert", payload
+    def upsert(self, payload, **kwargs):
+        self.op, self.payload, self.kwargs = "upsert", payload, kwargs
         return self
 
     def eq(self, column, value):
