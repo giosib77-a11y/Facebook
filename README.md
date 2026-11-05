@@ -463,7 +463,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **გასაღებების გამოყოფა (HKDF)** | Stage 21: OAuth `state` და Data Deletion კოდი HKDF-SHA256-ით გამოყვანილი გასაღებებით (IKM = `FB_APP_SECRET`). Meta-ს კონტრაქტის HMAC-ები (`appsecret_proof`, `X-Hub-Signature-256`, `signed_request`) უცვლელად app secret-ს იყენებს. Stage 21-მდე გაცემული deletion კოდები ვერიფიცირდება 2027-12-10-მდე; deploy-მდე დაწყებული OAuth connect (≤10 წთ) → `invalid_state`, ხელახლა სცადე |
 | **File bombs** | Excel/CSV — 5 MB / 5 000 მწკრივი; PDF — 300 გვერდი; zip-ratio ჭერი |
 | **CSV injection** | `=`, `+`, `-`, `@` ექსპორტში ნეიტრალდება |
-| **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production); CSP — იხ. ქვემოთ |
+| **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production); CSP — იხ. ზემოთ (CSP-ის ხაზი) |
 | **შეცდომების გაჟონვა** | production-ში stack trace არ ბრუნდება |
 | **Dev endpoint** | `/test-chat` production-ში გამორთულია |
 | **Data Deletion** | Meta-ს callback ეხება **მხოლოდ გამყიდველს** (app-scoped ID = `shops.facebook_user_id`): მისი მაღაზიების FB მონაცემები იშლება, გვერდი ითიშება, webhook-ის გამოწერა მოიხსნება (best-effort); + ხელმოწერილი (HMAC) დადასტურების კოდი; სტატუსი (`pending` / `completed` / `failed`) `data_deletion_requests`-ში (0029), შეცდომა ილოგება და არ იყლაპება. **Messenger-ის კლიენტის** (page-scoped ID) წაშლა — მაღაზიისთვის მიწერით (გამყიდველი პანელში: საუბარი → 🗑, `DELETE /shops/{id}/customers/{psid}`: საუბარი იშლება, ხოლო კლიენტის ID თვიურ მრიცხველში ანონიმიზდება — `bot_customers.psid` → `del:<uuid>`; რაოდენობა რჩება, რომ ლიმიტი არ განულდეს; გამყიდველის Meta callback კვლავ შლის) ან ელფოსტით `chatassistbusiness@gmail.com`; საუბრები ისედაც 24 სთ-ში იშლება |
@@ -488,6 +488,8 @@ pip install -r requirements.txt    # Windows-ზე ლოკალურად 
 Copy-Item ..\.env.example ..\.env    # შემდეგ შეავსე
 uvicorn app.main:app --reload
 ```
+
+> ⚠️ **ლოკალური `.env` production Supabase-ს უკავშირდება.** `APP_ENV` ნაგულისხმევად `production`-ია, ამიტომ ლოკალურ `.env`-ში **აუცილებლად** უნდა იყოს ორივე: `APP_ENV=development` **და** `WEBHOOK_INBOX_ENABLED=false`. წინააღმდეგ შემთხვევაში ლოკალური backend გაუშვებს inbox worker-ს და production `webhook_inbox`-ის მოვლენებს დაამუშავებს.
 
 გახსენი <http://localhost:8000/health> და <http://localhost:8000/docs>
 
@@ -696,7 +698,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `LLM_DAILY_USD_SHOP_DIVISOR` | | `10` | მაღაზიის დღიური ჭერი = თვიური ÷ ეს რიცხვი (free $0.03 / basic $0.25 / standard $0.80 / business $2.50); `0` = გამორთული |
 | `LLM_MONTHLY_USD_FREE` · `_BASIC` · `_STANDARD` · `_BUSINESS` | | `0.30` · `2.50` · `8` · `25` | თითო მაღაზიის თვიური ბიუჯეტი USD-ში პაკეტის მიხედვით; `0` = გამორთული. ბოლო ბადედ provider-ის კონსოლშიც დააყენე spend limit |
 | `LLM_PRICES` | | ცარიელი (კოდის default-ები) | ფასები USD / 1M ტოკენი, JSON, მაგ. `{"claude-haiku-5-5":{"input":0.10,"output":0.50,"cache_read":0.01,"cache_write":0.20}}`; მითითებული მოდელი მთლიანად იცვლება, დანარჩენი რჩება |
-| `WEBHOOK_INBOX_ENABLED` | | ცარიელი | ცარიელი = production-ში ჩართული, dev-ში გამორთული. **Render-ზე არ დააყენო.** ლოკალურად არ ჩართო: ლოკალური `.env` production ბაზას უკავშირდება და worker production-ის რიგს დაამუშავებდა |
+| `WEBHOOK_INBOX_ENABLED` | | ცარიელი | ცარიელი = production-ში ჩართული, dev-ში გამორთული. **Render-ზე არ დააყენო.** ⚠️ ლოკალურ `.env`-ში **აუცილებლად** `APP_ENV=development` **და** `WEBHOOK_INBOX_ENABLED=false`: ლოკალური `.env` production ბაზას უკავშირდება, `APP_ENV` ნაგულისხმევად `production`-ია და ამ ორის გარეშე ლოკალური backend გაუშვებს worker-ს და production `webhook_inbox`-ს დაამუშავებს |
 | `BOT_MAX_CONCURRENCY` | | `8` | ბოტის ერთდროული გაშვებების ლიმიტი (1–32) |
 | `WEBHOOK_POLL_SECONDS` | | `10` | worker-ის რიგის შემოწმების ინტერვალი, წმ (1–300) |
 | `WEBHOOK_MAX_ATTEMPTS` | | `3` | ერთი მოვლენის მაქს. მცდელობა, მერე `failed` (1–10) |
