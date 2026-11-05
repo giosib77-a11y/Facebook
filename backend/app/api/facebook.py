@@ -61,17 +61,23 @@ def _finish(result: str, **params) -> HTMLResponse:
         o = (u or "").rstrip("/")
         if o and o not in allowed:
             allowed.append(o)
+    nonce = secrets.token_urlsafe(16)  # A-044: inline script-ს მხოლოდ ამ პასუხის nonce უშვებს
     html = (
         "<!doctype html><html><head><meta charset='utf-8'></head>"
         "<body style='font-family:sans-serif;text-align:center;padding:40px'>"
-        "<p>მუშავდება, დაიცადეთ...</p><script>(function(){var msg=" + _script_json(data) + ";"
+        f"<p>მუშავდება, დაიცადეთ...</p><script nonce=\"{nonce}\">(function(){{var msg=" + _script_json(data) + ";"
         "var origins=" + _script_json(allowed) + ";"
         "try{if(window.opener&&!window.opener.closed){"
         "for(var i=0;i<origins.length;i++){try{window.opener.postMessage(msg,origins[i]);}catch(e){}}"
         "window.close();return;}}catch(e){}"
         "window.location.replace(" + _script_json(fallback) + ");})();</script></body></html>"
     )
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={
+        "Content-Security-Policy": (
+            f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------

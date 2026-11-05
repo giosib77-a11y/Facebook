@@ -6,6 +6,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -270,10 +271,35 @@ app.add_middleware(
 )
 
 
+def build_csp(s) -> str:
+    """A-044: Content-Security-Policy (PROJECT.md API Contract „Stage 21"). connect-src — 'self' +
+    SUPABASE_URL-ის origin (REST/Auth) + wss://<host> (realtime); ცარიელი/არავალიდური URL → მხოლოდ 'self'."""
+    connect = ["'self'"]
+    parsed = urlparse((s.supabase_url or "").strip())
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        connect += [f"{parsed.scheme}://{parsed.netloc}", f"wss://{parsed.netloc}"]
+    return (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; "
+        f"connect-src {' '.join(connect)}; "
+        "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    )
+
+
+_CSP = build_csp(settings)  # ერთხელ import-ზე
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     """უსაფრთხოების ჰედერები ყველა პასუხზე."""
     response = await call_next(request)
+    # route-ის საკუთარი CSP (OAuth callback — nonce) setdefault-ით არ იცვლება
+    csp_name = "Content-Security-Policy-Report-Only" if settings.csp_report_only else "Content-Security-Policy"
+    response.headers.setdefault(csp_name, _CSP)
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    # COOP განზრახ არ არის: same-origin FB OAuth popup-ის window.opener-ს წყვეტს (Decision Log 2026-11-05)
+    response.headers.setdefault("Cache-Control", "no-store")  # static-ის საკუთარი (immutable assets) რჩება
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
