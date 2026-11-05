@@ -56,6 +56,7 @@ class FakeInbox:
         self.limits = []
         self.completed = []
         self.failed = []
+        self.failed_attempts = []
         self._lock = threading.Lock()
         monkeypatch.setattr(inbox, "claim", self.claim)
         monkeypatch.setattr(inbox, "complete", self.complete)
@@ -75,6 +76,7 @@ class FakeInbox:
 
     def fail(self, sc, row, exc):
         self.failed.append((row["id"], exc))
+        self.failed_attempts.append(row["attempts"])
 
 
 async def _until(predicate, timeout=3.0):
@@ -360,6 +362,118 @@ async def test_claim_limited_to_free_slots(monkeypatch):
         for gate in gates.values():
             gate.set()
     assert fake.failed == []
+
+
+@pytest.mark.anyio
+async def test_reclaimed_in_flight_row_is_not_processed_twice(monkeypatch):
+    # row 2 waits behind the running row 1 for > stale window: the claim RPC hands it out again (attempts+1)
+    fake = FakeInbox(monkeypatch, [[_row(1), _row(2)], [_row(2, attempts=2)]])
+    release = threading.Event()
+    processed = []
+
+    def process(row):
+        processed.append(row["id"])
+        if row["id"] == 1:
+            release.wait(10)
+
+    monkeypatch.setattr(webhook, "process_inbox_row", process)
+    try:
+        async with _running():
+            await _until(lambda: processed == [1])
+            inbox.wake()
+            await _until(lambda: len(fake.claim_times) >= 2, timeout=1.0)
+            await anyio.sleep(0.2)  # the re-claimed row 2 has been offered to add()
+            release.set()
+            await _until(lambda: 2 in fake.completed)
+            await anyio.sleep(0.2)  # a duplicate (old behaviour) would run here
+    finally:
+        release.set()
+    assert processed == [1, 2]
+    assert fake.completed == [1, 2]
+    assert fake.failed == []
+
+
+@pytest.mark.anyio
+async def test_reclaimed_queued_row_fail_sees_new_attempts(monkeypatch):
+    fake = FakeInbox(monkeypatch, [[_row(1), _row(2)], [_row(2, attempts=2)]])
+    release = threading.Event()
+    processed = []
+
+    def process(row):
+        processed.append(row["id"])
+        if row["id"] == 1:
+            release.wait(10)
+        else:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(webhook, "process_inbox_row", process)
+    try:
+        async with _running():
+            await _until(lambda: processed == [1])
+            inbox.wake()
+            await _until(lambda: len(fake.claim_times) >= 2, timeout=1.0)
+            await anyio.sleep(0.2)
+            release.set()
+            await _until(lambda: fake.failed)
+            await anyio.sleep(0.2)
+    finally:
+        release.set()
+    assert processed == [1, 2]
+    assert [rid for rid, _ in fake.failed] == [2]
+    assert fake.failed_attempts == [2]  # the re-claimed value, not the stale 1
+
+
+@pytest.mark.anyio
+async def test_stop_does_not_start_queued_rows(monkeypatch):
+    fake = FakeInbox(monkeypatch, [[_row(1), _row(2)]])
+    release = threading.Event()
+    started = []
+
+    def process(row):
+        started.append(row["id"])
+        release.wait(10)
+
+    monkeypatch.setattr(webhook, "process_inbox_row", process)
+    stop = asyncio.Event()
+    task = asyncio.create_task(inbox_worker.run(stop, sc_factory=lambda: "sc"))
+    try:
+        await _until(lambda: started == [1])
+        stop.set()
+        release.set()
+        await asyncio.wait_for(task, 5)  # run() returns; row 2 (same conversation, unstarted) is left alone
+    finally:
+        stop.set()
+        release.set()
+        if not task.done():
+            task.cancel()
+    assert task.done() and task.exception() is None
+    assert started == [1]
+    assert fake.completed == [1]
+
+
+@pytest.mark.anyio
+async def test_add_error_does_not_kill_worker(monkeypatch, caplog):
+    fake = FakeInbox(monkeypatch, [[_row(1, psid="u1"), _row(2, psid="u2")], [_row(3, psid="u3")]])
+    real_key = inbox.conversation_key
+    calls = []
+
+    def flaky_key(row):
+        calls.append(row["id"])
+        if len(calls) == 2:  # row 2 of the first batch: a partially added batch
+            raise RuntimeError("psid u2 secret")
+        return real_key(row)
+
+    monkeypatch.setattr(inbox, "conversation_key", flaky_key)
+    monkeypatch.setattr(webhook, "process_inbox_row", lambda row: None)
+    with caplog.at_level(logging.WARNING, logger="app"):
+        async with _running():
+            # row 1 finishing frees a slot and wakes the loop, which claims row 3: the loop is alive
+            await _until(lambda: 3 in fake.completed, timeout=2.0)
+    assert fake.completed == [1, 3]  # row 2 stays `processing` (stale window), never started
+    assert fake.limits[1] == 8  # row 1's slot was freed, row 2 never took one (batch = 8)
+    warned = [r for r in caplog.records if r.levelno == logging.WARNING and "RuntimeError" in r.getMessage()]
+    assert len(warned) == 1
+    assert "secret" not in caplog.text
 
 
 def test_lifespan_worker_not_started_when_inbox_disabled(monkeypatch):

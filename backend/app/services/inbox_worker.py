@@ -69,12 +69,22 @@ class _InFlight:
         self._stop = stop
         self._wake_ev = wake_ev
         self._queues: dict[tuple, deque[dict]] = {}
+        self._ids: set = set()  # ids of rows added and not finished (queued or running)
         self.rows = 0  # claimed and not finished: they occupy batch slots
 
     def add(self, sc, rows: list[dict]) -> None:
         for row in sorted(rows, key=lambda r: r.get("id") or 0):
+            key = inbox.conversation_key(row)  # first: if it raises, this row is not counted
+            if row.get("id") in self._ids:
+                # A row waiting in a deque longer than the stale window is handed out by the claim RPC again
+                # (attempts+1). Never process it twice: only refresh the queued copy's attempts for `fail`.
+                # A row that is already running (popped) is skipped as is - complete / fail sets its status.
+                for queued in self._queues.get(key, ()):
+                    if queued.get("id") == row.get("id"):
+                        queued["attempts"] = row.get("attempts")
+                continue
+            self._ids.add(row.get("id"))
             self.rows += 1
-            key = inbox.conversation_key(row)
             queue = self._queues.get(key)
             if queue is not None:
                 queue.append(row)  # the conversation is running: waits its turn
@@ -90,11 +100,13 @@ class _InFlight:
                 try:
                     await _handle(sc, row)
                 finally:
+                    self._ids.discard(row.get("id"))
                     self.rows -= 1
                     self._wake_ev.set()  # a slot is free: the loop may claim again
         finally:
             # shutdown: the unstarted rest stays `processing` and is retried after the stale window
             self.rows -= len(queue)
+            self._ids.difference_update(r.get("id") for r in queue)
             del self._queues[key]
 
 
@@ -118,7 +130,10 @@ async def run(stop: asyncio.Event, *, sc_factory=get_service_client) -> None:
                         continue
                     if rows:
                         logger.info("webhook worker claimed %d events", len(rows))
-                        in_flight.add(sc, rows)
+                        try:
+                            in_flight.add(sc, rows)
+                        except Exception as exc:  # rows not added yet stay `processing` (stale window)
+                            logger.warning("webhook worker add failed (%s)", type(exc).__name__)
                     if len(rows) >= free:
                         continue  # all free slots were filled: more rows are probably waiting
                 await _wait(get_settings().webhook_poll_seconds, wake_ev, stop)
