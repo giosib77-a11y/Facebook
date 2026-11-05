@@ -168,7 +168,7 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - done when: README-ის env სახელები `.env.example`-ს ემთხვევა; `grep -c "0039_admin_stats\|0040_products_search_trgm" README.md` ≥ 2; CLAUDE.md ≤50 ხაზი (რაოდენობა report-ში); pytest უცვლელად მწვანე.
 
 ### Finish-check (Stage 22, 2026-11-06) — should-fix (fix round 1)
-- [ ] **S22-10 — should-fix (code-reviewer; grammar-ით დადასტურდა ორკესტრატორის მიერ, ბაზაზე — ვერა): migration 0040 — `ilike any((select arr from pats))` Postgres-ში subquery-ის ფორმად იკითხება → `operator does not exist: text ~~* text[]` → `CREATE FUNCTION` ვარდება და 0040 მთლიანად rollback-დება (A-041 / N-04)** · owner: backend-dev · files: `supabase/migrations/0040_products_search_trgm.sql`, `backend/tests/test_migration_0040.py` · depends: —
+- [x] ✅ `2175238` (+1 ტესტი; 2689; ძველ SQL-ზე ვარდება; re-check (code-reviewer) 0/0/0) **S22-10 — should-fix (code-reviewer; grammar-ით დადასტურდა ორკესტრატორის მიერ, ბაზაზე — ვერა): migration 0040 — `ilike any((select arr from pats))` Postgres-ში subquery-ის ფორმად იკითხება → `operator does not exist: text ~~* text[]` → `CREATE FUNCTION` ვარდება და 0040 მთლიანად rollback-დება (A-041 / N-04)** · owner: backend-dev · files: `supabase/migrations/0040_products_search_trgm.sql`, `backend/tests/test_migration_0040.py` · depends: —
   - მიზეზი: `gram.y`-ში `select_with_parens` ორმაგ ფრჩხილსაც (`((select …))`) ფარავს, ამიტომ `x op ANY ((select arr …))` = `ANY (subquery)` — სტრიქონზე `text[]`-თან შედარება. `check_function_bodies` (default on) ტანს შექმნისას ამოწმებს.
   - გამოსწორება: `matched`-ში `from public.products p cross join pats` და ოთხივე ადგილას `… ilike any(pats.arr)`; ქულის ქვე-query-ში `unnest(pats.arr)`. სხვა ქცევა (ფილტრი, ქულა, რიგი, limit, escape, grant-ები) — უცვლელი.
   - ტესტი (ჯერ ტესტი — ძველ SQL-ზე ვარდება): `test_migration_0040.py` — SQL-ში (კომენტარების გარეშე) **არ** არის `any((select`; არის `cross join pats` და `any(pats.arr)` ×4.
@@ -1247,8 +1247,11 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - Failed attempts: —
 
 ## Last Session
-- Date: 2026-11-05
-- Done: Stage 22 — დაგეგმვა (`/auto plan:`).
+- Date: 2026-11-06
+- Done: **Stage 22 დასრულდა (offline)** — ეტაპი 3, ნაწილი 2: A-041 (N-04) — `fetch_all` ყველა სიაზე (1000-იანი ჭერის მიღმა; ექსპორტი/import ჭერზე → 413), ადმინის რიცხვები SQL-ში (0039, fallback), ძებნა Postgres-ში ≥300 პროდუქტზე (0040, `pg_trgm`); A-046 (N-10) — JWT ლოკალურად (ES256/RS256 + JWKS; HS256 / უცნობი `kid` / JWKS-ის შეცდომა → `get_user`; ადმინი ყოველთვის ქსელითაც). 10 task (S22-1…S22-10), თითო commit; finish-check (code-reviewer 0/1/3, security-auditor 0/0/2) → S22-10 (0040-ის `ilike any((select …))` Postgres-ში subquery-დ იკითხებოდა — `CREATE FUNCTION` ჩავარდებოდა) → re-check 0/0/0. მფლობელმა მიიღო A-046-ის revocation-ის რისკი; ES256-ზე გადართვა — მფლობელი (2026-11-05, მიმდინარე).
+- Verification (tester, 2026-11-06): ruff / compileall ✅; pytest **2689 passed** (2518 → +171); pip check ✅; frontend lint 0 error / 5 warning, vitest **80**, build → `dist` უცვლელი, e2e **18**. frontend Stage 22-ში არ შეცვლილა.
+- Unverified: 0039 / 0040 რეალურ Postgres-ზე (`CREATE FUNCTION`, რიცხვების ტოლობა Python-თან, trigram index-ის გამოყენება, collation — Deploy plan 3–4); Supabase „Max rows" = 1000 (Deploy plan 5); JWKS endpoint `apikey`-ის გარეშე და ლოკალური გზა ლაივზე (Deploy plan 7ა); token-ის `iss` = `SUPABASE_URL/auth/v1` (7დ).
+- Next: მფლობელი — ES256 გადართვა → ≥24 სთ → 0039 → 0040 → „Max rows" → deploy (`### Stage 22 — Deploy plan`). შემდეგი — Stage 23 (`## Upcoming stages`), მხოლოდ მფლობელის გადაწყვეტილებით.
 
 ### Stage 21-ის სესია
 - Date: 2026-11-05
