@@ -9,6 +9,11 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# Stage 23 (A-049): coverage data / reports
+.coverage
+.coverage.*
+htmlcov/
+
 # Stage 15 comparison outputs (local only, never commit; README §9)
 backend/scripts/compare_output.md
 backend/scripts/compare_key.json

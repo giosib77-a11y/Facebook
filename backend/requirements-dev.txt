@@ -1,3 +1,5 @@
 # Test-only dependencies (CI + local). Install alongside requirements.txt.
 pytest>=8.3
 ruff==0.16.10
+# Stage 23 (A-049): coverage gate for api/admin.py and api/shops.py (CI)
+pytest-cov==7.1.0
