@@ -407,7 +407,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **გამოსწორება:** `get_current_admin` — JWT-ის `aal == "aal2"` (A-046-ის ლოკალური claims; `ADMIN_REQUIRE_MFA`, default true production-ში) → 403 სხვა შემთხვევაში; ადმინ პანელში TOTP-ის ჩართვა/შესვლა (supabase-js `auth.mfa.*`); `admin_audit_log` (0041; RLS, მხოლოდ service_role) ყველა ცვლილებაზე; recovery — ბმული იქმნება სერვერზე და **გამყიდველს** email-ით მიდის (`notify.send_email`, SMTP), პასუხში ბმული არ არის; SMTP გამორთულია → 503.
 - **ტესტი, რომელიც ძველ კოდზე ვარდება:** `aal: "aal1"` claim-ით ადმინის endpoint → 403 (ძველზე 200); `PATCH /admin/shops/{id}` → `admin_audit_log` insert (ძველზე 0); `POST /admin/recovery` → პასუხში `action_link` არ არის და `notify.send_email` 1-ჯერ გამყიდველის მისამართზე (ძველზე ბმული ბრუნდება).
 - **owner:** backend-dev, frontend-dev · **task:** S23-1, S23-2, S23-3, S23-4, S23-9, S23-10
-- **status:** ⏳ დაგეგმილია — Stage 23 (outline; MFA-ს ჩართვა deploy-მდე — მფლობელი, `## Blockers`)
+- **status:** ✅ გასწორდა (offline) — `6966969` (aal2 / `ADMIN_REQUIRE_MFA`), `001b040` (0041), `cb44db4` (audit), `1b35d31` (recovery email-ით), `3047e85` + `92898d5` (MFA UI). 0041 ლაივზე, Supabase TOTP, SMTP, lock-out-safe რიგი — მფლობელი, `PROGRESS.md` `### Stage 23 — Deploy plan`. ნარჩენი nit-ები — PROGRESS Backlog „Stage 23".
 
 ### A-044 (N-12) — CSP არ არის, token-ები localStorage-შია
 - **severity:** should-fix (PDF: დაბალი; „ყველაზე მნიშვნელოვანი დაბალი") — Supabase-ის სესია localStorage-შია, ამიტომ ნებისმიერი XSS = ანგარიშის ხელში ჩაგდება; CSP ამის ბოლო ბადეა. Accepted Risk #25 იხურება (მფლობელის მოთხოვნა).
@@ -423,7 +423,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **გამოსწორება:** callback ≥2 გვერდზე token-ებს არ ინახავს — აბრუნებს `fb: "choose"`-ს მოკლევადიანი (10 წთ) ხელმოწერილი selection token-ით (HKDF-ის ცალკე label, A-047; შიგნით გვერდების id/სახელი + დაშიფრული user token, nonce-ზე მიბმული); პანელი აჩვენებს სიას; `POST /facebook/connect/select {selection, page_id}` → არსებული connect-ის ნაბიჯები არჩეულ გვერდზე.
 - **ტესტი, რომელიც ძველ კოდზე ვარდება:** 2 გვერდი → `_finish("choose", …)` (ძველზე `multiple_pages`); `select` არჩეული გვერდით → subscribe + shop update; ვადაგასული/სხვისი/გაყალბებული selection → 400; Vitest — სია და არჩევა.
 - **owner:** backend-dev, frontend-dev · **task:** S23-5, S23-6, S23-11
-- **status:** ⏳ დაგეგმილია — Stage 23 (outline)
+- **status:** ✅ გასწორდა (offline) — `d70a0c8` (selection token), `240dda5` (`fb: "choose"` + `POST /facebook/connect/select`), `25c0093` (პანელის picker). რეალური 2-გვერდიანი ანგარიში — მფლობელი (Deploy plan 10).
 
 ### A-046 (N-10) — ყოველ მოთხოვნაზე ახალი Supabase client + `auth.get_user` ქსელით
 - **severity:** nit (PDF: საშუალო) — ამ მასშტაბზე შეცდომა არ ჩანს (Accepted Risk, Stage 12: „`get_current_auth` ყოველ მოთხოვნაზე ახალ client-ს ქმნის"); ზრდისას — latency + Auth-ის rate limit. აუცილებელი წინაპირობაა A-043-ის `aal`-ისთვის (claims ლოკალურად).
@@ -456,7 +456,7 @@ pytest **1825 passed** (1783 → +42) · ruff ✅ · compileall ✅ · frontend 
 - **გამოსწორება:** dev-only `pytest-cov` (Decision Log-ით), ტესტები დაუფარავ გზებზე (A-043-ის ცვლილებების შემდეგ — ერთხელ), CI-ში `--cov=app.api.admin --cov=app.api.shops --cov-fail-under=85` ცალკე ნაბიჯად.
 - **ტესტი, რომელიც ძველ კოდზე ვარდება:** CI-ის ნაბიჯი `--cov-fail-under=85` ორივე ფაილზე (ძველზე < 85 → ვარდება; რიცხვი task-ის report-ში).
 - **owner:** backend-dev · **task:** S23-7, S23-8, S23-12
-- **status:** ⏳ დაგეგმილია — Stage 23 (outline)
+- **status:** ✅ გასწორდა — `a8bd38b` (`pytest-cov==7.1.0`, admin.py 93% → 100%), `dbe06f9` (shops.py 87% → 100%), `70ad7c1` (CI gate ≥85% თითო ფაილზე). GitHub Actions-ის შედეგი — push-ის შემდეგ (მფლობელი).
 
 ---
 

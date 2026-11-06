@@ -1379,8 +1379,14 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 
 ## Last Session
 - Date: 2026-11-06
-- Done: **Stage 23 დაიგეგმა** (`/auto plan: Stage 23`, architect) — 12 task (S23-1…S23-12): A-043 (MFA aal2 + `ADMIN_REQUIRE_MFA`, `admin_audit_log` 0041, recovery email-ით), A-045 (გვერდის არჩევა — Fernet selection token + `POST /facebook/connect/select` + პანელის picker), A-049 (`pytest-cov`, ≥85% `admin.py` / `shops.py`, CI gate); `### Stage 23 — Deploy plan` (lock-out-safe MFA rollout). Stage 22 → `## Stage 22 — Done`. კოდი ჯერ არ შეცვლილა.
-- Next: `/auto continue` → S23-1 ∥ S23-2.
+- Done: **Stage 23 დასრულდა (offline)** — ეტაპი 3, ნაწილი 3: A-043 (ადმინზე aal2 / TOTP `ADMIN_REQUIRE_MFA`-ით, MFA ეკრანები ადმინ პანელში, `admin_audit_log` 0041, recovery ბმული მხოლოდ გამყიდველის ფოსტაზე), A-045 (≥2 გვერდზე `fb: "choose"` + Fernet selection token + `POST /facebook/connect/select` + პანელის picker), A-049 (`pytest-cov==7.1.0` dev-only; `admin.py` 93% → 100%, `shops.py` 87% → 100%; CI gate ≥85% თითო ფაილზე). 12 task (S23-1…S23-12), თითო commit; finish-check (code-reviewer 0/0/4, security-auditor 0/0/2, browser-tester 0/2 — ორივე Backlog-ის არსებული header overflow / 4) → task-ები არ დაემატა, Fix rounds 0/2. მფლობელმა მიიღო: audit best-effort, selection token redirect URL-ში; `PUBLIC_BASE_URL` Render-ზე უკვე არის.
+- Verification (tester, 2026-11-06): ruff / compileall / pip check ✅; pytest **2920 passed** (2689 → +231); coverage admin.py / shops.py 100% (gate exit 0); frontend lint 0 error / 5 warning, vitest **116** (80 → +36), build → `dist` უცვლელი, e2e **27** (18 → +9).
+- Unverified: 0041 რეალურ Postgres-ზე; რეალური Supabase TOTP (enroll / verify / aal2 token-ის localStorage-იდან წაკითხვა) და QR რეალურ ბრაუზერში; რეალური SMTP-ით recovery წერილი და `redirect_to`; Meta-ზე 2-გვერდიანი ანგარიში და popup-ის fallback-ის URL-ის ზომა; CI-ის coverage gate Linux-ზე (GitHub Actions) — `### Stage 23 — Deploy plan`.
+- Next: მფლობელი — Stage 22-ისა და 23-ის Deploy plan (`### Stage 22 — Deploy plan` → `### Stage 23 — Deploy plan`; TOTP-ის ჩართვა deploy-ისთანავე). შემდეგი — Stage 24 (`## Upcoming stages`), მხოლოდ მფლობელის გადაწყვეტილებით.
+
+### Stage 23-ის დაგეგმვის სესია
+- Date: 2026-11-06
+- Done: `/auto plan: Stage 23` (architect) — 12 task, Deploy plan; Stage 22 → `## Stage 22 — Done`.
 
 ### Stage 22-ის სესია
 - Date: 2026-11-06
