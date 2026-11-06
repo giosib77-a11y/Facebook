@@ -1085,6 +1085,7 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 
 ### Stage 22 (დაგეგმვისას, 2026-11-05)
 - **საერთო `httpx.Client` per-request Supabase client-ისთვის (A-046-ის ნაწილი)** — Stage 22-ში **არ** კეთდება: `ClientOptions(httpx_client=…)` ერთსა და იმავე client-ს auth / storage / functions-საც აძლევს; postgrest 2.32-ში `Authorization` per-request header-შია (უსაფრთხო), მაგრამ ერთი ბიბლიოთეკის მიერ საერთო client-ის header-ის შეცვლა = სხვა მომხმარებლის JWT სხვის მოთხოვნაში (tenant isolation). საჭიროა: საკუთარი `SyncPostgrestClient(rest_url, headers=…, http_client=shared)` (მხოლოდ `table`/`rpc`) + ტესტი „ორი პარალელური მოთხოვნა — ორი სხვადასხვა Authorization". გადახედვა: latency-ის რეალური გაზომვის შემდეგ.
+  - (2026-11-06, ლაივის ინციდენტი `GET /admin/growth` → `ReadError [Errno 11]`) **service / anon singleton-ებისთვის გაკეთდა:** საერთო `httpx.Client` HTTP/1.1-ით და ცხადი timeout-ით (`core/supabase_client.get_http_client`, Decision Log 2026-11-06). per-request user client — ისევ აქ (Backlog).
 - სერვერის pagination პარამეტრები (`limit` / `offset` / cursor) `GET /products`, `GET /orders`, ადმინის სიებზე + პანელის UI — ახლა ჭერები 10 000 / 20 000 (+ WARNING); საჭიროა, როცა რომელიმე მაღაზია ~5 000 პროდუქტს / 10 000 შეკვეთას მიუახლოვდება.
 - `POST /test-chat` (dev-only, production-ში 404) — პროდუქტები ჯერ `fetch_all`-ის გარეშე (≤1000).
 - ექსპორტი >50 000 მწკრივზე — streaming / ფონური ფაილი (ახლა 413).
