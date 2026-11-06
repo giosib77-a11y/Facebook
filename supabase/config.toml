@@ -1,0 +1,19 @@
+# მხოლოდ ლოკალური stack (`supabase db start` / `supabase test db`) — Stage 24, A-042.
+# remote project ref, `supabase link`, `db push` არ გამოიყენება — მიგრაციებს მფლობელი
+# ხელით უშვებს (SQL Editor). საიდუმლოებს ამ ფაილში ადგილი არ აქვს: production-ის
+# მნიშვნელობები აქ არასდროს შედის.
+# `supabase/checks/` და `supabase/one-off/` CLI-ს არ ეხება (ის მხოლოდ `migrations/`,
+# `tests/` და seed-ს კითხულობს).
+
+project_id = "chatassist"
+
+[db]
+port = 54322
+shadow_port = 54320
+# ლაივის Postgres-ის major ვერსიას უნდა ემთხვეოდეს — G1-ის query აბრუნებს
+# `server_version_num`-ს (15xxxx -> აქ 15).
+major_version = 17
+
+[db.seed]
+# seed.sql არ გვაქვს — ტესტები საკუთარ მონაცემს თავად ქმნიან და rollback-ით შლიან.
+enabled = false
