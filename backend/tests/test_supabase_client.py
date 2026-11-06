@@ -51,10 +51,19 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+class _Server(ThreadingHTTPServer):
+    # socketserver-ის default backlog = 5. parallel ტესტი Barrier-ით 16 ახალ კავშირს ერთდროულად ხსნის;
+    # Linux-ზე (CI) პატარა backlog SYN-ის რიგსაც ზღუდავს → SYN cookie → სავსე accept რიგზე ACK იყრება,
+    # კლიენტი კავშირს დამყარებულად თვლის, სერვერს კი მისი state არ აქვს → RST → `ReadError [Errno 104]`.
+    # Windows პატარა backlog-ს ასე არ ზღუდავს (ლოკალურად გადიოდა). class ატრიბუტია, რადგან `listen()`
+    # უკვე `__init__`-ში (`server_activate`) ეძახება — instance-ზე შემდეგ დაყენება გვიანია.
+    request_queue_size = 128
+    daemon_threads = True
+
+
 @pytest.fixture
 def local_supabase(monkeypatch):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    server.daemon_threads = True
+    server = _Server(("127.0.0.1", 0), _Handler)
     server.lock = threading.Lock()
     server.seen = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
