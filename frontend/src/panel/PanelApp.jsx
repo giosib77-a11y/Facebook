@@ -1,8 +1,9 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { api } from "./api.js";
 import { isMfaRequired } from "../lib/adminMfa.js";
 import { subscribeSession, getSignedIn, getSession, signOut } from "./session.js";
-import { subscribeFbResult, fbRedirectResult, fbResultMessage } from "./fbConnect.js";
+import { subscribeFbResult, fbRedirectResult, fbResultMessage, parsePages, selectPage } from "./fbConnect.js";
+import FbPagePicker from "./FbPagePicker.jsx";
 import { ShopDataProvider, useShopData } from "./ShopData.jsx";
 import { ToastProvider, BrandMark, useToast } from "./ui.jsx";
 import AuthView from "./AuthView.jsx";
@@ -17,9 +18,9 @@ export default function PanelApp() {
         <ShopDataProvider>
           <Header />
           <main className="container">
+            <FbResultBridge />
             <Dashboard />
           </main>
-          <FbResultBridge />
         </ShopDataProvider>
       ) : (
         <main className="container">
@@ -77,24 +78,48 @@ function Header() {
 function FbResultBridge() {
   const toast = useToast();
   const { shopId, loadShops } = useShopData();
+  const [choice, setChoice] = useState(null); // { selection, pages } — რამდენიმე გვერდის არჩევა
+  const [busyId, setBusyId] = useState(null);
 
-  useEffect(() => {
-    // popup-დაბლოკილის fallback (?fb=...) — მოდულის ჩატვირთვისას დაფიქსირდა
-    if (fbRedirectResult) {
-      const r = fbResultMessage(fbRedirectResult);
-      toast(r.msg, r.isErr);
-      if (r.reload) loadShops(shopId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    return subscribeFbResult((d) => {
+  // ერთი ადგილი popup-ისა და redirect-ის შედეგისთვის
+  const handleResult = useCallback(
+    (d) => {
+      if (d.fb === "choose") {
+        const pages = parsePages(d.pages);
+        if (pages.length === 0 || !d.selection) {
+          toast("დაკავშირება ვერ მოხერხდა. სცადეთ თავიდან.", true);
+          return;
+        }
+        setChoice({ selection: d.selection, pages });
+        return;
+      }
       const r = fbResultMessage(d);
       toast(r.msg, r.isErr);
       if (r.reload) loadShops(shopId);
-    });
-  }, [toast, loadShops, shopId]);
+    },
+    [toast, loadShops, shopId]
+  );
 
-  return null;
+  useEffect(() => {
+    // popup-დაბლოკილის fallback (?fb=...) — მოდულის ჩატვირთვისას დაფიქსირდა
+    if (fbRedirectResult) handleResult(fbRedirectResult);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => subscribeFbResult(handleResult), [handleResult]);
+
+  async function pick(pageId) {
+    if (!choice || busyId) return;
+    setBusyId(pageId);
+    try {
+      handleResult(await selectPage(api, choice.selection, pageId));
+    } catch (e) {
+      toast(e.message, true); // backend-ის ფიქსირებული ქართული ტექსტი (400 / 404 / 503)
+    }
+    setBusyId(null);
+    setChoice(null);
+  }
+
+  if (!choice) return null;
+  return <FbPagePicker pages={choice.pages} busyId={busyId} onPick={pick} onCancel={() => setChoice(null)} />;
 }

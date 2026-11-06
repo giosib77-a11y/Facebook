@@ -84,6 +84,91 @@ describe("fbConnect message listener", () => {
   });
 });
 
+describe("parsePages", () => {
+  it("parses a valid JSON string", async () => {
+    const { parsePages } = await load();
+    expect(parsePages(JSON.stringify([{ id: "1", name: "A" }, { id: "2", name: "B" }]))).toEqual([
+      { id: "1", name: "A" },
+      { id: "2", name: "B" },
+    ]);
+  });
+
+  it("accepts an array", async () => {
+    const { parsePages } = await load();
+    expect(parsePages([{ id: "7", name: "X" }])).toEqual([{ id: "7", name: "X" }]);
+  });
+
+  it("returns [] for non-JSON or non-array input", async () => {
+    const { parsePages } = await load();
+    expect(parsePages("not json{")).toEqual([]);
+    expect(parsePages('{"id":"1"}')).toEqual([]);
+    expect(parsePages(null)).toEqual([]);
+    expect(parsePages(undefined)).toEqual([]);
+  });
+
+  it("drops entries with an invalid id or non-string name", async () => {
+    const { parsePages } = await load();
+    const raw = [
+      { id: "abc", name: "bad" },
+      { id: "", name: "empty" },
+      { id: "1".repeat(33), name: "long" },
+      { id: 5, name: "number" },
+      { id: "3", name: 42 },
+      null,
+      { id: "4", name: "ok" },
+    ];
+    expect(parsePages(raw)).toEqual([{ id: "4", name: "ok" }]);
+  });
+
+  it("caps at 25 pages, trims name to 50 and falls back to id", async () => {
+    const { parsePages } = await load();
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: String(i + 1), name: "n" }));
+    expect(parsePages(many)).toHaveLength(25);
+    expect(parsePages([{ id: "1", name: "x".repeat(80) }])[0].name).toHaveLength(50);
+    expect(parsePages([{ id: "9", name: "" }])).toEqual([{ id: "9", name: "9" }]);
+  });
+
+  it("keeps markup in a name as plain text", async () => {
+    const { parsePages } = await load();
+    expect(parsePages([{ id: "1", name: "<img src=x onerror=alert(1)>" }])[0].name).toBe(
+      "<img src=x onerror=alert(1)>"
+    );
+  });
+});
+
+describe("selectPage", () => {
+  it("POSTs selection and page_id to /facebook/connect/select", async () => {
+    const { selectPage } = await load();
+    const api = vi.fn(() => Promise.resolve({ fb: "connected", page: "B" }));
+    const res = await selectPage(api, "SEL", "2");
+    expect(api).toHaveBeenCalledWith("/facebook/connect/select", "POST", { selection: "SEL", page_id: "2" });
+    expect(res).toEqual({ fb: "connected", page: "B" });
+  });
+});
+
+describe("choose redirect and reasons", () => {
+  it("fbRedirectResult carries selection and pages from the query", async () => {
+    const pages = JSON.stringify([{ id: "1", name: "A" }]);
+    window.history.replaceState({}, "", "/?fb=choose&selection=S&pages=" + encodeURIComponent(pages));
+    try {
+      const { fbRedirectResult, parsePages } = await load();
+      expect(fbRedirectResult.fb).toBe("choose");
+      expect(fbRedirectResult.selection).toBe("S");
+      expect(parsePages(fbRedirectResult.pages)).toEqual([{ id: "1", name: "A" }]);
+      expect(window.location.search).toBe("");
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("page_unavailable has its own text", async () => {
+    const { fbResultMessage } = await load();
+    const r = fbResultMessage({ fb: "error", reason: "page_unavailable" });
+    expect(r.msg).toBe("ამ გვერდზე წვდომა აღარ არის — დააჭირე „დაკავშირებას“ ხელახლა.");
+    expect(r.isErr).toBe(true);
+  });
+});
+
 describe("startConnect", () => {
   it("calls window.open synchronously, before the api promise resolves", async () => {
     const mod = await load();

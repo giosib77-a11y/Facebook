@@ -54,10 +54,42 @@ export const fbRedirectResult = (() => {
   const params = new URLSearchParams(window.location.search);
   const fb = params.get("fb");
   if (!fb) return null;
-  const out = { fb, page: params.get("page"), reason: params.get("reason"), bot: params.get("bot") };
+  const out = {
+    fb,
+    page: params.get("page"),
+    reason: params.get("reason"),
+    bot: params.get("bot"),
+    selection: params.get("selection"),
+    pages: params.get("pages"),
+  };
   window.history.replaceState({}, "", window.location.pathname);
   return out;
 })();
+
+/** `pages` (JSON-სტრიქონი ან მასივი) → უსაფრთხო [{id, name}] (≤25); ნებისმიერი უწესრიგობა → [] / გამოტოვება */
+export function parsePages(raw) {
+  let list = raw;
+  if (typeof raw === "string") {
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const p of list) {
+    if (out.length >= 25) break;
+    if (!p || typeof p.id !== "string" || !/^[0-9]{1,32}$/.test(p.id) || typeof p.name !== "string") continue;
+    out.push({ id: p.id, name: p.name.slice(0, 50) || p.id });
+  }
+  return out;
+}
+
+/** არჩეული გვერდის დაკავშირება (backend-ის `POST /facebook/connect/select`) */
+export function selectPage(api, selection, pageId) {
+  return api("/facebook/connect/select", "POST", { selection, page_id: pageId });
+}
 
 /** შედეგის ერთიანი გამზადება toast-ისთვის (popup და fallback ერთნაირად) */
 export function fbResultMessage(d) {
@@ -85,6 +117,7 @@ export function fbResultMessage(d) {
     fb_denied: "დაკავშირება გაუქმდა ან Facebook-მა უარი თქვა. სცადეთ თავიდან.",
     graph_failed: "Facebook-თან დაკავშირება ვერ მოხერხდა. სცადეთ თავიდან.",
     subscribe_failed: "გვერდის გამოწერა ვერ მოხერხდა. სცადეთ თავიდან.",
+    page_unavailable: "ამ გვერდზე წვდომა აღარ არის — დააჭირე „დაკავშირებას“ ხელახლა.",
     multiple_pages: "თავიდან მიაბით და Facebook-ის ფანჯარაში მონიშნეთ მხოლოდ ის გვერდი, რომელზეც ბოტი გინდათ",
   };
   // ⚠️ F-10: reason-ის ნედლი ტექსტი ეკრანზე არასდროს გამოჩნდება — ის URL-იდან ან
