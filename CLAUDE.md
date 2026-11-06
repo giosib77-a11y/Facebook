@@ -23,13 +23,14 @@
   (ნამდვილი type checker (mypy/pyright) არ არის — ეს მხოლოდ syntax/compile check-ია, CI-ში იგივე; frontend JS-ია)
 - test: `cd backend && .venv/Scripts/python.exe -m pytest -q`
   (ერთჯერადი გაშვება, watch-ის გარეშე; 2920 ტესტი, offline — fake Supabase + mock Graph / LLM client-ები)
-- test frontend: `cd frontend && npm test`
-  (Vitest `vitest run`, ერთჯერადი; jsdom + Testing Library, offline; 116 ტესტი `src/**/*.test.{js,jsx}` ფაილის გვერდით)
+- test frontend: `cd frontend && npm test` (Vitest `vitest run`, ერთჯერადი; jsdom, offline; 116 ტესტი `src/**/*.test.{js,jsx}`)
 - e2e frontend: `cd frontend && npm run build && npm run test:e2e`
-  (Playwright chromium, 27 ტესტი, მხოლოდ ლოკალურად (CI-ში არა); `vite preview` :4173 აშენებულ `dist/`-ს ემსახურება; backend არ სჭირდება — API მოკია; პირველად `npx playwright install chromium`)
+  (Playwright chromium, 27 ტესტი, CI-შიც (frontend job); `vite preview` :4173 `dist/`-ს ემსახურება; backend არ სჭირდება — API მოკია; პირველად `npx playwright install chromium`)
+- pgtap: `npx --yes supabase@2.121.0 --workdir <scratch-ასლი> test db`
+  (Docker; ასლი `.env`-ის გარეშე; წინ `db start`, ბოლოს `stop --no-backup`; ლოკალური ბაზა, remote-ს არ ეხება; README §7)
 - build frontend: `cd frontend && npm run build` → `frontend/dist/` (commit-ში უნდა წავიდეს ცვლილებასთან ერთად)
 - migrations: **ხელით**, მფლობელი უშვებს Supabase SQL Editor-ში თანმიმდევრობით. აგენტი remote-ზე არაფერს უშვებს.
-- CI: `.github/workflows/ci.yml` (Actions SHA-pinned; `requirements.lock.txt` hash-pinned) — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest --cov` + coverage gate ≥85% (`api/admin.py`, `api/shops.py`; ლოკალურად იგივე: `pytest -q --cov=app.api.admin --cov=app.api.shops`) + frontend job (`npm ci`, `npm audit --omit=dev`, lint, test, build, `git diff --exit-code -- dist`) (push/PR `main`-ზე)
+- CI: `.github/workflows/ci.yml` (Actions SHA-pinned; `requirements.lock.txt` hash-pinned) — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest --cov` + coverage gate ≥85% (`api/admin.py`, `api/shops.py`; ლოკალურად იგივე: `pytest -q --cov=app.api.admin --cov=app.api.shops`) + frontend job (`npm ci`, `npm audit --omit=dev`, lint, test, build, `git diff --exit-code -- dist`, Playwright e2e) + `database` job (pgTAP: `supabase db start` → `test db`, CLI 2.121.0) (push/PR `main`-ზე)
 
 ## Conventions
 - **აკრძალულია** (მფლობელის თანხმობის გარეშე): `git push`, `main`-ში merge, deploy, remote Supabase-ზე

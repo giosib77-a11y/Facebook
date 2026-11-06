@@ -182,6 +182,12 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
 ├── supabase/migrations/         41 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/config.toml         Supabase CLI-ის ლოკალური კონფიგი (მხოლოდ ლოკალური stack; `project_id = "chatassist"`, Postgres 17, seed გამორთულია)
+├── supabase/tests/              pgTAP ტესტები (`supabase test db`; 4 ფაილი, 120 ტესტი):
+│   ├── 01_rls_policies.sql      RLS ჩართულია ყველა public ცხრილზე (11), view-ები არ არის, პოლისების ინვენტარი; backend-only ცხრილებს პოლისი არ აქვს
+│   ├── 02_privileges.sql        ცხრილის/სვეტის/sequence-ის grants (`anon` / `authenticated` / `service_role`) — 0015/0017/0018/0022/0024/0025/0029/0034/0037/0041
+│   ├── 03_functions.sql         16 public ფუნქცია: `anon`/`authenticated`-ს EXECUTE არ აქვს (გარდა trigger-ის `set_updated_at`); SECURITY DEFINER ინვენტარი (`create_shop_limited`, `track_bot_customer`) ფიქსირებული `search_path`-ით; `service_role` EXECUTE
+│   └── 04_tenant_isolation.sql  გამყიდველი A vs B და `anon`: ხილვადობა + ჩაწერა სხვისზე არაფერს ცვლის
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -470,6 +476,34 @@ DB-ოპერაციები სრულდება **მომხმა�
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
 
+**Supabase CLI მხოლოდ ლოკალურია:** `supabase db start` სუფთა ლოკალურ ბაზაზე `0001…`-ს თანმიმდევრობით ასრულებს და pgTAP-ს ამ ბაზაზე ვუშვებთ. ლაივზე მიგრაციები ისევ ხელით ეშვება (SQL Editor); `supabase link` / `db push` **არ გამოიყენება**. `supabase/checks/` და `supabase/one-off/` CLI-ს არ ეხება (მიგრაციები არ არის).
+
+### pgTAP ლოკალურად
+
+წინაპირობა — Docker Desktop (გაშვებული). CLI-ს ვერსია დაპინულია: `2.121.0` (ისევე, როგორც CI-ში).
+
+**რატომ სამუშაო ასლიდან:** CLI `--workdir`-ის root-ში არსებულ `.env`-ს ტვირთავს. რეპოს root-ის `.env` production-ის საიდუმლოებს შეიცავს, ამიტომ CLI-ს პირდაპირ რეპოზე არ ვუშვებთ — ვაკეთებთ ასლს მხოლოდ `config.toml` + `migrations` + `tests`-ით, `.env`-ის გარეშე.
+
+```bash
+S=$(mktemp -d)                         # ნებისმიერი დროებითი საქაღალდე რეპოს გარეთ
+mkdir -p "$S/supabase"
+cp -r supabase/config.toml supabase/migrations supabase/tests "$S/supabase/"
+ls -a "$S" "$S/supabase"               # დარწმუნდი, რომ .env* არსად არის
+
+npx --yes supabase@2.121.0 --workdir "$S" db start              # ლოკალური Postgres + ყველა მიგრაცია
+npx --yes supabase@2.121.0 --workdir "$S" migration list --local # ყველა მიგრაცია გაშვებულია?
+npx --yes supabase@2.121.0 --workdir "$S" test db               # pgTAP: 4 ფაილი, 120 ტესტი
+npx --yes supabase@2.121.0 --workdir "$S" stop --no-backup      # ბოლოს ყოველთვის (კონტეინერები + volume)
+docker ps -a --filter "name=supabase_"                          # ცარიელი უნდა იყოს
+```
+
+**Mutation-შემოწმება** (დარწმუნება, რომ ტესტი ნამდვილად წითლდება): ასლის `supabase/migrations/`-ში დროებით დაამატე `9999_tmp_break.sql` (მაგ. `alter table … disable row level security;` ან `grant … to anon;`), გაუშვი `db reset --local`, შემდეგ `test db` — უნდა ჩავარდეს. წაშალე ფაილი → `db reset --local` → `test db` ისევ მწვანეა. ასლში ვმუშაობთ, რეალურ `supabase/migrations/`-ში `9999_…` არასდროს ჩაიდება.
+
+**CI** (`.github/workflows/ci.yml`, push/PR `main`-ზე) — სამი job:
+- `backend` — `pip check`, `pip-audit`, `compileall`, `ruff`, `pytest --cov` + coverage gate ≥85%;
+- `frontend` — `npm ci`, `npm audit --omit=dev`, lint, Vitest, build, `git diff --exit-code -- dist`, შემდეგ `npx playwright install --with-deps chromium` და Playwright e2e (`npm run test:e2e`);
+- `database` — `supabase/setup-cli` (SHA-pinned, CLI `2.121.0`) → `supabase db start` → `supabase migration list --local` → `supabase test db`. საიდუმლოები არ სჭირდება (ლოკალური stack).
+
 ---
 
 ## 8. უსაფრთხოება
@@ -538,7 +572,7 @@ npm run lint     # ESLint
 npm test         # Vitest-ის ტესტები
 ```
 
-ბრაუზერის (e2e) ტესტები — Playwright, მხოლოდ ლოკალურად (CI-ში არა); backend არ სჭირდება, API-ები იმოკება:
+ბრაუზერის (e2e) ტესტები — Playwright, ლოკალურად და CI-შიც (`frontend` job); backend არ სჭირდება, API-ები იმოკება:
 
 ```bash
 cd frontend
@@ -783,7 +817,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | # | რა | რატომ |
 |---|---|---|
-| 1 | **Frontend ტესტების დაფარვა ნაწილობრივია** | Vitest (116) და Playwright e2e (27, მხოლოდ ლოკალურად) ძირითად ნაკადებს ფარავს; დანარჩენი React-ის კოდი ხელით მოწმდება |
+| 1 | **Frontend ტესტების დაფარვა ნაწილობრივია** | Vitest (116) და Playwright e2e (27, CI-შიც) ძირითად ნაკადებს ფარავს; დანარჩენი React-ის კოდი ხელით მოწმდება |
 | 2 | **React-ის კოდი ხაზ-ხაზ არ წაკითხულა** | რევიუზე შემოწმდა სტრუქტურა, `useEffect`-ები და ძველთან დიფი; `AdminPage.jsx` (539 ხაზი) და `ProductsTab.jsx` (365) ცალკე გავლას იმსახურებს |
 | 3 | **CSP header არ არის** | თეთრი სიის პრინციპი — ერთი გამორჩენა ცარიელ გვერდს იძლევა. რედიზაინისას ისედაც გადაიწერება |
 | 4 | **Rate limit მეხსიერებაშია** | deploy-ზე ნულდება; მრავალ-instance-ზე Redis/Cloudflare დასჭირდება |
