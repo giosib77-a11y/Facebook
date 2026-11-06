@@ -6,14 +6,23 @@ vi.mock("../lib/api.js", () => ({
   req: vi.fn(),
   readStoredToken: vi.fn(() => "tok"),
 }));
+const mfa = vi.hoisted(() => ({
+  listFactors: vi.fn(),
+  enroll: vi.fn(),
+  challenge: vi.fn(),
+  verify: vi.fn(),
+  unenroll: vi.fn(),
+}));
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
     auth: {
       getUser: () => Promise.resolve({ data: { user: { email: "admin@example.com" } } }),
       signOut: () => Promise.resolve(),
+      mfa,
     },
   }),
 }));
+const MFA_TEXT = "ადმინ პანელისთვის საჭიროა ორფაქტორიანი შესვლა (MFA)";
 
 let AdminPage;
 let apiMod;
@@ -44,6 +53,13 @@ beforeEach(() => {
   apiMod.api.mockImplementation(async (p) => (p in data ? data[p] : []));
   apiMod.req.mockResolvedValue({ owner_id: "o1", tier: "starter", paid_until: "2026-12-31T00:00:00Z" });
   window.confirm = vi.fn(() => true);
+  window.prompt = vi.fn();
+  mfa.listFactors.mockResolvedValue({
+    data: { totp: [{ id: "f1", status: "verified" }], all: [{ id: "f1", factor_type: "totp", status: "verified" }] },
+    error: null,
+  });
+  mfa.challenge.mockResolvedValue({ data: { id: "c1" }, error: null });
+  mfa.verify.mockResolvedValue({ data: {}, error: null });
 });
 
 async function renderPage() {
@@ -166,6 +182,63 @@ test("kill_switch shows its banner", async () => {
   };
   await renderPage();
   expect(screen.getByText("LLM_KILL_SWITCH ჩართულია — ბოტი ყველგან ოპერატორზეა")).toBeInTheDocument();
+});
+
+test("MFA 403 shows the code screen (not forbidden); verify reloads the data", async () => {
+  let verified = false;
+  apiMod.api.mockImplementation(async (p) => {
+    if (!verified) throw { forbidden: true, detail: MFA_TEXT };
+    return p in data ? data[p] : [];
+  });
+  render(<AdminPage />);
+  const input = await screen.findByLabelText("6-ნიშნა კოდი");
+  expect(screen.queryByText("წვდომა აკრძალულია")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "გასვლა" })).toBeInTheDocument();
+  verified = true;
+  fireEvent.change(input, { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "დადასტურება" }));
+  expect(await screen.findByText("Shop One")).toBeInTheDocument();
+  expect(mfa.verify).toHaveBeenCalledWith({ factorId: "f1", challengeId: "c1", code: "123456" });
+  expect(screen.queryByLabelText("6-ნიშნა კოდი")).not.toBeInTheDocument();
+});
+
+test("other 403 still shows the forbidden card", async () => {
+  apiMod.api.mockRejectedValue({ forbidden: true, detail: "წვდომა მხოლოდ ადმინისთვის" });
+  render(<AdminPage />);
+  expect(await screen.findByText("წვდომა აკრძალულია")).toBeInTheDocument();
+  expect(screen.queryByLabelText("6-ნიშნა კოდი")).not.toBeInTheDocument();
+});
+
+test("recovery: confirm, sent toast, no prompt; error shows the backend text", async () => {
+  data["/admin/sellers"] = [{ email: "s@x.ge", confirmed: true, shops: 1, last_sign_in: null, created_at: null }];
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: /გამყიდვლები/ }));
+  apiMod.req.mockResolvedValueOnce({ ok: true });
+  fireEvent.click(await screen.findByRole("button", { name: /პაროლი/ }));
+  expect(await screen.findByText("აღდგენის ბმული გაეგზავნა გამყიდველს ელფოსტაზე")).toBeInTheDocument();
+  expect(window.confirm).toHaveBeenCalledWith("გავუგზავნო პაროლის აღდგენის ბმული s@x.ge-ს?");
+  expect(apiMod.req).toHaveBeenCalledWith("POST", "/admin/recovery", { email: "s@x.ge" });
+  expect(window.prompt).not.toHaveBeenCalled();
+
+  const smtp = "ელფოსტა არ არის კონფიგურირებული (SMTP) — აღდგენის ბმული ვერ გაიგზავნება";
+  apiMod.req.mockRejectedValueOnce(new Error(smtp));
+  fireEvent.click(screen.getByRole("button", { name: /პაროლი/ }));
+  expect(await screen.findByText(smtp)).toBeInTheDocument();
+  expect(window.prompt).not.toHaveBeenCalled();
+});
+
+test("recovery: declined confirm sends nothing", async () => {
+  data["/admin/sellers"] = [{ email: "s@x.ge", confirmed: true, shops: 1 }];
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: /გამყიდვლები/ }));
+  window.confirm = vi.fn(() => false);
+  fireEvent.click(await screen.findByRole("button", { name: /პაროლი/ }));
+  expect(apiMod.req).not.toHaveBeenCalled();
+});
+
+test("MfaStatus is shown together with the data", async () => {
+  await renderPage();
+  expect(await screen.findByText("🔐 ორფაქტორიანი შესვლა ჩართულია ✓")).toBeInTheDocument();
 });
 
 test("no overview.llm -> no banner and no LLM stat", async () => {

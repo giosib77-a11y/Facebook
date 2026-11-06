@@ -57,7 +57,10 @@ export async function req(method, path, body, _retry) {
     location.href = "index.html";
     throw new Error("401");
   }
-  if (res.status === 403) throw { forbidden: true };
+  if (res.status === 403) {
+    const data = await res.json().catch(() => null);
+    throw { forbidden: true, detail: (data && data.detail) || null };
+  }
   if (res.status >= 500 && !_retry) {
     await sleep(2000);
     return req(method, path, body, true);

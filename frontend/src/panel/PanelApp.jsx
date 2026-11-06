@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { api } from "./api.js";
+import { isMfaRequired } from "../lib/adminMfa.js";
 import { subscribeSession, getSignedIn, getSession, signOut } from "./session.js";
 import { subscribeFbResult, fbRedirectResult, fbResultMessage } from "./fbConnect.js";
 import { ShopDataProvider, useShopData } from "./ShopData.jsx";
@@ -47,7 +48,10 @@ function Header() {
   useEffect(() => {
     api("/admin/check")
       .then(() => setIsAdmin(true))
-      .catch(() => {}); // არა ადმინი — ღილაკი დამალული რჩება
+      .catch((e) => {
+        // aal1 ადმინი: MFA-ს 403 — ღილაკი ჩანს (კოდს admin.html-ში შეიყვანს); სხვა — დამალული რჩება
+        if (isMfaRequired(e)) setIsAdmin(true);
+      });
   }, []);
 
   return (

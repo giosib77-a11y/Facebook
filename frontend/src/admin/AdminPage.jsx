@@ -4,6 +4,8 @@ import { api, req, readStoredToken } from "../lib/api.js";
 import { toCSV, downloadCSV, fmtDate } from "../lib/csv.js";
 import { STATUS, TIERS, tierLabel } from "./constants.js";
 import ShopDetailModal from "./ShopDetailModal.jsx";
+import MfaGate, { MfaStatus } from "./MfaGate.jsx";
+import { isMfaRequired } from "../lib/adminMfa.js";
 
 const cfg = window.APP_CONFIG;
 // detectSessionInUrl:false — იგივე კონფიგი, რაც პანელს აქვს (Facebook-ის #_=_ გამო)
@@ -47,6 +49,7 @@ export default function AdminPage() {
   const extendingRef = useRef(new Set());
   const [extending, setExtending] = useState(() => new Set());
   const [forbidden, setForbidden] = useState(false);
+  const [mfaGate, setMfaGate] = useState(false);
   const [overview, setOverview] = useState(null);
   const [shops, setShops] = useState([]);
   const [sellers, setSellers] = useState([]);
@@ -84,7 +87,8 @@ export default function AdminPage() {
     const ov = r[0];
     if (ov.status === "rejected") {
       if (ov.reason && ov.reason.forbidden) {
-        setForbidden(true);
+        if (isMfaRequired(ov.reason)) setMfaGate(true);
+        else setForbidden(true);
         return;
       }
       showToast("ზოგი მონაცემი ვერ ჩაიტვირთა", true);
@@ -191,12 +195,12 @@ export default function AdminPage() {
 
   async function recovery(email) {
     if (!email) return;
+    if (!confirm("გავუგზავნო პაროლის აღდგენის ბმული " + email + "-ს?")) return;
     try {
-      const r = await req("POST", "/admin/recovery", { email });
-      if (r && r.action_link) prompt("პაროლის აღდგენის ბმული (გაუგზავნე გამყიდველს):", r.action_link);
-      else showToast("ბმული დაგენერირდა", false);
-    } catch {
-      showToast("ვერ მოხერხდა", true);
+      await req("POST", "/admin/recovery", { email });
+      showToast("აღდგენის ბმული გაეგზავნა გამყიდველს ელფოსტაზე");
+    } catch (e) {
+      showToast((e && e.message) || "ვერ მოხერხდა", true);
     }
   }
 
@@ -309,8 +313,23 @@ export default function AdminPage() {
           </div>
         )}
 
-        {!loading && !forbidden && (
+        {mfaGate && (
+          <div style={{ maxWidth: 420, margin: "0 auto" }}>
+            <MfaGate
+              mfa={sb.auth.mfa}
+              onVerified={() => {
+                setMfaGate(false);
+                setLoading(true);
+                load();
+              }}
+            />
+          </div>
+        )}
+
+        {!loading && !forbidden && !mfaGate && (
           <>
+            <MfaStatus mfa={sb.auth.mfa} />
+
             {requests.length > 0 && (
               <div className="card" style={{ borderColor: "var(--primary)" }}>
                 <h2 style={{ marginTop: 0 }}>🔔 პაკეტის მოთხოვნები ({requests.length})</h2>
