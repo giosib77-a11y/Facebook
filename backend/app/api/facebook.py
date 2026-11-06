@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.core.crypto import KEY_DELETION_CODE, decrypt, derive_key, encrypt
@@ -20,6 +21,7 @@ from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
 from app.core.tiers import owner_shop_limit
 from app.services import facebook as fb
+from app.services import fb_selection
 
 router = APIRouter(prefix="/facebook", tags=["facebook connect"])
 logger = logging.getLogger("app")
@@ -238,20 +240,47 @@ def _connect_callback(
     if not pages:
         return _finish("no_pages")
 
-    # S11-2: ერთზე მეტ გვერდზე წვდომისას შემთხვევით პირველს არ ვირჩევთ — უარი, არაფერი
-    # ინახება (არც subscribe, არც token-ის დაშიფვრა). გვერდების სახელებს/token-ებს არ ვლოგავთ.
+    # S11-2 / A-045: ერთზე მეტ გვერდზე წვდომისას შემთხვევით პირველს არ ვირჩევთ და არაფერს ვინახავთ
+    # (არც subscribe, არც token-ის დაშიფვრა, არც DB). მომხმარებელს ვუბრუნებთ გვერდების სიას
+    # (id + მოკლე სახელი) და დაშიფრულ 10-წუთიან selection token-ს; არჩევანი — POST /connect/select.
+    # გვერდების სახელებს/token-ებს არ ვლოგავთ.
     if len(pages) > 1:
-        logger.warning("Facebook-მა %d გვერდი დააბრუნა — დაკავშირება უარყოფილია (shop=%s)", len(pages), data.get("shop_id"))
-        return _finish("error", reason="multiple_pages")
+        logger.info("Facebook returned %d pages - asking the seller to choose (shop=%s)", len(pages), data.get("shop_id"))
+        listed = pages[:fb_selection.MAX_PAGES]
+        try:
+            selection = fb_selection.make(
+                data["user_id"], data["shop_id"], user_token, [str(p["id"]) for p in listed]
+            )
+        except RuntimeError:
+            logger.error("Facebook page selection token could not be created (FB_APP_SECRET missing)")
+            return _finish("error", reason="save_failed")
+        # სახელები Facebook-იდან მოდის (თავდამსხმელის გავლენის ქვეშაა) — `_finish` JSON-ს
+        # `_script_json`-ით (`<`,`>`,`&` escape) და fallback URL-ს `urlencode`-ით აკოდირებს.
+        return _finish(
+            "choose",
+            selection=selection,
+            pages=json.dumps(
+                [{"id": str(p["id"]), "name": (p.get("name") or "")[:50]} for p in listed],
+                ensure_ascii=False,
+            ),
+        )
 
-    page = pages[0]
+    result, params = _connect_page(data, pages[0], user_token)
+    return _finish(result, **params)
+
+
+def _connect_page(data: dict, page: dict, user_token: str) -> tuple[str, dict]:
+    """არჩეული გვერდის დაკავშირება: subscribe → IG/FB user id → ლიმიტი → შენახვა.
+
+    აბრუნებს `_finish`-ის არგუმენტებს: ("connected", {"page": …[, "bot": "limit"]}) ან
+    ("error", {"reason": …}). გამოიყენება callback-იდან (1 გვერდი) და /connect/select-იდან."""
     page_id, page_token, page_name = page["id"], page["access_token"], page.get("name", "")
 
     try:
         fb.subscribe_page(page_id, page_token)
     except Exception as err:
         logger.warning("გვერდის webhook-ზე გამოწერა ვერ მოხერხდა (page=%s): %s", page_id, err)
-        return _finish("error", reason="subscribe_failed")
+        return "error", {"reason": "subscribe_failed"}
 
     # გვერდზე მიბმული Instagram Business ანგარიში (თუ არსებობს) — IG-ბოტისთვის
     ig_account_id = None
@@ -279,7 +308,7 @@ def _connect_callback(
         )
     except Exception:
         logger.exception("მფლობელის მაღაზიების წაკითხვა ჩავარდა (shop=%s)", data.get("shop_id"))
-        return _finish("error", reason="save_failed")
+        return "error", {"reason": "save_failed"}
     limit = owner_shop_limit([s.get("subscription_tier") for s in owned])
     active = sum(1 for s in owned if s.get("bot_enabled") and str(s.get("id")) != str(data["shop_id"]))
     bot_allowed = limit is None or active < limit
@@ -304,13 +333,13 @@ def _connect_callback(
             )
         except Exception:
             logger.exception("IG id-ის შემოწმება ჩავარდა (shop=%s)", data.get("shop_id"))
-            return _finish("error", reason="save_failed")
+            return "error", {"reason": "save_failed"}
         if any(
             r.get("instagram_account_id") == ig_account_id and str(r.get("id")) != str(data["shop_id"])
             for r in rows
         ):
             logger.warning("IG ანგარიში %s უკვე სხვა მაღაზიაზეა მიბმული (shop=%s)", ig_account_id, data.get("shop_id"))
-            return _finish("error", reason="ig_taken")
+            return "error", {"reason": "ig_taken"}
 
     def _save(payload: dict):
         return (
@@ -327,7 +356,7 @@ def _connect_callback(
         # გადაეცემოდა, იქაც ვარდებოდა და მომხმარებელი popup-ში 500-ს ხედავდა.
         if "duplicate key" in msg or "23505" in msg or "already exists" in msg:
             logger.warning("გვერდი %s უკვე დაკავშირებულია სხვა მაღაზიაზე", page_id)
-            return _finish("error", reason="page_taken")
+            return "error", {"reason": "page_taken"}
         # migration 0006/0011 ჯერ არ გაშვებულა — ამ ველების გარეშე მაინც ვცდით
         upd.pop("instagram_account_id", None)
         upd.pop("facebook_user_id", None)
@@ -335,7 +364,7 @@ def _connect_callback(
             res = _save(upd)
         except Exception:
             logger.exception("გვერდის შენახვა ჩავარდა (shop=%s)", data.get("shop_id"))
-            return _finish("error", reason="save_failed")
+            return "error", {"reason": "save_failed"}
 
     # ⚠️ რევიუ P2-13: შედეგი უნდა შემოწმდეს. 0 მწკრივი ნიშნავს, რომ მაღაზია
     # აღარ არსებობს ან სხვას ეკუთვნის — ადრე ასეთ დროსაც „connected" ბრუნდებოდა.
@@ -344,7 +373,7 @@ def _connect_callback(
             "გვერდის შენახვამ 0 მწკრივი შეცვალა (shop=%s, user=%s)",
             data.get("shop_id"), data.get("user_id"),
         )
-        return _finish("error", reason="shop_not_found")
+        return "error", {"reason": "shop_not_found"}
 
     # A-038: ახალი token → ძველი ჯანმრთელობის სტატუსი (token_expired და ა.შ.) იწმინდება.
     # ცალკე best-effort (migration 0036 შეიძლება არ იყოს) — fallback-ის pop სიაში არ შედის.
@@ -354,8 +383,56 @@ def _connect_callback(
         logger.warning("bot_status reset failed (shop=%s, %s)", data.get("shop_id"), type(exc).__name__)
 
     if not bot_allowed:
-        return _finish("connected", page=page_name, bot="limit")
-    return _finish("connected", page=page_name)
+        return "connected", {"page": page_name, "bot": "limit"}
+    return "connected", {"page": page_name}
+
+
+class SelectIn(BaseModel):
+    selection: str = Field(min_length=1, max_length=fb_selection.MAX_TOKEN_CHARS)
+    page_id: str = Field(pattern=r"^[0-9]{1,32}$")
+
+
+@router.post("/connect/select")
+def connect_select(payload: SelectIn, auth: CurrentAuth = Depends(get_current_auth)):
+    """A-045: გამყიდველმა callback-ის სიიდან გვერდი აირჩია — ვაკავშირებთ.
+
+    selection token ხელმოწერილ-დაშიფრულია, 10 წუთიანია და მიბმულია ამ მომხმარებელსა და
+    მაღაზიაზე; გვერდების სია Graph-იდან თავიდან იკითხება (token მხოლოდ „ვის სახელითაა")."""
+    try:
+        sel = fb_selection.read(payload.selection, auth.user_id)
+    except fb_selection.SelectionError as err:
+        if err.kind == "expired":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "არჩევანს ვადა გაუვიდა (10 წუთი) — დააჭირე „დაკავშირებას“ ხელახლა.",
+            ) from None
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "გვერდის არჩევანი არასწორია — დააჭირე „დაკავშირებას“ ხელახლა.",
+        ) from None
+    except RuntimeError:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Facebook integration not configured") from None
+
+    if payload.page_id not in sel["pages"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ეს გვერდი არჩევანში არ არის")
+
+    # მფლობელობა RLS-ით (Graph-მდე და service client-მდე); ჩაწერა _save-ში owner_id ფილტრითაც
+    owns = run(auth.client.table("shops").select("id").eq("id", sel["shop"]).limit(1))
+    if not owns.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
+
+    try:
+        pages = fb.get_user_pages(sel["ut"])
+    except Exception as err:
+        # token-ი ლოგში არ იწერება — მხოლოდ შეცდომის კლასი
+        logger.warning("Facebook pages re-read failed on select (shop=%s, %s)", sel["shop"], type(err).__name__)
+        return {"fb": "error", "reason": "graph_failed"}
+    page = next((p for p in pages if str(p.get("id")) == payload.page_id), None)
+    if page is None:
+        return {"fb": "error", "reason": "page_unavailable"}
+
+    result, params = _connect_page({"shop_id": sel["shop"], "user_id": auth.user_id}, page, sel["ut"])
+    return {"fb": result, **params}
 
 
 @router.post("/data-deletion")

@@ -1,7 +1,10 @@
 """F-05: Facebook connect must not re-enable the bot beyond the owner's tier limit."""
+from types import SimpleNamespace
+
 import pytest
 
 import app.api.facebook as fb_api
+import app.core.crypto as crypto
 from tests.conftest import USER_ID
 
 SHOP_ID = "22222222-2222-2222-2222-222222222222"
@@ -141,10 +144,12 @@ def test_p2_multiple_pages_refused_without_side_effects(client, service_db, monk
     subscribed, encrypted = [], []
     monkeypatch.setattr(fb, "subscribe_page", lambda page_id, token: subscribed.append(page_id))
     monkeypatch.setattr(fb_api, "encrypt", lambda v: encrypted.append(v) or "enc:" + v)
+    # A-045: the selection token needs the HKDF secret (conftest blanks FB_APP_SECRET)
+    monkeypatch.setattr(crypto, "get_settings", lambda: SimpleNamespace(fb_app_secret="test-secret"))
     res = _callback(client)
     assert res.status_code == 200
-    assert '"reason": "multiple_pages"' in res.text
-    assert "page-token" not in res.text and "Page 0" not in res.text
+    assert '"fb": "choose"' in res.text
+    assert "page-token" not in res.text and "long-token" not in res.text
     assert subscribed == []
     assert encrypted == []
     assert service_db.calls_for("shops", "update") == []
