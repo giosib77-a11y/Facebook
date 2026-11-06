@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     # ადმინ პანელის მფლობელები — Supabase user UUID-ები, მძიმით (.env-ში ADMIN_USER_IDS).
     # ცარიელი = ადმინი არავინაა (fail closed). email სტაბილური იდენტობა არ არის.
     admin_user_ids: str = ""
+    # Stage 23 (A-043) — ადმინს სჭირდება `aal2` (TOTP). None = production-ში ჩართული, dev-ში გამორთული;
+    # `false` production-ში — მხოლოდ დროებით, TOTP-ის ჩართვამდე / ავთენტიფიკატორის დაკარგვისას (Deploy plan)
+    admin_require_mfa: bool | None = None
 
     # გადახდის რეკვიზიტები (გამოწერისთვის) — შეავსე .env-ში PAYMENT_IBAN / PAYMENT_CONTACT-ით
     payment_iban: str = "[შენი ანგარიშის ნომერი — შეავსე PAYMENT_IBAN]"
@@ -157,10 +160,10 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,  # ValidationError-ში input_value არ ჩანს (LLM_PRICES, key-ები)
     )
 
-    @field_validator("webhook_inbox_enabled", mode="before")
+    @field_validator("webhook_inbox_enabled", "admin_require_mfa", mode="before")
     @classmethod
     def _blank_inbox_flag_is_none(cls, v):
-        # ცარიელი env (`WEBHOOK_INBOX_ENABLED=`) = არ არის დაყენებული → გარემოს მიხედვით
+        # ცარიელი env (`WEBHOOK_INBOX_ENABLED=` / `ADMIN_REQUIRE_MFA=`) = არ არის დაყენებული → გარემოს მიხედვით
         if isinstance(v, str) and not v.strip():
             return None
         return v
@@ -274,6 +277,13 @@ class Settings(BaseSettings):
         if self.webhook_inbox_enabled is None:
             return self.is_production
         return self.webhook_inbox_enabled
+
+    @property
+    def admin_mfa_required(self) -> bool:
+        """ადმინს სჭირდება aal2: ცხადი მნიშვნელობა, თორემ production-ში დიახ, dev-ში არა."""
+        if self.admin_require_mfa is None:
+            return self.is_production
+        return self.admin_require_mfa
 
     def llm_monthly_usd_budget(self, tier: str | None) -> float:
         """თვიური ბიუჯეტი USD-ში პაკეტზე (0 = ჭერი გამორთულია). უცნობი პაკეტი → free."""

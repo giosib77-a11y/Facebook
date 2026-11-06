@@ -38,6 +38,8 @@ for _name in (
     "LLM_MONTHLY_USD_STANDARD", "LLM_MONTHLY_USD_BUSINESS", "LLM_PRICES",
     # Stage 22: ძებნა დიდ კატალოგზე / JWT ლოკალური შემოწმება — ტესტებში მხოლოდ კოდის default-ები
     "BOT_DB_SEARCH_MIN_PRODUCTS", "JWT_LOCAL_VERIFY",
+    # Stage 23: ადმინის MFA — ტესტებში მხოლოდ კოდის default (APP_ENV=development → გამორთული)
+    "ADMIN_REQUIRE_MFA",
 ):
     os.environ.pop(_name, None)
 # Stage 21: webhook_inbox worker ტესტებში გამორთულია (APP_ENV ქვემოთ development-ია, მაგრამ ცხადად)

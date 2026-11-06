@@ -60,22 +60,39 @@ class ExtendIn(BaseModel):
 
 
 _warned_no_admins = False
+_warned_no_mfa = False
+
+# frontend ამ ზუსტ ტექსტს ადარებს (`frontend/src/lib/adminMfa.js` → ADMIN_MFA_REQUIRED) და MFA-ს ეკრანს
+# „არა ადმინისგან" სწორედ ამით არჩევს — ტექსტი ორივე მხარეს ერთად იცვლება.
+_MFA_REQUIRED = "ადმინ პანელისთვის საჭიროა ორფაქტორიანი შესვლა (MFA)"
 
 
 def get_current_admin(auth: CurrentAuth = Depends(get_current_auth)) -> CurrentAuth:
-    """ამოწმებს, რომ ავტორიზებული მომხმარებლის user_id ADMIN_USER_IDS-შია.
+    """ამოწმებს, რომ ავტორიზებული მომხმარებლის user_id ADMIN_USER_IDS-შია და (თუ მოთხოვნილია) token არის aal2.
 
     მაღალი პრივილეგია, დაბალი ტრაფიკი: ლოკალურად შემოწმებული token ყოველთვის მოწმდება Auth server-თანაც —
     sign-out / ban / წაშლა ადმინზე მაშინვე მოქმედებს. არა-ადმინი ქსელის გარეშე იჭრება (403).
+
+    რიგი: (1) ADMIN_USER_IDS; (2) MFA (`aal` claim, ADMIN_REQUIRE_MFA); (3) Auth server-ით დადასტურება.
+    MFA ქსელამდეა: შემოწმება ლოკალურია და იაფი, aal1 token Auth server-ს არ აწუხებს. `aal` ქსელურ გზაზეც
+    სანდოა: ის იმავე token-ის წარმატებული `get_user`-ის შემდეგ იკითხება (claims მხოლოდ მაშინ, თუ `sub` ემთხვევა).
     """
-    global _warned_no_admins
+    global _warned_no_admins, _warned_no_mfa
     settings = get_settings()
     admin_ids = settings.admin_user_id_set
     if not admin_ids and settings.is_production and not _warned_no_admins:
         _warned_no_admins = True
         logger.warning("ADMIN_USER_IDS is empty in production — admin panel is disabled")
+    # getattr: test_auth_local_jwt.py-ის SimpleNamespace settings-ს ეს ველი არ აქვს (რეალურ Settings-ს ყოველთვის აქვს);
+    # ველის გარეშე იგივე default, რაც Settings-ში: production -> ჩართული (fail closed), dev -> გამორთული
+    mfa_required = getattr(settings, "admin_mfa_required", settings.is_production)
+    if not mfa_required and settings.is_production and not _warned_no_mfa:
+        _warned_no_mfa = True
+        logger.warning("ADMIN_REQUIRE_MFA is off in production - admin MFA (aal2) is not enforced")
     if (auth.user_id or "").strip().lower() not in admin_ids:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "წვდომა მხოლოდ ადმინისთვის")
+    if mfa_required and (auth.claims or {}).get("aal") != "aal2":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, _MFA_REQUIRED)
     if auth.verified_by == "local":
         confirm_with_auth_server(auth)
     return auth
