@@ -63,3 +63,21 @@ jobs:
         run: npm run build
       - name: dist is up to date
         run: git diff --exit-code -- dist
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: E2E tests
+        run: npm run test:e2e
+
+  database:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        with:
+          version: "2.121.0"
+      - name: Start local database (applies supabase/migrations)
+        run: supabase db start
+      - name: Migration list
+        run: supabase migration list --local
+      - name: pgTAP tests
+        run: supabase test db
