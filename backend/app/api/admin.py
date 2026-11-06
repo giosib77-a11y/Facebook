@@ -24,7 +24,7 @@ from app.core.tiers import (
     limits_for,
     normalize_tier,
 )
-from app.services import budget, subscriptions
+from app.services import admin_audit, budget, subscriptions
 from app.services.bot_limits import enforce_bot_limit
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
@@ -527,6 +527,13 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
             subscriptions.apply_tier(sc, owner_id, payload.subscription_tier, renewal=False)
             _apply_bot_limit(sc, owner_id, payload.subscription_tier)
 
+    details = {"owner_id": owner_id}
+    if payload.bot_enabled is not None:
+        details["bot_enabled"] = payload.bot_enabled
+    if payload.subscription_tier is not None:
+        details["subscription_tier"] = payload.subscription_tier
+    admin_audit.record(sc, admin.user_id, "shop.update", shop_id, details)
+
     res =sc.table("shops").select("*").eq("id", shop_id).limit(1).execute().data
     row = dict(res[0]) if res else {}
     row.pop("facebook_page_token", None)  # ტოკენს/ცოდნას პასუხში არ ვაბრუნებთ
@@ -538,12 +545,13 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
 def delete_shop(shop_id: str, admin: CurrentAuth = Depends(get_current_admin)):
     """მაღაზიის სრული წაშლა (პროდუქტები + შეკვეთები + მაღაზია + Storage-ის ფოტოები)."""
     sc = get_service_client()
-    exists = sc.table("shops").select("id").eq("id", shop_id).limit(1).execute().data
+    exists = sc.table("shops").select("id,owner_id").eq("id", shop_id).limit(1).execute().data
     if not exists:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
     sc.table("orders").delete().eq("shop_id", shop_id).execute()
     sc.table("products").delete().eq("shop_id", shop_id).execute()
     sc.table("shops").delete().eq("id", shop_id).execute()
+    admin_audit.record(sc, admin.user_id, "shop.delete", shop_id, {"owner_id": exists[0].get("owner_id")})
     _remove_shop_images(sc, shop_id)
     return None
 
@@ -627,6 +635,11 @@ def resolve_upgrade_request(
             sc.table("upgrade_requests").update({"status": "rejected", "resolved_at": now_iso})
             .eq("id", req_id).eq("status", "pending").execute()
         )
+    action = "upgrade_request.approve" if payload.approve else "upgrade_request.reject"
+    admin_audit.record(
+        sc, admin.user_id, action, req_id,
+        {"shop_id": r.get("shop_id"), "requested_tier": r.get("requested_tier")},
+    )
     return {"ok": True}
 
 
@@ -657,6 +670,10 @@ def extend_subscription(
     paid_until = base + timedelta(days=payload.days)
     if not subscriptions.write(sc, oid, tier, paid_until):
         raise unavailable
+    admin_audit.record(
+        sc, admin.user_id, "subscription.extend", oid,
+        {"tier": tier, "days": payload.days, "paid_until": paid_until.isoformat()},
+    )
     return {"owner_id": oid, "tier": tier, "paid_until": paid_until.isoformat()}
 
 
