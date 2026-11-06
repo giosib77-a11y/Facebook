@@ -33,7 +33,11 @@ jobs:
       - name: Lint
         run: ruff check app tests
       - name: Tests
-        run: pytest -q
+        run: pytest -q --cov=app.api.admin --cov=app.api.shops --cov-report=term-missing:skip-covered
+      - name: Coverage gate (api/admin.py, api/shops.py >= 85%)
+        run: |
+          coverage report --include=app/api/admin.py --fail-under=85
+          coverage report --include=app/api/shops.py --fail-under=85
 
   frontend:
     runs-on: ubuntu-24.04

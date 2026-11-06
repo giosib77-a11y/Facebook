@@ -17,7 +17,7 @@
 3. [სტეკი](#3-სტეკი)
 4. [პროექტის სტრუქტურა](#4-პროექტის-სტრუქტურა)
 5. [ფუნქციონალი](#5-ფუნქციონალი)
-6. [API — 50 endpoint](#6-api--50-endpoint)
+6. [API — 51 endpoint](#6-api--51-endpoint)
 7. [მონაცემთა ბაზა](#7-მონაცემთა-ბაზა)
 8. [უსაფრთხოება](#8-უსაფრთხოება)
 9. [ლოკალური გაშვება](#9-ლოკალური-გაშვება)
@@ -157,6 +157,8 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │           ├── replies.py       შაბლონური პასუხები (მისალმება/მადლობა/ოპერატორი) + markdown-ის გასუფთავება
 │           ├── memory.py        ისტორიის შეკუმშვა: >16 შეტყობინება → ბოლო 8 + summary
 │           ├── product_search.py  `search_products` დიდ კატალოგზე (≥ `BOT_DB_SEARCH_MIN_PRODUCTS`) — RPC 0040; RPC-ის გარეშე → მეხსიერების ძებნა (Stage 22)
+│           ├── admin_audit.py   ადმინის მოქმედებების audit log (`admin_audit_log`, 0041; append-only, PII-ის გარეშე, best-effort) (Stage 23)
+│           ├── fb_selection.py  Facebook-გვერდის არჩევის ერთჯერადი token (Fernet + HKDF, 10 წთ, ბაზაში არაფერი) (Stage 23)
 │           ├── bot.py           საცნობარო ფოტოები graph-ისთვის (პროდუქტის სურათები)
 │           ├── vision.py        ფოტო → ტექსტური აღწერა (≤500 სიმბოლო, EN+KA; პროდუქტის და კლიენტის ფოტო)
 │           ├── prompt.py        სამფენიანი prompt (L1 საერთო წესები · L2 მაღაზია · L3 summary + საუბარი)
@@ -174,11 +176,12 @@ build-ს ლოკალურად აკეთებ (`npm run build`) დ�
 │   │   ├── admin/               ადმინ-პანელი
 │   │   ├── order/               საჯარო შესაკვეთი ფორმა
 │   │   ├── reset/               პაროლის აღდგენა
-│   │   └── lib/                 api.js · csv.js (საერთო)
+│   │   │                        (Stage 23: panel/FbPagePicker.jsx — გვერდის არჩევა; admin/MfaGate.jsx — ადმინის MFA)
+│   │   └── lib/                 api.js · csv.js · adminMfa.js (საერთო)
 │   ├── public/                  config.js · favicon · sample-products.{csv,xlsx}
 │   └── dist/                    ⚠️ build-ის შედეგი — ჩადის git-ში
 │
-├── supabase/migrations/         40 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
+├── supabase/migrations/         41 SQL მიგრაცია (ცხრილები, RLS, RPC, grants)
 │
 ├── .env.example                 გარემოს ცვლადების შაბლონი
 └── *.md                         დოკუმენტაცია — იხ. §13
@@ -281,7 +284,12 @@ LangGraph გამოიყენება **მხოლოდ wiring-ად**
 `/panel/admin.html` — ხელმისაწვდომია **მხოლოდ** `ADMIN_USER_IDS`-ისთვის.
 
 მაღაზიები · გამყიდვლები · შეკვეთები · MRR · ზრდის გრაფიკი · პაკეტის მოთხოვნების
-დამუშავება · CSV ექსპორტი · ბოტის kill-switch · აღდგენის ინსტრუმენტი.
+დამუშავება · CSV ექსპორტი · ბოტის kill-switch · აღდგენის ინსტრუმენტი (ბმული
+გამყიდველს ელფოსტით მიდის).
+
+Stage 23-იდან შესასვლელად საჭიროა **ორფაქტორიანი კოდი (TOTP)**; პირველად admin.html-ზე
+ჩნდება „ჩართვა" (QR → ავთენტიფიკატორის აპი). ადმინის მოქმედებები იწერება `admin_audit_log`-ში.
+rollout-ის თანმიმდევრობა და საგანგებო ბერკეტი — §7 და §8.
 
 ### 5.6 არხები
 
@@ -295,7 +303,7 @@ webhook `object` ველით არჩევს (`page` / `instagram`).
 
 ---
 
-## 6. API — 50 endpoint
+## 6. API — 51 endpoint
 
 ავტორიზაცია: `Authorization: Bearer <supabase_access_token>`.
 DB-ოპერაციები სრულდება **მომხმარებლის JWT-ით** → RLS უზრუნველყოფს იზოლაციას.
@@ -309,6 +317,12 @@ DB-ოპერაციები სრულდება **მომხმა�
 - **`POST /products/import`** — არსებულ პროდუქტებთან დამთხვევა (SKU / სახელი) ახლა მთელ კატალოგზე (ადრე პირველ 1000-ზე → დუბლიკატები); მაღაზიაში > 50 000 პროდუქტი → **413** `კატალოგი ძალიან დიდია იმპორტისთვის — მიმართეთ მხარდაჭერას.`
 - **`/admin/overview` · `/admin/growth` · `/admin/shops`** — რიცხვები RPC-დან (`0039`); მის გარეშე Python-ის აგრეგაცია გვერდებით (სწორი, ნელი) + ერთი WARNING.
 - **JWT:** 401-ის ტექსტები უცვლელია; ES256/RS256 token ლოკალურად მოწმდება, დანარჩენი — ქსელური `get_user`; `/admin/*` ყოველთვის ქსელითაც (იხ. §8).
+
+**Stage 23 — ცვლილებები:**
+- **`/admin/*` (ყველა) — MFA:** aal2 token-ის (TOTP) გარეშე → **403** `{"detail": "ადმინ პანელისთვის საჭიროა ორფაქტორიანი შესვლა (MFA)"}` (`ADMIN_REQUIRE_MFA`, იხ. §8/§12). `/admin/check`-ზეც (პანელში „ადმინი" ღილაკი aal1 სესიაზე არ ჩანს; ადმინი კოდს admin.html-ზე შეიყვანს).
+- **`POST /admin/recovery`** → `{"ok": true}`. აღდგენის ბმული **გამყიდველის ელფოსტაზე იგზავნება** და ადმინს/response-ში არასდროს ბრუნდება. შეცდომები: 503 — SMTP არ არის მორგებული; 400 — არასწორი მოთხოვნა; 502 — provider-ის შეცდომა.
+- **`GET /facebook/connect/callback`** — ≥ 2 გვერდიან ანგარიშზე პანელს `fb=choose` უბრუნდება (გვერდის არჩევა; ერთ გვერდზე ძველი ქცევა).
+- **`POST /facebook/connect/select`** (ახალი) — არჩეული გვერდის დაკავშირება; selection token (10 წთ; ბაზაში არაფერი ინახება).
 
 ### სისტემა
 | Method | Path | აღწერა | Auth |
@@ -358,12 +372,13 @@ DB-ოპერაციები სრულდება **მომხმა�
 | GET | `/webhook` | Meta-ს ვერიფიკაცია (challenge) |
 | POST | `/webhook` | შემოსული შეტყობინებები (X-Hub-Signature-256). გარე კონტრაქტი უცვლელია (200 / 403 / 400 / 413); Stage 21-დან 200 `webhook_inbox`-ში ჩაწერის **შემდეგ** იგზავნება, პასუხს worker აგზავნის (at-least-once, ტიპურად ≤1 წმ) |
 | GET | `/facebook/connect/start` | OAuth-ის დაწყება |
-| GET | `/facebook/connect/callback` | token-ის შენახვა + webhook subscribe |
+| GET | `/facebook/connect/callback` | token-ის შენახვა + webhook subscribe; ≥ 2 გვერდზე → `fb=choose` (Stage 23) |
+| POST | `/facebook/connect/select` | არჩეული გვერდის დაკავშირება selection token-ით (Stage 23) |
 | POST | `/facebook/disconnect` | გვერდის გათიშვა + Meta-ს webhook subscription-ის მოხსნა (`DELETE /{page_id}/subscribed_apps`, best-effort) |
 | POST | `/facebook/data-deletion` | Meta-ს Data Deletion callback |
 | GET | `/facebook/data-deletion/status` | კოდის შემოწმება (ხელმოწერილი) |
 
-### ადმინი (მხოლოდ `ADMIN_USER_IDS`)
+### ადმინი (მხოლოდ `ADMIN_USER_IDS` + MFA / aal2)
 | Method | Path | აღწერა |
 |---|---|---|
 | GET | `/admin/check` | ადმინია თუ არა |
@@ -374,7 +389,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 | GET · PATCH · DELETE | `/admin/shops/{id}` | დეტალები · პაკეტი/ბოტი · წაშლა |
 | GET | `/admin/upgrade-requests` | მოთხოვნების სია |
 | POST | `/admin/upgrade-requests/{id}/resolve` | დადასტურება/უარი |
-| POST | `/admin/recovery` | აღდგენის ინსტრუმენტი |
+| POST | `/admin/recovery` | აღდგენის ბმული გამყიდველის ელფოსტაზე → `{"ok": true}` (ბმული არ ბრუნდება) |
 
 ### Dev
 | Method | Path | აღწერა |
@@ -385,7 +400,7 @@ DB-ოპერაციები სრულდება **მომხმა�
 
 ## 7. მონაცემთა ბაზა
 
-### ცხრილები (9) — ყველას აქვს RLS
+### ცხრილები (მთავარი 9; + `webhook_inbox` 0037, `admin_audit_log` 0041) — ყველას აქვს RLS
 
 | ცხრილი | რა ინახება |
 |---|---|
@@ -399,11 +414,12 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `data_deletion_requests` | Meta Data Deletion მოთხოვნების სტატუსი: `code`, `status` (`pending` / `completed` / `failed`), `error`; `fb_user_id` მხოლოდ დასრულებამდე. RLS ჩართული, პოლისები არ არის — მხოლოდ `service_role` (0029) |
 
 | `subscriptions` | გამოწერის ვადა მფლობელზე: `owner_id`, `tier`, `paid_until` (0034). `authenticated` მხოლოდ კითხულობს (RLS), წერს backend (`service_role`) და ყოველდღიური pg_cron `expire_subscriptions()` |
+| `admin_audit_log` | ადმინის მოქმედებების ჟურნალი (Stage 23, 0041): `actor_id`, `action`, `target`, `details` (jsonb, მხოლოდ allow-list-ის ველები — email / სახელი / ტექსტი არა), `created_at`. Append-only: `service_role`-ს მხოლოდ select + insert, update/delete არა; `anon`/`authenticated` — არაფერი |
 
 **იზოლაცია:** ყველა პოლისი `shops.owner_id = auth.uid()`-ზე დგას (`USING` + `WITH CHECK`).
 ერთი გამყიდველი მეორისას **ვერ ხედავს და ვერ ცვლის**.
 
-### მიგრაციები (40)
+### მიგრაციები (41)
 
 | # | რა |
 |---|---|
@@ -447,8 +463,9 @@ DB-ოპერაციები სრულდება **მომხმა�
 | `0038_llm_usage_by_model` | 🔒 `llm_usage_by_model(owner, shop, since)` RPC — ხარჯი მოდელის მიხედვით USD ბიუჯეტისთვის (Stage 21, A-048). EXECUTE მხოლოდ `service_role`. გაუშვი backend deploy-**მდე** (სავალდებულოა); მის გარეშე USD ბიუჯეტი გამორთულია + WARNING (kill-switch და უფასოს 30/დღე მუშაობს), ადმინის `today_usd`/`month_usd` = `null` |
 | `0039_admin_stats` | 🔒 3 RPC (`admin_overview_stats()`, `admin_growth(p_months)`, `admin_shop_counts()`, `jsonb`) — ადმინის რიცხვები SQL-ში, 1000-მწკრივიანი ჭერის გარეშე (Stage 22, A-041). SECURITY INVOKER, `search_path = ''`; EXECUTE მხოლოდ `service_role`. იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ადმინი Python-ის აგრეგაციაზეა (გვერდებით, სწორი, ნელი) + ერთი WARNING `admin_… missing (migration 0039 not applied)`; ფუნქციის გამოჩენისთანავე გადაერთვება, restart-ის გარეშე |
 | `0040_products_search_trgm` | 🔒 `pg_trgm` (`extensions` schema) + 2 GIN trigram ინდექსი `products.name` / `description`-ზე + RPC `search_products(p_shop, p_terms, p_query, p_limit)` — ბოტის ძებნა ≥ `BOT_DB_SEARCH_MIN_PRODUCTS` (300) პროდუქტიან მაღაზიაზე ბაზაში (Stage 22, A-041). მოითხოვს `0028`-ს. SECURITY INVOKER; EXECUTE მხოლოდ `service_role`. იდემპოტენტურია. ინდექსის აგებისას `products`-ზე ჩაწერა მოკლედ იბლოკება — გაუშვი მშვიდ დროს. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ძებნა მეხსიერებაშია + ერთი WARNING, RPC-ს backend 10 წთ-ში ერთხელ ხელახლა ცდის — restart არ სჭირდება |
+| `0041_admin_audit_log` | 🔒 `admin_audit_log` — ადმინის მოქმედებების append-only ჟურნალი (Stage 23); RLS ჩართული, `service_role`-ს მხოლოდ select + insert (update/delete არა), `anon`/`authenticated` — არაფერი. იდემპოტენტურია. გაუშვი backend deploy-**მდე** (რეკომენდებული); მის გარეშე ადმინი მუშაობს + ერთი WARNING, ჩაწერა მიგრაციის გაშვებისთანავე იწყება, restart-ის გარეშე |
 
-**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). Stage 21-ის run order: `0037` (რეკომენდებული) → `0038` (**სავალდებულო**, deploy-მდე) → Render-ის env-ები (§12; ტოკენის ცვლადები წაშალე) → backend + frontend deploy (თუ `0038` deploy-ის შემდეგ გაეშვა — Render restart) → შემოწმება: ლოგში `webhook worker started`, პანელი/ადმინი/`order.html`/`delete-data.html` Console-ში CSP-ის შეცდომის გარეშე (პრობლემაზე `CSP_REPORT_ONLY=true`). Stage 22-ის run order: `0039` → `0040` (SQL Editor, თითო ცალკე; ორივე deploy-მდე **რეკომენდებული**, არა სავალდებულო — მათ გარეშე fallback-ებია და ფუნქციის გამოჩენისას restart-ის გარეშე გადაერთვება) → Render-ზე `JWT_LOCAL_VERIFY` / `BOT_DB_SEARCH_MIN_PRODUCTS` (§12; ნაგულისხმევი საკმარისია) → backend deploy. JWT გასაღების ES256-ზე გადართვა (Supabase) Stage 22-ის კოდისგან დამოუკიდებელია და შეიძლება ადრეც — ზუსტი ნაბიჯები `PROGRESS.md` → `### Stage 22 — Deploy plan`; rollback: `JWT_LOCAL_VERIFY=false` + restart. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
+**გაშვება:** Supabase → SQL Editor → ჩასვი ფაილის შიგთავსი → RUN. თანმიმდევრობით (მიგრაციებს **მფლობელი უშვებს ხელით**; აგენტი remote-ზე არაფერს უშვებს). Stage 16-ის run order: `0026` (SQL Editor) → backend deploy. Stage 17-ის run order: `0027` (SQL Editor, `0026`-ის შემდეგ) → backend deploy → არსებული ცოდნიანი მაღაზიების PDF-ის ხელახალი ატვირთვა (FAQ-სთვის). Stage 18-ის run order: `0028` (SQL Editor, `0027`-ის შემდეგ) → backend deploy → backfill (`--dry-run` ჯერ, §9). Stage 19-ის run order: `0032` (SQL Editor) → backend deploy. Stage 20-ის run order (`0029`–`0032` ლაივ ბაზაში უკვე გაშვებულია): `0033` → `0034` → `0035` → `0036` (SQL Editor, თითო ცალკე, თანმიმდევრობით) → Render-ის env-ები (§12) → backend + frontend deploy (თუ `0035` გაეშვა მას შემდეგ, რაც ახალი backend უკვე მუშაობს — Render service-ის restart: ბიუჯეტის „გამორთულია" ფლაგი პროცესზეა) → `0034` ხელახლა (იდემპოტენტურია) → Meta App Dashboard-ში `message_echoes` (§10). Stage 21-ის run order: `0037` (რეკომენდებული) → `0038` (**სავალდებულო**, deploy-მდე) → Render-ის env-ები (§12; ტოკენის ცვლადები წაშალე) → backend + frontend deploy (თუ `0038` deploy-ის შემდეგ გაეშვა — Render restart) → შემოწმება: ლოგში `webhook worker started`, პანელი/ადმინი/`order.html`/`delete-data.html` Console-ში CSP-ის შეცდომის გარეშე (პრობლემაზე `CSP_REPORT_ONLY=true`). Stage 22-ის run order: `0039` → `0040` (SQL Editor, თითო ცალკე; ორივე deploy-მდე **რეკომენდებული**, არა სავალდებულო — მათ გარეშე fallback-ებია და ფუნქციის გამოჩენისას restart-ის გარეშე გადაერთვება) → Render-ზე `JWT_LOCAL_VERIFY` / `BOT_DB_SEARCH_MIN_PRODUCTS` (§12; ნაგულისხმევი საკმარისია) → backend deploy. JWT გასაღების ES256-ზე გადართვა (Supabase) Stage 22-ის კოდისგან დამოუკიდებელია და შეიძლება ადრეც — ზუსტი ნაბიჯები `PROGRESS.md` → `### Stage 22 — Deploy plan`; rollback: `JWT_LOCAL_VERIFY=false` + restart. Stage 23-ის run order (წინაპირობა — Stage 22-ის deploy): Supabase Auth → MFA → TOTP ჩართულია → `0041` (SQL Editor, რეკომენდებული) → SMTP (§12; recovery-ს სჭირდება) → Render-ზე **დროებით** `ADMIN_REQUIRE_MFA=false` → backend + frontend deploy → admin.html-ზე TOTP-ის ჩართვა (**გასაღები შეინახე პაროლების მენეჯერში**) → `ADMIN_REQUIRE_MFA` წაშალე (production-ში default = ჩართული; Render-ი თავად რესტარტავს) → შემოწმება: aal1 token-ით `/admin/overview` → 403, კოდის შემდეგ მუშაობს; სატესტო `PATCH /admin/shops/{id}` → ერთი ჩანაწერი `admin_audit_log`-ში. ზუსტი ნაბიჯები — `PROGRESS.md` → `### Stage 23 — Deploy plan`. შემდეგი თავისუფალი ნომერი — `0042`. ფაილის ბოლოს არის შემოწმების query და ROLLBACK.
 
 **ერთჯერადი სკრიპტები** (`supabase/one-off/`, არა მიგრაციები — ხელით, ერთხელ, header-ის ინსტრუქციით):
 `release_legacy_new_order_stock.sql` — deploy-მდე შექმნილი `new` შეკვეთების მარაგის დაბრუნება.
@@ -474,6 +491,10 @@ DB-ოპერაციები სრულდება **მომხმა�
 | **webhook-ის რიგი** | Stage 21: `message.mid`-იანი მოვლენა ჯერ `webhook_inbox`-ში (0037) ინახება და მხოლოდ მერე იგზავნება 200; worker იმავე პროცესში (FastAPI lifespan) იღებს `SKIP LOCKED`-ით. **at-least-once**: restart / deploy / რამდენიმე instance მოვლენას ვერ კარგავს; განმეორებული `(page_id, mid)` იგნორდება; ჩაწერის შეცდომაზე — ძველი in-process დამუშავება. `event` (შეტყობინება, PSID) დამუშავებისთანავე `null`, მწკრივები 24 სთ-ში იშლება (pg_cron `purge-webhook-inbox`); ლოგში payload/PSID/ტექსტი არასდროს |
 | **CSP** | Stage 21: ყველა პასუხზე `Content-Security-Policy` (`script-src 'self'` — inline/eval არა), + `Cross-Origin-Resource-Policy: same-origin`, `Cache-Control: no-store` (სადაც route-ს საკუთარი არ აქვს). OAuth callback-ის HTML — ერთჯერადი nonce. COOP არ არის (FB OAuth popup). საგანგებოდ: `CSP_REPORT_ONLY=true` + restart |
 | **გასაღებების გამოყოფა (HKDF)** | Stage 21: OAuth `state` და Data Deletion კოდი HKDF-SHA256-ით გამოყვანილი გასაღებებით (IKM = `FB_APP_SECRET`). Meta-ს კონტრაქტის HMAC-ები (`appsecret_proof`, `X-Hub-Signature-256`, `signed_request`) უცვლელად app secret-ს იყენებს. Stage 21-მდე გაცემული deletion კოდები ვერიფიცირდება 2027-12-10-მდე; deploy-მდე დაწყებული OAuth connect (≤10 წთ) → `invalid_state`, ხელახლა სცადე |
+| **ადმინის MFA (Stage 23)** | `/admin/*` მოითხოვს aal2 token-ს (TOTP, supabase-js; ბექაპ კოდები არ არის — გასაღები (secret) შეინახე პაროლების მენეჯერში). `ADMIN_REQUIRE_MFA`: ცარიელი = production-ში ჩართული, სხვაგან გამორთული; `false` — მხოლოდ დროებით, TOTP-ის ჩართვამდე (**lock-out-safe rollout**: ჯერ `false` + deploy → TOTP-ის ჩართვა admin.html-ზე → ცვლადის წაშლა/`true`). საგანგებოდ (ავთენტიფიკატორი დაიკარგა): `ADMIN_REQUIRE_MFA=false` + restart → Supabase Dashboard-ში factor-ის წაშლა → ხელახლა ჩართვა. production-ში გამორთულზე ლოგში ერთი WARNING |
+| **ადმინის audit log (Stage 23)** | `admin_audit_log` (0041): ადმინის ცვლილებები (`shop.update`, `shop.delete`, `upgrade_request.approve/reject`, `subscription.extend`, `seller.recovery`) იწერება append-only (`service_role`-ს update/delete არა). `details` — მხოლოდ allow-list-ის ველები, PII (email, სახელი, ტექსტი) არა. **best-effort**: ჩაწერის შეცდომა ადმინის მოქმედებას არ აჩერებს (მიღებული რისკი); მიგრაციის გარეშე ადმინი მუშაობს + ერთი WARNING, ჩაწერა restart-ის გარეშე იწყება |
+| **აღდგენის ბმული** | `POST /admin/recovery`: ბმული მხოლოდ გამყიდველის საფოსტო ყუთში მიდის; ადმინი მას ვერ ხედავს, response-ში და ლოგში არ ბრუნდება |
+| **FB გვერდის არჩევა (Stage 23)** | selection token = Fernet + HKDF (`chatassist:fb-page-selection:v1`), 10 წთ; შიგნით დაშიფრულია FB user token; ბაზაში არაფერი ინახება. popup-ის დაბლოკვისას redirect fallback-ზე token request URL-ში ჩნდება — მიღებული რისკი |
 | **File bombs** | Excel/CSV — 5 MB / 5 000 მწკრივი; PDF — 300 გვერდი; zip-ratio ჭერი |
 | **CSV injection** | `=`, `+`, `-`, `@` ექსპორტში ნეიტრალდება |
 | **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS (production); CSP — იხ. ზემოთ (CSP-ის ხაზი) |
@@ -701,6 +722,7 @@ FB_REDIRECT_URI=https://chatassist.ge/facebook/connect/callback
 | `PUBLIC_BASE_URL` | | `FB_REDIRECT_URI`-დან | შესაკვეთი ლინკების ბაზა |
 | `FRONTEND_URL` | | `localhost:5500` | |
 | `ADMIN_USER_IDS` | | — | ვინ ხედავს `/admin`-ს (Supabase user UUID-ები, მძიმით; ცარიელი = ადმინი არავინაა) |
+| `ADMIN_REQUIRE_MFA` | | ცარიელი | (Stage 23) `/admin/*`-ზე ორფაქტორიანი შესვლა (aal2). ცარიელი = production-ში ჩართული, dev-ში გამორთული; `true`/`false` ცხადად. `false` — მხოლოდ TOTP-ის ჩართვამდე (ან ავთენტიფიკატორის დაკარგვისას), მერე წაშალე; ცვლილება → restart (§8) |
 | `PAYMENT_IBAN` · `PAYMENT_CONTACT` | | placeholder | გადახდის რეკვიზიტები |
 | `SMTP_HOST` · `SMTP_USER` · `SMTP_PASSWORD` | | — | 🔒 email შეტყობინებები გამყიდველს (ახალი შეკვეთა, handoff). ნებისმიერი SMTP provider, მაგ. Brevo (`smtp-relay.brevo.com:587`) ან Resend SMTP (`smtp.resend.com:465`, user `resend`). ცარიელი (ან `NOTIFY_EMAIL_FROM` ცარიელი) = email გამორთულია |
 | `SMTP_PORT` | | `587` | `465` = SSL, სხვა (587) = STARTTLS |
@@ -761,7 +783,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | # | რა | რატომ |
 |---|---|---|
-| 1 | **Frontend ტესტების დაფარვა ნაწილობრივია** | Vitest (72) და Playwright e2e (7, მხოლოდ ლოკალურად) ძირითად ნაკადებს ფარავს; დანარჩენი React-ის კოდი ხელით მოწმდება |
+| 1 | **Frontend ტესტების დაფარვა ნაწილობრივია** | Vitest (116) და Playwright e2e (27, მხოლოდ ლოკალურად) ძირითად ნაკადებს ფარავს; დანარჩენი React-ის კოდი ხელით მოწმდება |
 | 2 | **React-ის კოდი ხაზ-ხაზ არ წაკითხულა** | რევიუზე შემოწმდა სტრუქტურა, `useEffect`-ები და ძველთან დიფი; `AdminPage.jsx` (539 ხაზი) და `ProductsTab.jsx` (365) ცალკე გავლას იმსახურებს |
 | 3 | **CSP header არ არის** | თეთრი სიის პრინციპი — ერთი გამორჩენა ცარიელ გვერდს იძლევა. რედიზაინისას ისედაც გადაიწერება |
 | 4 | **Rate limit მეხსიერებაშია** | deploy-ზე ნულდება; მრავალ-instance-ზე Redis/Cloudflare დასჭირდება |
@@ -770,6 +792,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | 7 | **ვიზუალი და ლოგო არ ემთხვევა** | საიტზე ძველი ჩანთის SVG, Meta-ს აპ-იკონა კი CA-მონოგრამი |
 | 8 | **გადახდა ხელითაა** | ავტომატური billing ჯერ არ არის — მოთხოვნა → ადმინის დადასტურება |
 | 9 | **JWT revocation ≤ 1 სთ seller endpoint-ებზე** | Stage 22-იდან ES256/RS256 token ლოკალურად მოწმდება, ამიტომ გაუქმებული/წაშლილი მომხმარებლის token მუშაობს `exp`-მდე (≤ 1 სთ). ადმინზე არა (ყოველთვის `get_user`-ითაც). მიღებული რისკი A-046; საგანგებოდ — `JWT_LOCAL_VERIFY=false` (§8) |
+| 10 | **FB გვერდის არჩევა: მხოლოდ პირველი 25 გვერდი** | > 25 გვერდიან ანგარიშზე არჩევანში პირველი 25 ჩანს (Stage 23) |
+| 11 | **TOTP-ს ბექაპ კოდები არ აქვს** | Supabase TOTP-ს recovery კოდები არ აქვს; გასაღები შეინახე პაროლების მენეჯერში. დაკარგვისას — `ADMIN_REQUIRE_MFA=false` + restart + factor-ის წაშლა Dashboard-ში (§8) |
 
 თითოეულს გამშვები პირობა აქვს — იხ. [ROADMAP.md](ROADMAP.md) → 🏗 ინფრასტრუქტურა.
 
