@@ -13,6 +13,8 @@ from app.config import get_settings
 # სადაც Meta-ს ფორმულა მას მოითხოვს (appsecret_proof, X-Hub-Signature-256, signed_request).
 KEY_OAUTH_STATE = "oauth-state:v1"
 KEY_DELETION_CODE = "deletion-code:v1"
+# A-045: selection token-ის (გვერდის არჩევა) Fernet გასაღები — page token-ის გასაღებისგან დამოუკიდებელი.
+KEY_FB_PAGE_SELECTION = "fb-page-selection:v1"
 
 
 def derive_key(label: str, secret: str | None = None) -> bytes:
