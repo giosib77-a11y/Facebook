@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import get_settings
 from app.core.db import fetch_all
@@ -24,7 +24,7 @@ from app.core.tiers import (
     limits_for,
     normalize_tier,
 )
-from app.services import admin_audit, budget, subscriptions
+from app.services import admin_audit, budget, notify, subscriptions
 from app.services.bot_limits import enforce_bot_limit
 
 PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/products.py-ში
@@ -48,7 +48,9 @@ class AdminShopUpdate(BaseModel):
 
 
 class AdminRecovery(BaseModel):
-    email: str
+    # str_strip_whitespace: strip სიგრძის შემოწმებამდე, ამიტომ "   " → 422
+    model_config = ConfigDict(str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=320)
 
 
 class ResolveRequest(BaseModel):
@@ -679,12 +681,47 @@ def extend_subscription(
 
 @router.post("/recovery")
 def seller_recovery(payload: AdminRecovery, admin: CurrentAuth = Depends(get_current_admin)):
-    """გამყიდვლისთვის პაროლის აღდგენის ბმულის გენერაცია (მხარდაჭერისთვის)."""
+    """გამყიდვლისთვის პაროლის აღდგენის ბმულის გაგზავნა (მხარდაჭერისთვის).
+
+    ბმული პასუხში **არ** ბრუნდება — ის მხოლოდ გამყიდვლის ფოსტაზე იგზავნება. რატომ: მოპარული ადმინის
+    ანგარიში არ უნდა იძლეოდეს ნებისმიერი გამყიდველის ანგარიშის დაკავების საშუალებას; ბმული მხოლოდ
+    ანგარიშის მფლობელის ფოსტაში უნდა მოხვდეს. SMTP-ის გარეშე ბმულს საერთოდ არ ვქმნით (503).
+    ბმული / email ლოგში არასდროს იწერება; exception-ზე — მხოლოდ კლასის სახელი.
+    """
+    settings = get_settings()
+    if not settings.email_notifications_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ელფოსტა არ არის კონფიგურირებული (SMTP) — აღდგენის ბმული ვერ გაიგზავნება",
+        )
+    email = payload.email
+    params: dict = {"type": "recovery", "email": email}
+    base = (settings.public_base_url or "").strip()
+    if base:
+        params["options"] = {"redirect_to": f"{base.rstrip('/')}/panel/reset.html"}
     sc = get_service_client()
     try:
-        link = sc.auth.admin.generate_link({"type": "recovery", "email": payload.email})
+        link = sc.auth.admin.generate_link(params)
         props = getattr(link, "properties", None)
         action_link = getattr(props, "action_link", None) if props else None
-        return {"ok": True, "action_link": action_link}
-    except Exception as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"ბმულის გენერაცია ვერ მოხერხდა: {e}")
+        if not action_link:
+            raise ValueError("empty action_link")
+        user = getattr(link, "user", None)
+        target = getattr(user, "id", None) if user else None
+    except Exception as exc:
+        logger.warning("recovery link generation failed (%s)", type(exc).__name__)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ბმულის გენერაცია ვერ მოხერხდა")
+    body = (
+        "გამარჯობა,\n\n"
+        "მხარდაჭერის მოთხოვნით შეიქმნა ChatAssist-ის პაროლის აღდგენის ბმული:\n\n"
+        f"{action_link}\n\n"
+        "ბმული ერთჯერადია და მალე იწურება; თუ ეს თქვენ არ მოგითხოვიათ — უგულებელყავით წერილი.\n"
+    )
+    sent = notify.send_email(email, "ChatAssist — პაროლის აღდგენა", body)
+    admin_audit.record(sc, admin.user_id, "seller.recovery", target, {"email_sent": sent})
+    if not sent:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "ბმული შეიქმნა, მაგრამ ელფოსტა ვერ გაიგზავნა — სცადე ხელახლა",
+        )
+    return {"ok": True}
