@@ -1206,6 +1206,7 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
   - (nit, ორივე) worker-ის retry-ზე (`webhook.py:527,546,622`) `_rate_limited` და `track_bot_customer` (`day_count` +1) თავიდან სრულდება → დროებითი DB-ს შეცდომისას `daily_cap`-ის მცირე გადაჭარბება; `track_bot_customer` → `_load_conversation`-ის შემდეგ.
   - (nit, code-reviewer) legacy გზაზე (`WEBHOOK_INBOX_ENABLED=false`, dev) BackgroundTask-ის `APIError` ახალ `api_error_handler`-ს response-ის დაწყების შემდეგ ხვდება → Starlette `RuntimeError("Caught handled exception, but response already started.")` traceback ლოგში; `_process_events_limited`-ში `try/except` → WARNING კლასით.
   - (nit, code-reviewer) `services/inbox.py` — `_lock` / `threading` მხოლოდ `_reset_for_tests`-ს რჩება (მკვდარი); `services/budget.py:92` `key =(` ფორმატირება.
+  - (nit, S24-14 re-check) `test_patch_tier_subscription_read_failure_is_an_error_and_nothing_changes` მხოლოდ კომბინირებულ payload-ს (`bot_enabled` + `subscription_tier`) ამოწმებს — მარტო `{"subscription_tier": …}`-ის შემთხვევა parametrize-ში დასამატებელია (კოდი ორივეს ფარავს).
   - (nit, code-reviewer) README:~525 „ადმინში 20 000…200 000" — `_ADMIN_ORDERS_MAX` წაიშალა (§6 სწორია); README:~531 „Meta-ს განმეორებული `mid` ბოტს ორჯერ არ ამუშავებს" → „(inbox-ის გზაზე)".
 - (S24-11, nit) `0038`-ის header-ის ფრაზა „0035-ის `llm_tokens_used` უცვლელია" 0042-ის შემდეგ მოძველებულია — ლაივში გაშვებული migration-ის ფაილი არ იცვლება (ისტორიული კომენტარი); ინფორმაციისთვის.
 - (S24-9, nit) `api/webhook.py`-ის `_process_events`-ის WARNING-ები (`საუბრის შენახვა ვერ მოხერხდა`, over-limit და მთავარი branch) `exc_info=True`-ით წერს traceback-ს exception-ის ტექსტით — „მხოლოდ კლასის სახელი"-ს წესთან შესაბამისობისთვის `exc_info` → `type(exc).__name__`.
@@ -1589,6 +1590,13 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 - Failed attempts: —
 
 ## Last Session
+- Date: 2026-11-07
+- Done: **Stage 24 დასრულდა (offline)** — A-042 (N-08): S24-1…S24-14 (S24-12 / S24-13 — მფლობელის ცოდნის ზღვრის გადაწყვეტილება + მისი მიგნება; S24-14 — finish-check-ის should-fix). G1 ✅ (მფლობელი, 42 / 42, PG 17). commit-ები: `8664a29`, `f821b69`, `eb019eb`, `b03eff8`, `a7fa97d`, `573aa75`, `420697f`, `8b03377`, `b29607c`, `c3473e0`, `01cf523`, `cfb01d5`, `69c74b4`, `f736e59`. finish-check: code-reviewer 0/1/9, security-auditor 0/1/6 (ერთი და იგივე should-fix → S24-14, re-check: გასწორდა) → Fix rounds 1/2.
+- Verification (tester, 2026-11-07): pip check / ruff / compileall ✅; pytest **3005 passed** (2920 → +85), coverage admin.py / shops.py 100% (gate exit 0); frontend lint 0 error / 5 warning, vitest **116**, build → `dist` უცვლელი, e2e **27**; ლოკალური pgTAP (CLI 2.121.0, PG 17.11) 5 ფაილი / **123 PASS**; :4173 / Docker — არაფერი დარჩა. browser-tester — არ გაეშვა (frontend Stage 24-ში არ შეცვლილა).
+- Unverified: CI-ის `database` job / e2e GitHub runner-ზე; 0042 / 0043 ლაივზე; Meta-ს ქცევა webhook-ის 503-ზე (retry-ის ფანჯარა — Decision Log-ის ვარაუდი); რეალურ Postgres-ზე backend-ის 503-ის გზა (ტესტები — fake DB).
+- Next: მფლობელი — `### Stage 24 — Deploy plan` (push → Actions; 0043 ნებისმიერ დროს; deploy; 0042 deploy-ის შემდეგ). ეტაპი 3 (გარე აუდიტი) ამით სრულდება; შემდეგი stage — მხოლოდ მფლობელის გადაწყვეტილებით.
+
+### Stage 24-ის სესია (G1-მდე ნაწილი)
 - Date: 2026-11-07
 - Done: **Stage 24 — G1-მდე ნაწილი (S24-1…S24-6)**, თითო commit: `8664a29` (config.toml, 0001…0041 სუფთა ბაზაზე), `f821b69` (01 RLS / 03 functions), `eb019eb` (02 privileges), `b03eff8` (04 tenant isolation), `a7fa97d` (CI `database` job + e2e; setup-cli `v3.0.1` `45a513f8…`), `573aa75` (docs). ლოკალურად (CLI 2.121.0, Postgres 17.11, scratch ასლი): `test db` 4 ფაილი / **120 PASS**, თითო ფაილის mutation → მოსალოდნელი წითლები → მწვანე; e2e **27 passed**; კონტეინერი არ დარჩა. isolation-ის დარღვევა / grant-ის გადახრა არ აღმოჩნდა. S24-2 ∥ S24-3 თანმიმდევრულად გაეშვა (ერთი ლოკალური Postgres პორტი 54322).
 - Verification: backend / frontend-ის კოდი Stage 24-ში ჯერ არ შეცვლილა (`git diff --stat b49c81d -- backend frontend` ცარიელი) → pytest / vitest არ გაშვებულა ამ სესიაში; finish-check — S24-11-ის შემდეგ (ერთხელ, მთელ stage-ზე).
