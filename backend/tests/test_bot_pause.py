@@ -3,7 +3,7 @@
 * handoff turn  -> upsert carries `bot_paused_until` (= now + BOT_PAUSE_HOURS)
 * seller's manual reply (`message.is_echo`, app_id != FB_APP_ID) -> stored as role "operator" + pause
 * paused conversation -> customer message stored, no LLM / send / photo download / track_bot_customer
-* without migration 0033 -> pause disabled, text still stored, one WARNING per process
+* A-042: a failed history write is ONE attempt + WARNING (no retry without `bot_paused_until`)
 * S20-20: our own echo is recognised by the Send API `message_id`; an Instagram echo without app_id never pauses
 
 `_process_events` is called directly with a fake service client; nothing leaves the process.
@@ -27,19 +27,16 @@ ECHO_TEXT = "10% ფასდაკლება"
 OUR_APP_ID = "111"
 SELLER_APP_ID = "999"
 
-PAUSE_WARNING = "bot_conversations.bot_paused_until missing"
+SAVE_WARNING = "საუბრის შენახვა ვერ მოხერხდა"
 APP_ID_WARNING = "FB_APP_ID not set"
 
 
 @pytest.fixture(autouse=True)
 def _reset_process_state(monkeypatch):
-    """Module-level one-shot flags and the duplicate-mid memory are process-global."""
-    monkeypatch.setattr(webhook, "_PAUSE_COLUMN_WARNED", False, raising=False)
+    """Module-level one-shot flag and our-mid memory are process-global."""
     monkeypatch.setattr(webhook, "_ECHO_APP_ID_WARNED", False, raising=False)
     monkeypatch.setattr(webhook, "_OUR_MIDS", OrderedDict(), raising=False)  # S20-20: fresh per test
-    webhook._SEEN_MIDS.clear()
     yield
-    webhook._SEEN_MIDS.clear()
 
 
 def _make_env(monkeypatch, db):
@@ -304,13 +301,14 @@ def test_echo_without_recipient_is_ignored(env):
     assert db.calls_for("bot_conversations", "upsert") == []
 
 
-def test_duplicate_echo_mid_is_handled_once(env):
+def test_duplicate_echo_on_legacy_path_is_not_deduplicated_in_memory(env):
     db, sent, calls = env
 
     _echo({"mid": "m-dup", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
     _echo({"mid": "m-dup", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
 
-    assert len(db.calls_for("bot_conversations", "upsert")) == 1
+    # Stage 24 (A-042): dedup is only the DB's webhook_inbox unique key; the legacy path has none
+    assert len(db.calls_for("bot_conversations", "upsert")) == 2
 
 
 def test_echo_with_memory_disabled_still_pauses_without_messages(env, monkeypatch):
@@ -558,22 +556,13 @@ def test_send_text_message_still_raises_graph_errors(monkeypatch):
         facebook.send_text_message("page-token", PSID, "hello")
 
 
-# ---------------------------------------------------------------- without migration 0033
+# ---------------------------------------------------------------- failing history write (A-042)
 
 class _NoPauseColumnQuery(FakeQuery):
-    """Postgres without migration 0033: any statement naming `bot_paused_until` fails."""
-
-    def select(self, *columns, **kwargs):
-        self._columns = columns
-        return super().select(*columns, **kwargs)
+    """An upsert naming `bot_paused_until` fails (a column error); there is NO retry without that column."""
 
     def execute(self):
-        names_column = (
-            self.op == "upsert" and "bot_paused_until" in (self.payload or {})
-        ) or (
-            self.op == "select" and any("bot_paused_until" in str(c) for c in getattr(self, "_columns", ()))
-        )
-        if names_column:
+        if self.op == "upsert" and "bot_paused_until" in (self.payload or {}):
             self._db.rejected.append(self)
             raise RuntimeError("column bot_paused_until does not exist")
         return super().execute()
@@ -588,50 +577,42 @@ class _NoPauseColumnDb(FakeSupabase):
         return _NoPauseColumnQuery(self, name)
 
 
-def test_handoff_without_migration_0033_falls_back_and_warns_once(monkeypatch, caplog):
+def test_handoff_save_error_is_one_attempt_and_logged(monkeypatch, caplog):
     db, sent, calls = _make_env(monkeypatch, _NoPauseColumnDb())
     calls["result"] = TurnResult("ოპერატორი დაგიკავშირდებათ", handoff=True)
 
     with caplog.at_level(logging.WARNING, logger="app"):
         _customer()
-        webhook._SEEN_MIDS.clear()
-        webhook._RATE_HITS.clear()
-        _customer()
 
-    upserts = db.calls_for("bot_conversations", "upsert")
-    assert len(upserts) == 2
-    for save in upserts:
-        assert save.payload["needs_attention"] is True
-        assert "bot_paused_until" not in save.payload
-        assert save.payload["messages"][-1] == {"role": "bot", "content": "ოპერატორი დაგიკავშირდებათ"}
-    assert any("bot_paused_until" in (r.payload or {}) for r in db.rejected if r.op == "upsert")
-    assert len(_warnings(caplog, PAUSE_WARNING)) == 1
-    assert sent == ["ოპერატორი დაგიკავშირდებათ"] * 2
+    attempts = [q for q in db.rejected if q.op == "upsert"]
+    assert len(attempts) == 1  # was 3 attempts (full -> without pause -> without attention)
+    assert "bot_paused_until" in attempts[0].payload
+    assert db.calls_for("bot_conversations", "upsert") == []  # nothing stored on a retry
+    assert len(_warnings(caplog, SAVE_WARNING)) == 1
+    assert sent == ["ოპერატორი დაგიკავშირდებათ"]  # the reply was already sent; it is not repeated
 
 
-def test_echo_without_migration_0033_still_stores_the_text(monkeypatch, caplog):
+def test_echo_history_error_is_logged_not_retried_without_pause(monkeypatch, caplog):
     db, sent, calls = _make_env(monkeypatch, _NoPauseColumnDb())
 
     with caplog.at_level(logging.WARNING, logger="app"):
         _echo({"mid": "m-nm1", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
         _echo({"mid": "m-nm2", "app_id": SELLER_APP_ID, "text": ECHO_TEXT})
 
-    upserts = db.calls_for("bot_conversations", "upsert")
-    assert len(upserts) == 2
-    for save in upserts:
-        assert save.payload["messages"][-1] == {"role": "operator", "content": ECHO_TEXT}
-        assert "bot_paused_until" not in save.payload
-    assert len(_warnings(caplog, PAUSE_WARNING)) == 1
+    assert len([q for q in db.rejected if q.op == "upsert"]) == 2  # one attempt per echo
+    assert db.calls_for("bot_conversations", "upsert") == []  # the text is not stored without the pause either
+    assert len(_warnings(caplog, SAVE_WARNING)) == 2
 
 
-def test_select_failure_means_not_paused(env):
+def test_pause_select_error_propagates(env):
     db, sent, calls = env
     db.errors[("bot_conversations", "select")] = RuntimeError("column does not exist")
 
-    _customer()
+    with pytest.raises(RuntimeError):
+        _customer()
 
-    assert calls["bot"] == 1
-    assert sent == ["llm reply"]
+    assert calls["bot"] == 0
+    assert sent == []
 
 
 # ---------------------------------------------------------------- logs

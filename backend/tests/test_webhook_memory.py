@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from postgrest.exceptions import APIError
 
 import app.api.webhook as webhook
 import app.services.llm as llm
@@ -50,8 +51,8 @@ def _strip_cc(obj):
 
 
 class NoSummaryColumnQuery(FakeQuery):
-    """bot_conversations without the `summary` column (migration 0026 not applied): a select that asks
-    for it and an upsert that carries it both fail, like PostgREST would."""
+    """bot_conversations without the `summary` column: a select that asks for it and an upsert that
+    carries it both fail with PostgREST's undefined-column error (42703)."""
 
     def select(self, *columns, **kwargs):
         self.columns = columns[0] if columns else ""
@@ -63,7 +64,10 @@ class NoSummaryColumnQuery(FakeQuery):
                 self.op == "upsert" and "summary" in self.payload)
             if asks:
                 self._db.calls.append(self)
-                raise RuntimeError("column bot_conversations.summary does not exist")
+                raise APIError({
+                    "code": "42703", "message": "column bot_conversations.summary does not exist",
+                    "details": None, "hint": None,
+                })
         return super().execute()
 
 
@@ -113,7 +117,6 @@ class Memory:
         for module in (webhook, llm):
             monkeypatch.setattr(module, "get_settings", lambda: s)
         self.settings = s
-        monkeypatch.setattr(webhook, "_SUMMARY_COLUMN_WARNED", False)  # the one-time warning is per process
 
         db.responses[("shops", "select")] = [SHOP]
         db.responses[("products", "select")] = PRODUCTS
@@ -282,16 +285,13 @@ def test_template_turn_on_a_long_history_makes_no_summary_call(m):
     assert m.usage_rows() == []
 
 
-# --- (e) migration 0026 not applied ------------------------------------------------------------------
-def test_missing_summary_column_falls_back_to_the_old_behaviour(m, service_db, caplog):
+# --- (e) the memory load fails (A-042: the error propagates, no old-behaviour fallback) ---------------
+def test_missing_summary_column_is_an_error(m, service_db):
     service_db.table = lambda name: NoSummaryColumnQuery(service_db, name)
     m.seed(pairs(18))
-    m.script = ["A1", "A2"]
+    m.script = ["A1"]
 
-    with caplog.at_level(logging.WARNING, logger="app"):
-        m.run()
-        first = m.saved()
-        service_db.calls.clear()
+    with pytest.raises(APIError):
         m.run()
 
     # S20-3: the pause lookup (`bot_paused_until`) is a separate select — this test is about the memory load
@@ -299,25 +299,19 @@ def test_missing_summary_column_falls_back_to_the_old_behaviour(m, service_db, c
         c.columns for c in service_db.calls_for("bot_conversations", "select")
         if c.columns != "bot_paused_until"
     ]
-    assert selects == ["messages,updated_at,summary", "messages,updated_at"]  # second event only
-    assert m.kinds() == ["agent", "agent"]  # no summary call, no cut at 18
-    for payload in (first, m.saved()):
-        assert "summary" not in payload
-        assert len(payload["messages"]) == 20
-    assert len(m.requests[0]["messages"]) == 18 + 1  # the stored history was still used
-    missing = [r for r in caplog.records if "migration 0026" in r.getMessage()]
-    assert len(missing) == 1 and missing[0].levelno == logging.WARNING
-    assert PSID not in missing[0].getMessage()
+    assert selects == ["messages,updated_at,summary"]  # one select; no retry without `summary`
+    assert m.kinds() == [] and m.sent() == []  # no LLM call, no reply
+    assert m.upserts() == []
 
 
-def test_both_selects_failing_means_an_empty_history_as_before(m, service_db):
+def test_memory_select_error_propagates(m, service_db):
     service_db.errors[("bot_conversations", "select")] = RuntimeError("db down")
     m.script = ["Answer"]
 
-    m.run()
+    with pytest.raises(RuntimeError):
+        m.run()
 
-    assert len(m.requests[0]["messages"]) == 1
-    assert "summary" not in m.saved()  # unknown column state: the key is not sent
+    assert m.requests == [] and m.sent() == []  # no empty-history answer for a conversation we could not read
 
 
 # --- (f) an old conversation starts over ---------------------------------------------------------------
@@ -540,8 +534,9 @@ def test_failed_compaction_update_loses_nothing(m, caplog):
     assert not any(PSID in r.getMessage() for r in caplog.records)
 
 
-def test_handoff_fallback_without_attention_columns_still_compacts(m, service_db):
-    """Migration 0010 not applied: the flagged upsert fails, the plain one is stored, compaction follows."""
+def test_handoff_save_error_skips_compaction(m, service_db, caplog):
+    """A-042: the flagged upsert fails -> ONE attempt (no plain retry), no summary call, no update; the
+    reply was already sent and is not repeated (the caller logs a WARNING)."""
     class NoAttentionQuery(FakeQuery):
         def execute(self):
             if self.table == "bot_conversations" and self.op == "upsert" and "needs_attention" in self.payload:
@@ -553,12 +548,15 @@ def test_handoff_fallback_without_attention_columns_still_compacts(m, service_db
     m.seed(pairs(16), "S0")
     m.script = [Memory.calls(("h1", "request_human", {"reason": "complaint"})), "S1"]
 
-    m.run()
+    with caplog.at_level(logging.WARNING, logger="app"):
+        m.run()  # must not raise
 
-    plain = [c.payload for c in service_db.calls_for("bot_conversations", "upsert")][-1]
-    assert "needs_attention" not in plain and len(plain["messages"]) == 18
-    (update,) = m.updates()
-    assert update.payload["summary"] == "S1" and ("eq", "updated_at", plain["updated_at"]) in update.filters
+    attempts = service_db.calls_for("bot_conversations", "upsert")
+    assert len(attempts) == 1 and attempts[0].payload["needs_attention"] is True
+    assert m.kinds() == ["agent"]  # no summary call for a turn that was not stored
+    assert m.updates() == []
+    assert len(m.sent()) == 1
+    assert any("საუბრის შენახვა ვერ მოხერხდა" in r.getMessage() for r in caplog.records)
 
 
 def test_no_compaction_when_the_first_write_failed(m):

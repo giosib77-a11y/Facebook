@@ -95,28 +95,6 @@ def test_public_menu_returns_all_active_products(client, service_db):
 
 # ── ბოტის პროდუქტები ──
 
-def _patch_columns(monkeypatch, db, fail_with_description=False):
-    """products select-ის სვეტები ჩაიწერება; `image_description`-იანი ვარიანტი (0028-მდე) ვარდება."""
-    query_cls = type(db.table("x"))
-    real_select, real_execute = query_cls.select, query_cls.execute
-    seen = []
-
-    def select(self, *columns, **kwargs):
-        self.columns = columns
-        return real_select(self, *columns, **kwargs)
-
-    def execute(self):
-        if self.table == "products" and self.op == "select":
-            seen.append(self.columns)
-            if fail_with_description and "image_description" in ",".join(self.columns):
-                raise RuntimeError("column products.image_description does not exist")
-        return real_execute(self)
-
-    monkeypatch.setattr(query_cls, "select", select)
-    monkeypatch.setattr(query_cls, "execute", execute)
-    return seen
-
-
 def test_bot_products_loaded_past_1000(service_db):
     service_db.responses[("products", "select")] = [{"id": f"p{i}", "name": f"P{i}"} for i in range(N)]
     out = webhook._load_bot_products(service_db, SHOP_ID)
@@ -126,17 +104,6 @@ def test_bot_products_loaded_past_1000(service_db):
     for c in calls:
         assert ("eq", "shop_id", SHOP_ID) in c.filters and ("eq", "is_active", True) in c.filters
         assert c.orders == [("id", False)]
-
-
-def test_bot_products_fallback_without_image_description_is_paged_too(monkeypatch, service_db):
-    seen = _patch_columns(monkeypatch, service_db, fail_with_description=True)
-    service_db.responses[("products", "select")] = [{"id": f"p{i}", "name": f"P{i}"} for i in range(N)]
-    out = webhook._load_bot_products(service_db, SHOP_ID)
-    assert len(out) == N
-    # პირველი ვარიანტი პირველ გვერდზე ვარდება (1 query), მეორე — 3 გვერდი
-    assert len(seen) == 4
-    assert "image_description" in ",".join(seen[0])
-    assert all("image_description" not in ",".join(c) for c in seen[1:])
 
 
 def test_bot_products_cap_truncates_with_warning(monkeypatch, service_db, caplog):

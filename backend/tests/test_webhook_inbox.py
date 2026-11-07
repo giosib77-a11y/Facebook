@@ -1,5 +1,6 @@
 """S21-3 (A-040 / N-05): POST /webhook persists events in webhook_inbox before the 200;
-process_inbox_row; the legacy in-memory path runs through the bot limiter; DB dedup (no memory dedup)."""
+process_inbox_row; the legacy in-memory path runs through the bot limiter; DB dedup (no memory dedup).
+Stage 24 (A-042): an enqueue failure is a 503 to Meta (no in-process fallback)."""
 import hashlib
 import hmac
 import json
@@ -56,7 +57,6 @@ def _payload(*events, obj="page"):
 
 def _clear_memory_state():
     webhook._RATE_HITS.clear()
-    webhook._SEEN_MIDS.clear()
     webhook._OUR_MIDS.clear()
 
 
@@ -64,7 +64,6 @@ def _clear_memory_state():
 def env(monkeypatch, service_db):
     """Inbox active by default; the webhook uses the fake service DB; processing / wake are recorders."""
     inbox._reset_for_tests()
-    monkeypatch.setattr(webhook, "_INBOX_MISSING_WARNED", False, raising=False)
     _clear_memory_state()
     monkeypatch.setattr(webhook, "get_service_client", lambda: service_db)
 
@@ -88,7 +87,7 @@ def env(monkeypatch, service_db):
         use_real_process_events=use_real_process_events,
     )
     inbox._reset_for_tests()
-    _clear_memory_state()  # other tests reuse mids like "m1" - leftovers would look like duplicates to them
+    _clear_memory_state()
 
 
 def _bot_env(monkeypatch, db):
@@ -104,13 +103,6 @@ def _bot_env(monkeypatch, db):
     monkeypatch.setattr(webhook, "download_image", lambda url, timeout=8: None)
     monkeypatch.setattr(webhook, "run_turn", lambda *a, **kw: TurnResult("llm reply"))
     return sent
-
-
-def _forbid_memory_dedup(monkeypatch):
-    def boom(mid):
-        raise AssertionError("_already_handled must not be used on the inbox path")
-
-    monkeypatch.setattr(webhook, "_already_handled", boom)
 
 
 def _recording_run_sync(monkeypatch):
@@ -146,8 +138,8 @@ def test_post_webhook_persists_events_before_200(client, env):
 
 
 # (2)
-def test_inbox_path_never_uses_memory_dedup(client, env, monkeypatch):
-    _forbid_memory_dedup(monkeypatch)
+def test_inbox_path_has_no_memory_dedup(client, env):
+    assert not hasattr(webhook, "_SEEN_MIDS") and not hasattr(webhook, "_already_handled")
     payload = _payload(_msg("m-same"))
 
     assert _post(client, payload).status_code == 200
@@ -156,23 +148,22 @@ def test_inbox_path_never_uses_memory_dedup(client, env, monkeypatch):
     assert len(env.db.calls_for("webhook_inbox", "upsert")) == 2  # dedup is the DB's unique(page_id, mid)
 
 
-def test_process_inbox_row_never_uses_memory_dedup_for_echo(env, monkeypatch):
+def test_process_inbox_row_has_no_memory_dedup_for_echo(env, monkeypatch):
     _bot_env(monkeypatch, env.db)
     env.use_real_process_events()
-    _forbid_memory_dedup(monkeypatch)
+    assert not hasattr(webhook, "_already_handled")
     echo = _echo("m-echo")
 
     webhook.process_inbox_row({"object": "page", "page_id": PAGE_ID, "mid": "m-echo", "event": echo})
 
-    # the echo reached the history write, so the dedup check (skipped) was the only thing bypassed
-    assert env.db.calls_for("bot_conversations", "upsert")
+    assert env.db.calls_for("bot_conversations", "upsert")  # the echo reached the history write
 
 
-def test_process_inbox_row_never_uses_memory_dedup_for_message(env, monkeypatch):
+def test_process_inbox_row_has_no_memory_dedup_for_message(env, monkeypatch):
     sent = _bot_env(monkeypatch, env.db)
     env.use_real_process_events()
-    _forbid_memory_dedup(monkeypatch)
-    row ={"object": "page", "page_id": PAGE_ID, "mid": "m-1", "event": _msg("m-1")}
+    assert not hasattr(webhook, "_already_handled")
+    row = {"object": "page", "page_id": PAGE_ID, "mid": "m-1", "event": _msg("m-1")}
 
     webhook.process_inbox_row(row)
     webhook.process_inbox_row(row)
@@ -182,36 +173,36 @@ def test_process_inbox_row_never_uses_memory_dedup_for_message(env, monkeypatch)
 
 # (3)
 @pytest.mark.parametrize("code", ["PGRST205", "42P01"])
-def test_inbox_unavailable_falls_back_to_background(client, env, caplog, code):
+def test_inbox_unavailable_is_503_without_background_processing(client, env, caplog, code):
     env.db.errors[("webhook_inbox", "upsert")] = CodedError(code, "secret detail")
     payload = _payload(_msg("m1"))
 
     with caplog.at_level(logging.WARNING, logger="app"):
-        assert _post(client, payload).status_code == 200
-        assert len(env.processed) == 1
-        assert env.processed[0][0] == payload
-        assert _post(client, payload).status_code == 200
+        r1 = _post(client, payload)
+        r2 = _post(client, payload)
 
-    assert len(env.processed) == 2
-    missing = [r for r in caplog.records if "webhook_inbox missing (migration 0037 not applied)" in r.getMessage()]
-    assert len(missing) == 1  # one-time per process
-    assert "secret detail" not in caplog.text
+    assert r1.status_code == 503 and r1.json() == {"detail": "webhook queue unavailable"}
+    assert r2.status_code == 503
+    assert env.processed == []  # no in-process fallback: Meta retries
     assert env.wakes == []
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and "CodedError" in r.getMessage()]
+    assert len(errors) == 2  # logged every time, not once per process
+    assert "secret detail" not in caplog.text
+    assert "migration 0037" not in caplog.text
 
 
-def test_inbox_general_error_falls_back_and_warns_every_time(client, env, caplog):
+def test_inbox_general_error_is_503_and_logged_every_time(client, env, caplog):
     env.db.errors[("webhook_inbox", "upsert")] = RuntimeError("secret detail")
     payload = _payload(_msg("m1"))
 
     with caplog.at_level(logging.WARNING, logger="app"):
-        assert _post(client, payload).status_code == 200
-        assert _post(client, payload).status_code == 200
+        assert _post(client, payload).status_code == 503
+        assert _post(client, payload).status_code == 503
 
-    assert len(env.processed) == 2
-    warned = [r for r in caplog.records if "RuntimeError" in r.getMessage()]
-    assert len(warned) == 2
+    assert env.processed == []
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and "RuntimeError" in r.getMessage()]
+    assert len(errors) == 2
     assert "secret detail" not in caplog.text
-    assert "migration 0037" not in caplog.text
 
 
 # (4)
@@ -254,7 +245,7 @@ def test_process_inbox_row_builds_single_event_payload(env, monkeypatch):
 
     assert seen == [(
         {"object": "instagram", "entry": [{"id": PAGE_ID, "messaging": [ev]}]},
-        {"dedup": False},
+        {},
     )]
 
 
@@ -309,7 +300,7 @@ def test_enqueue_failure_log_has_no_payload_or_psid(client, env, caplog):
     payload = _payload(_msg("m1", text="SECRET-TEXT", psid="psid-777"))
 
     with caplog.at_level(logging.DEBUG, logger="app"):
-        assert _post(client, payload).status_code == 200
+        assert _post(client, payload).status_code == 503
 
     assert "SECRET-TEXT" not in caplog.text
     assert "psid-777" not in caplog.text

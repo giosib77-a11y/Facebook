@@ -3,7 +3,7 @@
 * decrypt failure             -> bot_status "token_error" + alert_bot_down(shop, "token_error")
 * send failure                -> "token_expired" (GraphError.code 190) / "send_failed" (anything else) + alert
 * send success                -> "ok" only when the stored status was a failure (no write on the happy path)
-* shops.bot_status missing    -> the reply still goes out; ONE WARNING per process; no more write attempts
+* bot_status write fails      -> the reply still goes out; a WARNING on every failed write (no permanent off switch)
 * handoff                     -> notify_handoff on the main path and the operator path; never on pause / echo
 * monthly_budget              -> "budget_exhausted"
 * GraphError.code             -> Graph JSON error.code (int) via `_graph`
@@ -27,16 +27,8 @@ from app.services.graph import TurnResult
 from tests.test_reply_delivery import PAGE_ID, PSID, SHOP_ID
 
 OWNER = "33333333-3333-3333-3333-333333333333"
-STATUS_WARNING = "shops.bot_status missing"
+STATUS_WARNING = "bot status write failed"
 PAGE_TOKEN = "PAGE_TOKEN_SENTINEL_789"
-
-
-@pytest.fixture(autouse=True)
-def _reset_process_state(monkeypatch):
-    monkeypatch.setattr(webhook, "_BOT_STATUS_COLUMN_WARNED", False, raising=False)
-    webhook._SEEN_MIDS.clear()
-    yield
-    webhook._SEEN_MIDS.clear()
 
 
 def _shop(status=None, **extra):
@@ -196,8 +188,8 @@ def test_recovery_is_written_once_for_several_messages(env):
     assert len(_status_updates(db)) == 1
 
 
-# ---- (4) shops.bot_status missing (migration 0036 not applied) ---------------
-def test_status_write_failure_does_not_block_reply_and_warns_once(env, caplog):
+# ---- (4) bot_status write fails (A-042: no permanent off switch) -------------
+def test_status_write_failure_does_not_block_reply_and_warns_every_time(env, caplog):
     db, sent, alerts, handoffs, calls = env
     db.responses[("shops", "select")] = [_shop("send_failed")]
     db.errors[("shops", "update")] = RuntimeError("column bot_status does not exist")
@@ -208,9 +200,11 @@ def test_status_write_failure_does_not_block_reply_and_warns_once(env, caplog):
 
     assert sent == ["llm reply"] * 3
     assert len(db.calls_for("bot_conversations", "upsert")) == 3  # conversation saving unaffected
-    assert len(_warnings(caplog, STATUS_WARNING)) == 1
-    assert "migration 0036" in _warnings(caplog, STATUS_WARNING)[0]
-    assert len(_status_updates(db)) == 1  # after the failure no more attempts
+    warnings = _warnings(caplog, STATUS_WARNING)
+    assert len(warnings) == 3
+    assert all(f"shop={SHOP_ID}" in w and "RuntimeError" in w for w in warnings)
+    assert "does not exist" not in caplog.text  # class name only
+    assert len(_status_updates(db)) == 3  # every message retries the write
 
 
 def test_status_write_failure_on_send_failure_still_alerts(env, caplog):

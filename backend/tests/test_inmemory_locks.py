@@ -1,10 +1,10 @@
-"""A-026 (N-15): `_SEEN_MIDS` and the ratelimit `_HITS` are mutated under a lock."""
+"""A-026 (N-15): `_SEEN_MIDS` and the ratelimit `_HITS` are mutated under a lock.
+(`_SEEN_MIDS` itself was removed in Stage 24 / A-042 - dedup is the DB's `webhook_inbox` unique key.)"""
 import threading
 
 import pytest
 from fastapi import HTTPException
 
-from app.api import webhook
 from app.core import ratelimit
 
 
@@ -31,10 +31,8 @@ class RecordingLock:
 @pytest.fixture(autouse=True)
 def _clean_state():
     last_sweep = ratelimit._last_sweep[0]
-    webhook._SEEN_MIDS.clear()
     ratelimit._HITS.clear()
     yield
-    webhook._SEEN_MIDS.clear()
     ratelimit._HITS.clear()
     ratelimit._last_sweep[0] = last_sweep
     for bucket in ("lk_allow", "lk_hit", "stress", "shared_bucket"):
@@ -42,23 +40,6 @@ def _clean_state():
 
 
 # --- (1) structural: the lock is really used --------------------------------
-
-def test_already_handled_takes_seen_lock(monkeypatch):
-    lock = RecordingLock()
-    monkeypatch.setattr(webhook, "_SEEN_LOCK", lock)
-    assert webhook._already_handled("m1") is False
-    assert lock.entered == 1
-    assert webhook._already_handled("m1") is True
-    assert lock.entered == 2
-
-
-def test_already_handled_empty_mid_needs_no_lock(monkeypatch):
-    lock = RecordingLock()
-    monkeypatch.setattr(webhook, "_SEEN_LOCK", lock)
-    assert webhook._already_handled(None) is False
-    assert webhook._already_handled("") is False
-    assert lock.entered == 0
-
 
 def test_allow_takes_ratelimit_lock(monkeypatch):
     lock = RecordingLock()
@@ -106,34 +87,6 @@ def _run_threads(target):
         t.join(timeout=60)
     assert not any(t.is_alive() for t in ts), "deadlock / hang"
     assert errors == []
-
-
-def test_already_handled_concurrent_unique_mids():
-    results: list[list[bool]] = [[] for _ in range(THREADS)]
-
-    def work(n):
-        for i in range(PER_THREAD):
-            results[n].append(webhook._already_handled(f"t{n}-m{i}"))
-
-    _run_threads(work)
-    flat = [r for part in results for r in part]
-    assert len(flat) == THREADS * PER_THREAD
-    assert flat.count(False) == THREADS * PER_THREAD  # each unique mid handled once
-    assert len(webhook._SEEN_MIDS) == THREADS * PER_THREAD
-
-
-def test_already_handled_concurrent_same_mid_returns_false_once():
-    results: list[bool] = []
-    res_lock = threading.Lock()
-
-    def work(n):
-        for i in range(PER_THREAD):
-            r = webhook._already_handled(f"shared-{i}")
-            with res_lock:
-                results.append(r)
-
-    _run_threads(work)
-    assert results.count(False) == PER_THREAD  # exactly one winner per mid
 
 
 def test_allow_concurrent_with_forced_sweep(monkeypatch):

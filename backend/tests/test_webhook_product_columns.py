@@ -1,4 +1,6 @@
 """A-021: the webhook loads only the product columns the bot uses, not select("*")."""
+import pytest
+
 import app.api.webhook as webhook
 
 PAGE_ID = "1234567890"
@@ -48,9 +50,11 @@ def test_products_loaded_with_explicit_bot_columns(monkeypatch, service_db):
     assert _fields(cols) == BOT_FIELDS
 
 
-def test_products_fallback_without_image_description_before_0028(monkeypatch, service_db):
+def test_products_select_error_propagates(monkeypatch, service_db):
+    """A-042: no retry without `image_description` - the error goes up (inbox path: worker retry)."""
     selects = _harness(monkeypatch, service_db)
     service_db.errors["missing_0028"] = RuntimeError("column products.image_description does not exist")
-    _run()
-    assert len(selects) == 2
-    assert _fields(selects[1]) == BOT_FIELDS - {"image_description"}
+    with pytest.raises(RuntimeError):
+        _run()
+    assert len(selects) == 1
+    assert _fields(selects[0]) == BOT_FIELDS

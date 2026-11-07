@@ -23,17 +23,9 @@ from app.services.graph import run_turn
 router = APIRouter(tags=["messenger webhook"])
 logger = logging.getLogger("app")
 
-# ⚠️ რევიუ P1-3: Meta იმეორებს მოვლენას, თუ 20 წამში 200 არ მიიღო. გამეორება
-# ორმაგ პასუხს და ორმაგად დათვლილ შეტყობინებას იწვევდა. აქ ბოლო message id-ებს
-# ვიმახსოვრებთ და გამეორებულს ვტოვებთ.
-# შეზღუდვა: მეხსიერებაშია, ე.ი. ერთი instance-ის ფარგლებში მუშაობს. Render-ზე
-# ერთი instance გვაქვს, ამიტომ პრაქტიკულ შემთხვევებს ფარავს. მრავალ-instance-ზე
-# გადასვლისას → Redis ან ბაზის ცხრილი.
-# S21-3: მხოლოდ legacy გზა; inbox-ის გზაზე dedup — `webhook_inbox unique (page_id, mid)` (0037).
-_SEEN_MIDS: "OrderedDict[str, float]" = OrderedDict()
-_SEEN_LOCK = threading.Lock()
-_SEEN_TTL = 600      # წამი — ამაზე ძველს ვივიწყებთ
-_SEEN_MAX = 5000     # ჩანაწერების ჭერი (მეხსიერება არ გაიბეროს)
+# Meta იმეორებს მოვლენას, თუ 20 წამში 200 არ მიიღო (რევიუ P1-3). dedup — მხოლოდ
+# `webhook_inbox unique (page_id, mid)` (0037); legacy გზაზე (dev / ბერკეტი) მეხსიერების dedup
+# აღარ არის — Decision Log 2026-11-06.
 
 # FA-12: ცარიელი პასუხი (LLM-მა უარი თქვა / MAX_TOKENS) კლიენტს ჩუმად არ უნდა დაეკარგოს
 EMPTY_REPLY_FALLBACK = "ბოდიში, ახლა ვერ გიპასუხებთ — ოპერატორი მალე დაგიკავშირდებათ."
@@ -66,26 +58,6 @@ def _split_reply(text: str, limit: int) -> list[str]:
     if rest:
         parts.append(rest)
     return parts
-
-
-def _already_handled(mid: str | None) -> bool:
-    """True — თუ ეს შეტყობინება უკვე დამუშავდა (Meta-ს გამეორება)."""
-    if not mid:
-        return False  # id-ის გარეშე ვერ გავარჩევთ — ვამუშავებთ
-    now = time.time()
-    with _SEEN_LOCK:  # sync endpoint-ები threadpool-ში მუშაობს — გაწმენდა/შემოწმება/ჩაწერა ატომურია
-        while _SEEN_MIDS:
-            k, ts = next(iter(_SEEN_MIDS.items()))
-            if now - ts > _SEEN_TTL:
-                _SEEN_MIDS.pop(k, None)
-            else:
-                break
-        if mid in _SEEN_MIDS:
-            return True
-        _SEEN_MIDS[mid] = now
-        while len(_SEEN_MIDS) > _SEEN_MAX:
-            _SEEN_MIDS.popitem(last=False)
-        return False
 
 
 # S20-20 (A-035): ჩვენ მიერ გაგზავნილი შეტყობინებების id-ები (Send API `message_id`). ჩვენივე პასუხის echo
@@ -131,7 +103,7 @@ def _is_our_mid(mid) -> bool:
 
 # B-3: წუთობრივი ლიმიტი — ერთმა კლიენტმა/მაღაზიამ საერთო LLM კვოტა და threadpool
 # არ უნდა ამოწუროს. ლიმიტს გადაცილებულს ჩუმად ვტოვებთ (პასუხი და LLM-ის გამოძახება არ არის).
-# მეხსიერებაშია (_SEEN_MIDS-ის მსგავსად ერთი instance-ისთვის); ბლოკირებული შეტყობინება არ ითვლება.
+# მეხსიერებაშია (ერთი instance-ისთვის); ბლოკირებული შეტყობინება არ ითვლება.
 _RATE_WINDOW = 60.0       # წამი
 _RATE_PER_PSID = 6        # (shop, psid)-ზე წუთში
 _RATE_PER_SHOP = 30       # shop-ზე წუთში
@@ -168,24 +140,18 @@ def _rate_limited(shop_id: str, psid: str) -> bool:
 
 @dataclass
 class Conversation:
-    """შენახული საუბარი. summary_supported=False — `bot_conversations.summary` სვეტი (migration 0026)
-    არ არსებობს / ვერ წაიკითხა: summary გამორთულია და upsert-ში `summary` გასაღები არ იგზავნება."""
+    """შენახული საუბარი. summary_supported=False — მეხსიერება გამორთულია (`bot_memory_messages <= 0`):
+    summary არ იკითხება და upsert-ში `summary` გასაღები არ იგზავნება."""
     messages: list = field(default_factory=list)
     summary: str | None = None
     summary_supported: bool = True
 
 
-_SUMMARY_COLUMN_WARNED = False  # სვეტის არარსებობის WARNING — ერთხელ პროცესზე
-
 # A-035: handoff-ის / გამყიდველის პასუხის შემდეგ ბოტი ამდენი საათით ჩუმდება
 # (ან სანამ პანელში „მოგვარებულია" არ დაჭერილა — რომელიც უფრო ადრე)
 BOT_PAUSE_HOURS = 12
 _ECHO_TEXT_MAX = 2000
-_PAUSE_COLUMN_WARNED = False  # bot_paused_until-ის არარსებობის WARNING — ერთხელ პროცესზე
 _ECHO_APP_ID_WARNED = False   # FB_APP_ID-ის არარსებობის WARNING — ერთხელ პროცესზე
-
-
-_BOT_STATUS_COLUMN_WARNED = False  # shops.bot_status-ის ჩაწერა ვერ მოხერხდა (migration 0036) — ერთხელ პროცესზე
 _GRAPH_TOKEN_ERROR_CODE = 190  # Graph OAuthException: token ვადაგასულია / გაუქმებულია
 
 
@@ -193,12 +159,8 @@ def _set_bot_status(sc, shop: dict, status: str) -> None:
     """ბოტის ჯანმრთელობის ჩაწერა `shops.bot_status`-ში (migration 0036). არასდროს აგდებს.
 
     ჩაწერა მხოლოდ ცვლილებაზეა: "ok" ჯანსაღ გზაზე (სტატუსი null/ok) ბაზას არ ეხება, იგივე სტატუსი
-    ხელახლა არ იწერება. migration 0036-ის გარეშე (ჩაწერა ჩავარდა) ჯანმრთელობა გამორთულია:
-    ერთი WARNING პროცესზე, მერე ჩაწერის მცდელობა აღარ არის.
+    ხელახლა არ იწერება. ჩაწერის ჩავარდნა — WARNING ყოველ ჯერზე (პასუხს არ აფერხებს; გამორთვა არ არის).
     """
-    global _BOT_STATUS_COLUMN_WARNED
-    if _BOT_STATUS_COLUMN_WARNED:
-        return
     cur = shop.get("bot_status")
     if cur == status or (status == "ok" and cur is None):
         return
@@ -208,34 +170,20 @@ def _set_bot_status(sc, shop: dict, status: str) -> None:
             .update({"bot_status": status, "bot_status_at": datetime.now(timezone.utc).isoformat()})
             .eq("id", shop["id"]).execute()
         )
-    except Exception:
-        _BOT_STATUS_COLUMN_WARNED = True
-        logger.warning("shops.bot_status missing (migration 0036 not applied) - bot health disabled")
+    except Exception as e:
+        # exc_info / ტექსტი არა: შეცდომის ტექსტში მონაცემი შეიძლება იყოს
+        logger.warning("bot status write failed (shop=%s, %s)", shop.get("id"), type(e).__name__)
         return
     shop["bot_status"] = status
 
 
-def _warn_pause_missing() -> None:
-    """migration 0033-ის გარეშე პაუზა გამორთულია — WARNING ერთხელ პროცესზე."""
-    global _PAUSE_COLUMN_WARNED
-    if _PAUSE_COLUMN_WARNED:
-        return
-    _PAUSE_COLUMN_WARNED = True
-    logger.warning(
-        "bot_conversations.bot_paused_until missing (migration 0033 not applied) - handoff pause disabled"
-    )
-
-
 def _paused_until(sc, shop_id: str, psid: str) -> datetime | None:
-    """საუბრის პაუზის დასასრული, თუ ის ჯერ მომავალშია; სხვა შემთხვევაში (ან შეცდომაზე) None."""
-    try:
-        r = (
-            sc.table("bot_conversations").select("bot_paused_until")
-            .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
-        )
-    except Exception:
-        _warn_pause_missing()
-        return None
+    """საუბრის პაუზის დასასრული, თუ ის ჯერ მომავალშია; პაუზა არ არის / მნიშვნელობა არ იკითხება → None.
+    select-ის შეცდომა ზემოთ ადის (inbox-ის გზაზე worker-ის retry)."""
+    r = (
+        sc.table("bot_conversations").select("bot_paused_until")
+        .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
+    )
     try:
         raw = (r.data or [{}])[0].get("bot_paused_until")
         if not raw:
@@ -252,7 +200,7 @@ def _append_history(sc, shop_id: str, psid: str, new_messages: list, *, pause: b
     """ისტორიაში შეტყობინებების დამატება LLM-ის გარეშე (გამყიდველის echo / შეჩერებულ საუბარში კლიენტის ტექსტი).
 
     pause=True → `bot_paused_until` = now + BOT_PAUSE_HOURS. needs_attention / attention_at არ იცვლება.
-    migration 0033-ის გარეშე ტექსტი მაინც ინახება, პაუზის გარეშე. True — ჩაიწერა.
+    ერთი upsert; ჩავარდნა → WARNING და False. True — ჩაიწერა.
     """
     s = get_settings()
     if s.bot_memory_messages <= 0 and not pause:
@@ -270,19 +218,11 @@ def _append_history(sc, shop_id: str, psid: str, new_messages: list, *, pause: b
         sc.table("bot_conversations").upsert(row).execute()
         return True
     except Exception as e:
-        err = type(e).__name__
-    if pause:
-        try:
-            sc.table("bot_conversations").upsert({k: v for k, v in row.items() if k != "bot_paused_until"}).execute()
-            _warn_pause_missing()
-            return True
-        except Exception as e:
-            err = type(e).__name__
-    logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s, %s)", shop_id, err)
-    return False
+        logger.warning("საუბრის შენახვა ვერ მოხერხდა (shop=%s, %s)", shop_id, type(e).__name__)
+        return False
 
 
-def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None, *, dedup: bool = True) -> None:
+def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None) -> None:
     """გამყიდველის ხელით დაწერილი პასუხი (message.is_echo): ტექსტი ისტორიაში + ბოტის პაუზა.
 
     ჩვენი პასუხების ამოცნობა (S20-20), თანმიმდევრობით:
@@ -314,8 +254,6 @@ def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None, *, dedup: boo
     psid = (ev.get("recipient") or {}).get("id")
     if not psid:
         return
-    if dedup and _already_handled(message.get("mid")):
-        return
     text = message.get("text")
     text = text.strip()[:_ECHO_TEXT_MAX] if isinstance(text, str) else ""
     if _append_history(
@@ -325,52 +263,34 @@ def _handle_echo(sc, shop: dict, ev: dict, obj: str | None = None, *, dedup: boo
 
 
 def _load_conversation(sc, shop_id: str, psid: str) -> Conversation:
-    """კლიენტის ბოლო შეტყობინებები + summary (მეხსიერება). migration 0008-ის გარეშე — ცარიელი;
-    migration 0026-ის გარეშე — შეტყობინებები summary-ის გარეშე (Stage 14-ის ქცევა)."""
-    global _SUMMARY_COLUMN_WARNED
+    """კლიენტის ბოლო შეტყობინებები + summary (მეხსიერება). select-ის შეცდომა ზემოთ ადის
+    (inbox-ის გზაზე worker-ის retry); მეხსიერება გამორთულია (`bot_memory_messages <= 0`) → ცარიელი."""
     s = get_settings()
     if s.bot_memory_messages <= 0:
         return Conversation(summary_supported=False)
 
-    def select(columns: str):
-        return (
-            sc.table("bot_conversations").select(columns)
-            .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
-        )
-
-    supported = True
-    try:
-        r = select("messages,updated_at,summary")
-    except Exception:
-        supported = False
-        try:
-            r = select("messages,updated_at")
-        except Exception:
-            return Conversation(summary_supported=False)
-        if not _SUMMARY_COLUMN_WARNED:
-            _SUMMARY_COLUMN_WARNED = True
-            logger.warning(
-                "bot_conversations.summary missing (migration 0026 not applied) - conversation summary disabled"
-            )
+    r = (
+        sc.table("bot_conversations").select("messages,updated_at,summary")
+        .eq("shop_id", shop_id).eq("psid", psid).limit(1).execute()
+    )
     try:
         if not r.data:
-            return Conversation(summary_supported=supported)
+            return Conversation()
         row = r.data[0]
         try:
             ts = datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00"))
             if datetime.now(timezone.utc) - ts > timedelta(hours=s.bot_memory_hours):
-                return Conversation(summary_supported=supported)  # ძველი საუბარი — ახლიდან
+                return Conversation()  # ძველი საუბარი — ახლიდან
         except Exception:
             pass
         msgs = row.get("messages") or []
-        summary = row.get("summary") if supported else None
+        summary = row.get("summary")
         return Conversation(
             msgs[-s.bot_memory_messages:],
             summary if isinstance(summary, str) and summary.strip() else None,
-            supported,
         )
     except Exception:
-        return Conversation(summary_supported=supported)
+        return Conversation()
 
 
 def _save_turn(
@@ -399,35 +319,17 @@ def _save_turn(
     ]
     summary = conv.summary if conv is not None else None
     stored = full_history[-s.bot_memory_messages:] if s.bot_memory_messages > 0 else full_history[-2:]
-    base = {"shop_id": shop_id, "psid": psid, "messages": stored, "updated_at": now}
+    row = {"shop_id": shop_id, "psid": psid, "messages": stored, "updated_at": now}
     if conv is not None and conv.summary_supported:
-        base["summary"] = summary  # None ასუფთავებს (ძველი საუბარი)
-    full = dict(base)
+        row["summary"] = summary  # None ასუფთავებს (ძველი საუბარი)
     if needs_attention:
-        full["needs_attention"] = True
-        full["attention_at"] = now
+        row["needs_attention"] = True
+        row["attention_at"] = now
         # A-035: handoff-ის შემდეგ ბოტი BOT_PAUSE_HOURS საათით ჩუმდება
-        full["bot_paused_until"] = (datetime.now(timezone.utc) + timedelta(hours=BOT_PAUSE_HOURS)).isoformat()
-    saved = False
-    try:
-        sc.table("bot_conversations").upsert(full).execute()
-        saved = True
-    except Exception:
-        if needs_attention:
-            # ჯერ migration 0033-ის გარეშე (bot_paused_until არ არსებობს) — handoff ძველებურად
-            no_pause = {k: v for k, v in full.items() if k != "bot_paused_until"}
-            try:
-                sc.table("bot_conversations").upsert(no_pause).execute()
-                saved = True
-                _warn_pause_missing()
-            except Exception:
-                # migration 0010 ჯერ არ გაშვებულა (needs_attention არ არსებობს) — მეხსიერება მაინც შევინახოთ
-                try:
-                    sc.table("bot_conversations").upsert(base).execute()
-                    saved = True
-                except Exception:
-                    pass
-    if not (saved and compact and conv is not None and conv.summary_supported
+        row["bot_paused_until"] = (datetime.now(timezone.utc) + timedelta(hours=BOT_PAUSE_HOURS)).isoformat()
+    # ერთი upsert; შეცდომა ზემოთ ადის (ორივე გამომძახებელი WARNING-ით იჭერს — პასუხი უკვე გაგზავნილია)
+    sc.table("bot_conversations").upsert(row).execute()
+    if not (compact and conv is not None and conv.summary_supported
             and memory.needs_compaction(full_history)):
         return
     kept, new_summary = memory.compact(shop_id, full_history, summary)  # LLM, შენახვის შემდეგ
@@ -453,21 +355,15 @@ _BOT_PRODUCTS_MAX = 5000
 
 
 def _load_bot_products(sc, shop_id: str) -> list:
-    """მაღაზიის აქტიური პროდუქტები ბოტისთვის. migration 0028-ის გარეშე — `image_description`-ის გარეშე."""
-    def select(columns: str):
-        return fetch_all(
-            lambda: (
-                sc.table("products").select(columns)
-                .eq("shop_id", shop_id).eq("is_active", True).order("id")
-            ),
-            max_rows=_BOT_PRODUCTS_MAX,
-            label=f"bot products shop={shop_id}",
-        )
-
-    try:
-        return select(_BOT_PRODUCT_COLUMNS + ",image_description")
-    except Exception:
-        return select(_BOT_PRODUCT_COLUMNS)
+    """მაღაზიის აქტიური პროდუქტები ბოტისთვის. select-ის შეცდომა ზემოთ ადის (inbox-ის გზაზე worker-ის retry)."""
+    return fetch_all(
+        lambda: (
+            sc.table("products").select(_BOT_PRODUCT_COLUMNS + ",image_description")
+            .eq("shop_id", shop_id).eq("is_active", True).order("id")
+        ),
+        max_rows=_BOT_PRODUCTS_MAX,
+        label=f"bot products shop={shop_id}",
+    )
 
 
 def _customer_rank(sc, shop_id: str, psid: str) -> int:
@@ -525,7 +421,8 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
         return {"status": "ignored"}
 
     # Facebook ელოდება სწრაფ 200-ს. inbox ჩართულია → მოვლენა ბაზაში ინახება 200-მდე, დამუშავებას worker
-    # აკეთებს (restart-ზეც არ იკარგება); გამორთულია / ბაზა მიუწვდომელია → ძველი გზა: ფონური დამუშავება
+    # აკეთებს (restart-ზეც არ იკარგება); გამორთულია (dev / WEBHOOK_INBOX_ENABLED=false) → ფონური დამუშავება.
+    # შენახვა ჩავარდა → 503: Meta ხელახლა გამოგზავნის (in-process fallback არ არის — ის ბაზასაც საჭიროებდა).
     if settings.webhook_inbox_active:
         rows = inbox.rows_from_payload(data)
         if not rows:
@@ -533,31 +430,14 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
         try:
             await anyio.to_thread.run_sync(inbox.enqueue, get_service_client(), rows)
         except Exception as exc:
-            _warn_inbox_unavailable(exc)
-            background_tasks.add_task(_process_events_limited, data)
-        else:
-            inbox.wake()
+            # ლოგში მხოლოდ exception-ის კლასი (ტექსტში payload / psid შეიძლება იყოს)
+            logger.error("webhook_inbox enqueue failed (%s) - 503, Meta will retry", type(exc).__name__)
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "webhook queue unavailable")
+        inbox.wake()
         return {"status": "ok"}
 
     background_tasks.add_task(_process_events_limited, data)
     return {"status": "ok"}
-
-
-_INBOX_MISSING_WARNED = False  # webhook_inbox-ის არარსებობის WARNING — ერთხელ პროცესზე
-_INBOX_MISSING_CODES = ("PGRST205", "42P01")
-
-
-def _warn_inbox_unavailable(exc: Exception) -> None:
-    """enqueue ჩავარდა: ცხრილი არ არის (migration 0037) → ერთი WARNING პროცესზე; სხვა შეცდომა → ყოველ ჯერზე.
-    ლოგში მხოლოდ exception-ის კლასი (ტექსტში payload / psid შეიძლება იყოს)."""
-    global _INBOX_MISSING_WARNED
-    if getattr(exc, "code", None) in _INBOX_MISSING_CODES:
-        if _INBOX_MISSING_WARNED:
-            return
-        _INBOX_MISSING_WARNED = True
-        logger.warning("webhook_inbox missing (migration 0037 not applied) - in-memory processing")
-        return
-    logger.warning("webhook_inbox enqueue failed (%s) - in-memory processing", type(exc).__name__)
 
 
 async def _process_events_limited(data: dict) -> None:
@@ -566,20 +446,16 @@ async def _process_events_limited(data: dict) -> None:
 
 
 def process_inbox_row(row: dict) -> None:
-    """webhook_inbox-ის ერთი მწკრივის დამუშავება (worker იძახებს thread-ში). dedup — ბაზაში (unique), არა მეხსიერებაში.
-    შეცდომა ზემოთ ადის → worker `inbox.fail`-ს იძახებს."""
+    """webhook_inbox-ის ერთი მწკრივის დამუშავება (worker იძახებს thread-ში). dedup — ბაზაში (unique).
+    შეცდომა ზემოთ ადის → worker `inbox.fail`-ს იძახებს (retry → `failed`)."""
     event = row.get("event")
     if event is None:
         return
-    _process_events(
-        {"object": row["object"], "entry": [{"id": row["page_id"], "messaging": [event]}]},
-        dedup=False,
-    )
+    _process_events({"object": row["object"], "entry": [{"id": row["page_id"], "messaging": [event]}]})
 
 
-def _process_events(data: dict, *, dedup: bool = True) -> None:
-    """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა.
-    dedup=False (inbox-ის გზა) — მეხსიერების `_already_handled` არ გამოიყენება."""
+def _process_events(data: dict) -> None:
+    """თითო შემოსულ ტექსტურ შეტყობინებაზე ბოტის პასუხის გაგზავნა."""
     sc = get_service_client()
     reply_limit = _REPLY_LIMITS.get(data.get("object"), _REPLY_LIMITS["page"])
     for entry in data.get("entry", []):
@@ -589,15 +465,11 @@ def _process_events(data: dict, *, dedup: bool = True) -> None:
         eid = str(entry.get("id") or "")
         if not eid.isdigit():
             continue
-        try:
-            shop_res = (
-                sc.table("shops").select("*")
-                .or_(f"facebook_page_id.eq.{eid},instagram_account_id.eq.{eid}")
-                .limit(2).execute()
-            )
-        except Exception:
-            # migration 0006 ჯერ არ გაშვებულა (instagram_account_id არ არსებობს) — fallback
-            shop_res = sc.table("shops").select("*").eq("facebook_page_id", eid).limit(1).execute()
+        shop_res = (
+            sc.table("shops").select("*")
+            .or_(f"facebook_page_id.eq.{eid},instagram_account_id.eq.{eid}")
+            .limit(2).execute()
+        )
         if not shop_res.data:
             continue
         if len(shop_res.data) > 1:
@@ -642,7 +514,7 @@ def _process_events(data: dict, *, dedup: bool = True) -> None:
             if message.get("is_echo"):
                 # A-035: გამყიდველის ხელით დაწერილი პასუხი — ისტორიაში + ბოტის პაუზა
                 try:
-                    _handle_echo(sc, shop, ev, data.get("object"), dedup=dedup)
+                    _handle_echo(sc, shop, ev, data.get("object"))
                 except Exception as e:
                     # exc_info არა: traceback-ში psid შეიძლება აღმოჩნდეს
                     logger.warning(
@@ -650,10 +522,6 @@ def _process_events(data: dict, *, dedup: bool = True) -> None:
                     )
                 continue
             if not sender_id or (not text and not image_urls):
-                continue
-            # Meta-ს გამეორებული მოვლენა — ერთხელ უკვე ვუპასუხეთ (P1-3)
-            if dedup and _already_handled(message.get("mid")):
-                logger.info("გამეორებული შეტყობინება იგნორდა (mid=%s)", message.get("mid"))
                 continue
             # B-3: წუთობრივი ლიმიტი — ბაზისა და LLM-ის წინ, რომ spam იაფად მოიჭრას
             if _rate_limited(str(shop["id"]), str(sender_id)):
@@ -714,7 +582,7 @@ def _process_events(data: dict, *, dedup: bool = True) -> None:
 
             # S20-9: LLM-ის ხარჯის კონტროლი (kill-switch / გლობალური დღიური ჭერი / მფლობელის თვიური ბიუჯეტი);
             # უკვე გადაწყვეტილ შემთხვევაზე (over_limit / bot_disabled) ბიუჯეტის RPC არ იძახება.
-            # უცნობი ხარჯი (migration 0035 / RPC შეცდომა) → None → ბოტი მუშაობს (fail-open).
+            # უცნობი ხარჯი (RPC-ის შეცდომა) → None → ბოტი მუშაობს (fail-open).
             reason = None if (over_limit or bot_disabled) else budget.blocked_reason(sc, shop)
             if reason:
                 logger.warning("bot budget: %s - operator reply (shop=%s)", reason, shop.get("id"))
