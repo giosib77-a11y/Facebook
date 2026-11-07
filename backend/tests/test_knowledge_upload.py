@@ -392,4 +392,5 @@ def test_pdf_cap_is_50000(monkeypatch):
 
     _fake_reader(monkeypatch, ["a" * 60_000])
     text = pdf_extract.extract_pdf_text(b"%PDF")
-    assert text == "a" * 50_000 + "\n…(შემოკლებულია)"
+    suffix = "\n…(შემოკლებულია)"
+    assert text == "a" * (50_000 - len(suffix)) + suffix

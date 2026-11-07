@@ -76,7 +76,7 @@ def test_f2_pdf_stops_once_max_chars_exceeded(monkeypatch):
     assert len(big) * 3 + 4 <= pdf_extract.MAX_CHARS < len(big) * 4 + 6
     assert log == pages[:4]
     assert text.endswith(SUFFIX)
-    assert text == ("\n\n".join([big] * 10))[: pdf_extract.MAX_CHARS] + SUFFIX
+    assert text == ("\n\n".join([big] * 10))[: pdf_extract.MAX_CHARS - len(SUFFIX)] + SUFFIX
 
 
 def test_f3_small_pdf_unchanged(monkeypatch):
