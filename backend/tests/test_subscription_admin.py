@@ -5,9 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from postgrest.exceptions import APIError
 
 import app.api.admin
 from app.api.admin import get_current_admin
+from app.core.db import SCHEMA_ERROR_DETAIL
 from app.core.security import CurrentAuth
 from app.main import app as fastapi_app
 from tests.conftest import USER_ID, FakeSupabase
@@ -200,6 +202,27 @@ def test_patch_tier_subscription_failure_still_200(admin_db, caplog):
     assert [u.payload for u in admin_db.calls_for("shops", "update")
             if u.payload == {"subscription_tier": "basic"}]
     assert "subscriptions write failed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "exc, code",
+    [
+        (APIError({"code": "PGRST205", "message": "x", "details": None, "hint": None}), 503),
+        (RuntimeError("relation missing"), 500),
+    ],
+)
+def test_patch_tier_subscription_read_failure_is_an_error_and_nothing_changes(admin_db, exc, code):
+    admin_db.responses[("shops", "select")] = [_shop_row("free")]
+    admin_db.errors[("subscriptions", "select")] = exc
+    r = TestClient(fastapi_app, raise_server_exceptions=False).patch(
+        f"/admin/shops/{SHOP}", json={"bot_enabled": False, "subscription_tier": "basic"}
+    )
+    assert r.status_code == code, r.text  # old code: 200 / tier already changed without paid_until
+    if code == 503:
+        assert r.json() == {"detail": SCHEMA_ERROR_DETAIL}
+    assert admin_db.calls_for("shops", "update") == []
+    assert admin_db.calls_for("subscriptions", "upsert") == []
+    assert admin_db.calls_for("admin_audit_log", "insert") == []
 
 
 # ---- GET /admin/shops -------------------------------------------------------

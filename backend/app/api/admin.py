@@ -408,6 +408,11 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა")
     owner_id = shop[0].get("owner_id")
 
+    # subscriptions-ის წაკითხვა ყველა ჩაწერამდე: read-ის ჩავარდნა (500/503) არაფერს ცვლის
+    current_sub = None
+    if payload.subscription_tier is not None and owner_id:
+        current_sub = subscriptions.read(sc, owner_id)
+
     # bot_enabled — per-shop (ერთი გვერდის kill-switch)
     if payload.bot_enabled is not None:
         sc.table("shops").update({"bot_enabled": payload.bot_enabled}).eq("id", shop_id).execute()
@@ -419,7 +424,10 @@ def update_shop(shop_id: str, payload: AdminShopUpdate, admin: CurrentAuth = Dep
         (q.eq("owner_id", owner_id) if owner_id else q.eq("id", shop_id)).execute()
         if owner_id:
             # ადმინის ხელით ცვლა: მოქმედი ფასიანი ვადა უცვლელია, ახალი ფასიანი → +30 დღე, free → ვადის გარეშე
-            subscriptions.apply_tier(sc, owner_id, payload.subscription_tier, renewal=False)
+            paid_until = subscriptions.next_paid_until(
+                current_sub, payload.subscription_tier, renewal=False, now=datetime.now(timezone.utc)
+            )
+            subscriptions.write(sc, owner_id, payload.subscription_tier, paid_until)
             _apply_bot_limit(sc, owner_id, payload.subscription_tier)
 
     details = {"owner_id": owner_id}
@@ -511,7 +519,7 @@ def resolve_upgrade_request(
         owner = sc.table("shops").select("owner_id").eq("id", r["shop_id"]).limit(1).execute().data
         if owner:
             oid = owner[0]["owner_id"]
-            # ვადა ჯერ (renewal: იგივე tier + მოქმედი ვადა → +30 დღე); ჩავარდნა approve-ს არ აჩერებს
+            # ვადა ჯერ (renewal: იგივე tier + მოქმედი ვადა → +30 დღე); write-ის ჩავარდნა approve-ს არ აჩერებს; read-ის — აჩერებს (ჩაწერამდე)
             subscriptions.apply_tier(sc, oid, tier, renewal=True)
             sc.table("shops").update({"subscription_tier": tier}).eq("owner_id", oid).execute()
             # გადახდა დადასტურდა → downgrade-ით გათიშული ბოტები ბრუნდება (P1-6)
