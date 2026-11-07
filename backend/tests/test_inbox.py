@@ -175,14 +175,16 @@ def test_claim_unexpected_result_shape_is_empty(data):
     assert inbox.claim(db, 5) == []
 
 
-def test_claim_missing_function_is_empty_with_one_warning_per_process(caplog):
+def test_claim_missing_function_raises(caplog):
     db = FakeSupabase()
     db.rpc_errors["claim_webhook_events"] = RpcMissing("could not find the function")
     with caplog.at_level(logging.WARNING, logger="app"):
-        assert inbox.claim(db, 5) == []
-        assert inbox.claim(db, 5) == []
-    assert len(db.rpc_calls) == 2  # still retried: the table may appear without a restart
-    assert _warnings(caplog) == ["claim_webhook_events missing (migration 0037 not applied) - inbox worker idle"]
+        with pytest.raises(RpcMissing):
+            inbox.claim(db, 5)
+        with pytest.raises(RpcMissing):
+            inbox.claim(db, 5)  # no "once per process" state: every poll sees the error
+    assert len(db.rpc_calls) == 2
+    assert _warnings(caplog) == []  # claim itself logs nothing - the worker logs the class
 
 
 def test_claim_other_error_propagates():
@@ -345,18 +347,12 @@ def test_bot_limiter_follows_bot_max_concurrency(monkeypatch):
     assert anyio.run(main) == 3
 
 
-def test_reset_for_tests_drops_the_limiter_waker_and_warning_flag(caplog):
+def test_reset_for_tests_drops_the_limiter_and_waker():
     async def main():
         return inbox.bot_limiter()
 
     first = anyio.run(main)
     inbox.set_waker(lambda: None)
-    db = FakeSupabase()
-    db.rpc_errors["claim_webhook_events"] = RpcMissing("x")
-    with caplog.at_level(logging.WARNING, logger="app"):
-        inbox.claim(db, 1)
-        inbox._reset_for_tests()
-        inbox.claim(db, 1)
-    assert len(_warnings(caplog)) == 2
+    inbox._reset_for_tests()
     assert inbox._waker is None
     assert anyio.run(main) is not first

@@ -10,19 +10,12 @@ import app.api.admin
 from app.api.admin import get_current_admin
 from app.core.security import CurrentAuth
 from app.main import app as fastapi_app
-from app.services import subscriptions
 from tests.conftest import USER_ID, FakeSupabase
 
 OWNER = USER_ID
 SHOP = "aaaaaaaa-0000-0000-0000-000000000001"
 REQ = "r1"
 D = timedelta(days=1)
-TABLE_MSG = "subscriptions table unavailable (migration 0034 not applied?) - expiry disabled"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_warning_flag(monkeypatch):
-    monkeypatch.setattr(subscriptions, "_READ_WARNED", False)
 
 
 @pytest.fixture
@@ -131,14 +124,16 @@ def test_approve_subscription_write_failure_does_not_block_approve(admin_db, cap
     assert "no such table" not in caplog.text
 
 
-def test_approve_subscription_read_failure_warns_and_still_approves(admin_db, caplog):
+def test_approve_subscription_read_failure_is_500_and_nothing_changes(admin_db):
     _seed_request(admin_db, "standard")
     admin_db.errors[("subscriptions", "select")] = RuntimeError("relation missing")
-    with caplog.at_level(logging.WARNING, logger="app"):
-        r = _resolve(True)
-    assert r.status_code == 200, r.text
-    assert TABLE_MSG in caplog.text
-    assert len(admin_db.calls_for("upgrade_requests", "update")) == 1
+    r = TestClient(fastapi_app, raise_server_exceptions=False).post(
+        f"/admin/upgrade-requests/{REQ}/resolve", json={"approve": True}
+    )
+    assert r.status_code == 500, r.text  # old code: 200 and a fresh 30 days (the renewal's remaining days were lost)
+    assert admin_db.calls_for("shops", "update") == []
+    assert admin_db.calls_for("upgrade_requests", "update") == []
+    assert admin_db.calls_for("subscriptions", "upsert") == []
 
 
 def test_reject_does_not_touch_subscriptions(admin_db):

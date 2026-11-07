@@ -25,7 +25,6 @@ _RETRY_BASE_SECONDS = 30  # retry delay = 30 * 2^(attempts - 1)
 _MAX_ERROR_LEN = 200
 
 _lock = threading.Lock()
-_claim_missing_logged = False  # migration 0037 not applied: WARNING once per process
 _waker = None
 _limiter: anyio.CapacityLimiter | None = None
 
@@ -78,24 +77,14 @@ def enqueue(sc, rows: list[dict]) -> None:
 
 
 def claim(sc, limit: int) -> list[dict]:
-    """Takes up to `limit` due rows (status -> processing, attempts + 1). Missing migration -> []."""
-    global _claim_missing_logged
+    """Takes up to `limit` due rows (status -> processing, attempts + 1). Errors propagate (the worker logs the class
+    and polls again)."""
     s = get_settings()
-    try:
-        res = sc.rpc("claim_webhook_events", {
-            "p_limit": limit,
-            "p_stale_seconds": s.webhook_claim_stale_seconds,
-            "p_max_attempts": s.webhook_max_attempts,
-        }).execute()
-    except Exception as exc:
-        if getattr(exc, "code", None) == "PGRST202":
-            with _lock:
-                first = not _claim_missing_logged
-                _claim_missing_logged = True
-            if first:
-                logger.warning("claim_webhook_events missing (migration 0037 not applied) - inbox worker idle")
-            return []
-        raise
+    res = sc.rpc("claim_webhook_events", {
+        "p_limit": limit,
+        "p_stale_seconds": s.webhook_claim_stale_seconds,
+        "p_max_attempts": s.webhook_max_attempts,
+    }).execute()
     data = getattr(res, "data", None)
     return list(data) if isinstance(data, list) else []
 
@@ -159,8 +148,7 @@ def bot_limiter() -> anyio.CapacityLimiter:
 
 
 def _reset_for_tests() -> None:
-    global _limiter, _waker, _claim_missing_logged
+    global _limiter, _waker
     with _lock:
         _limiter = None
         _waker = None
-        _claim_missing_logged = False

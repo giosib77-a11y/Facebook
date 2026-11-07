@@ -96,7 +96,7 @@ def test_threshold_is_configurable(db, monkeypatch):
     assert len(db.rpc_calls) == 1
 
 
-def test_missing_migration_falls_back_and_retries_after_600s(db, monkeypatch, caplog):
+def test_missing_function_is_a_logged_rpc_error_without_backoff(db, monkeypatch, caplog):
     clock = [1000.0]
     monkeypatch.setattr(product_search, "_now", lambda: clock[0])
     db.rpc_errors["search_products"] = RpcError("PGRST202")
@@ -104,24 +104,25 @@ def test_missing_migration_falls_back_and_retries_after_600s(db, monkeypatch, ca
         out = run("red shirt")
         assert "Red shirt" in out  # in-memory result
         assert len(db.rpc_calls) == 1
-        assert sum("migration 0040" in r.getMessage() for r in caplog.records) == 1
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings == ["search_products RPC failed (RpcError) - in-memory search"]
 
-        clock[0] += 599  # backoff is on - no RPC at all
+        clock[0] += 1  # no backoff: the very next search tries the RPC again; the WARNING is throttled (60 s)
         assert "Red shirt" in run("red shirt")
-        assert len(db.rpc_calls) == 1
-
-        clock[0] += 2  # 601 s after the failure - tries again (no restart needed)
-        db.rpc_errors.clear()
-        db.rpc_responses["search_products"] = [row()]
-        assert "Postgres hit" in run("red shirt")
         assert len(db.rpc_calls) == 2
 
-        # missing again: still only one WARNING per process
-        db.rpc_errors["search_products"] = RpcError("42883")
-        clock[0] += 601
-        assert "Red shirt" in run("red shirt")
+        db.rpc_errors.clear()  # the function appears - used on the next call, no restart and no waiting
+        db.rpc_responses["search_products"] = [row()]
+        clock[0] += 1
+        assert "Postgres hit" in run("red shirt")
         assert len(db.rpc_calls) == 3
-    assert sum("migration 0040" in r.getMessage() for r in caplog.records) == 1
+
+        db.rpc_errors["search_products"] = RpcError("42883")
+        clock[0] += 61  # past the throttle window: WARNING again
+        assert "Red shirt" in run("red shirt")
+        assert len(db.rpc_calls) == 4
+    assert sum(r.levelno == logging.WARNING for r in caplog.records) == 2
+    assert "migration" not in caplog.text and "not applied" not in caplog.text
 
 
 def test_other_error_falls_back_and_logs_class_only(db, monkeypatch, caplog):

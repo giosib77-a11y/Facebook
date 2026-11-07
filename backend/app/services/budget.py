@@ -2,9 +2,10 @@
 cap, per-shop monthly budget.
 
 Reads `llm_usage` totals per (provider, model) through the RPC `llm_usage_by_model` (migration 0038), prices them with
-`Settings.llm_price(model)` (USD / 1M tokens) and keeps a short in-process cache. Fail-open everywhere: when the RPC is
-missing (migration not applied) or fails, the spend checks are skipped (None) rather than switching every bot off.
-The kill-switch needs no database at all.
+`Settings.llm_price(model)` (USD / 1M tokens) and keeps a short in-process cache. Fail-open everywhere: when the RPC
+fails (any error, a missing function included) the spend check is skipped (None) rather than switching every bot off;
+the failure is cached for `CACHE_SECONDS` (one WARNING per window) and then tried again - there is no process-wide
+off switch. The kill-switch needs no database at all.
 
 Used by the webhook (S20-9); `llm.py` only checks the kill-switch itself.
 """
@@ -29,19 +30,16 @@ ROW_FIELDS = {  # llm_usage_by_model column -> price key
 
 _lock = threading.Lock()
 _cache: dict[tuple[str, str, datetime], tuple[float, float | None]] = {}  # key -> (expires monotonic, USD)
-_rpc_missing = False  # migration 0038 not applied: no more RPC attempts in this process
 _logged_day: dict[str, object] = {}  # WARNING kind ("cap" / "alert") -> UTC date it was last logged
 _unknown_models: set[str] = set()  # models already warned about (priced at the maximum)
 
 
 def reset() -> None:
     """Clears the cache and every flag (tests: the module state is process-global)."""
-    global _rpc_missing
     with _lock:
         _cache.clear()
         _logged_day.clear()
         _unknown_models.clear()
-        _rpc_missing = False
 
 
 def _now() -> datetime:
@@ -90,13 +88,10 @@ def _price_rows(data, settings) -> float:
 
 def cost_usd(sc, *, owner_id: str | None = None, shop_id: str | None = None, since: datetime) -> float | None:
     """Spend in USD since `since`: of one shop, of one owner's shops, or of the whole platform (both None).
-    None = unknown (migration missing / DB error / bad result) -> caller fails open."""
-    global _rpc_missing
-    key = (f"owner:{owner_id}" if owner_id else "", f"shop:{shop_id}" if shop_id else "", since)
+    None = unknown (RPC error / bad result) -> caller fails open."""
+    key =(f"owner:{owner_id}" if owner_id else "", f"shop:{shop_id}" if shop_id else "", since)
     now = time.monotonic()
     with _lock:
-        if _rpc_missing:
-            return None
         hit = _cache.get(key)
         if hit is not None and hit[0] > now:
             return hit[1]
@@ -110,13 +105,6 @@ def cost_usd(sc, *, owner_id: str | None = None, shop_id: str | None = None, sin
         value = _price_rows(getattr(res, "data", None), get_settings())
     except Exception as exc:
         value = None
-        if getattr(exc, "code", None) == "PGRST202":
-            with _lock:
-                first = not _rpc_missing
-                _rpc_missing = True
-            if first:
-                logger.warning("llm_usage_by_model missing (migration 0038 not applied) - LLM budget disabled")
-            return None
         logger.warning("llm_usage_by_model failed - LLM budget check skipped (%s)", type(exc).__name__)
     with _lock:
         for k in [k for k, (expires, _) in _cache.items() if expires <= now]:

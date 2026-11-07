@@ -113,7 +113,7 @@ def test_overview_does_not_recompute_alert_from_kill_switch(admin_db, monkeypatc
     assert llm["alert"] is False
 
 
-def test_overview_migration_missing_gives_null_usd(admin_db):
+def test_overview_rpc_error_gives_null_usd(admin_db):
     class Missing(Exception):
         code = "PGRST202"
 
@@ -128,7 +128,7 @@ def test_overview_migration_missing_gives_null_usd(admin_db):
     assert llm["daily_cap_usd"] == CAP
 
 
-def test_overview_migration_missing_with_kill_switch_still_alerts(admin_db, monkeypatch):
+def test_overview_rpc_error_with_kill_switch_still_alerts(admin_db, monkeypatch):
     class Missing(Exception):
         code = "PGRST202"
 

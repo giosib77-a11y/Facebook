@@ -4,8 +4,8 @@
 სარკეს კითხულობენ (ის admin.py / shops.py-ში იწერება როგორც აქამდე). ვადაგასულს დღიური
 pg_cron (`expire_subscriptions()`) `free`-ზე აბრუნებს.
 
-migration 0034-ის გარეშე: წაკითხვა → None, ჩაწერა → False (ერთი WARNING პროცესზე / თითო ჩაწერაზე),
-გამყიდველის და ადმინის ძველი ქცევა უცვლელია.
+წაკითხვის შეცდომა (ცხრილი არ არის / RLS / ქსელი) ყოველთვის ადის (Stage 24, A-042): ჩუმი `None` ფასიან მფლობელს
+ვადას აკარგვინებდა. ჩაწერის ჩავარდნა → WARNING + False (გამომძახებელი წყვეტს).
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -14,8 +14,6 @@ PAID_PERIOD_DAYS = 30
 EXPIRY_WARNING_DAYS = 3
 
 logger = logging.getLogger("app")
-
-_READ_WARNED = False  # "ცხრილი არ არის" WARNING — ერთხელ პროცესზე
 
 
 def parse_ts(value) -> datetime | None:
@@ -56,24 +54,14 @@ def next_paid_until(current: dict | None, tier: str, *, renewal: bool, now: date
 
 
 def read(client, owner_id: str, *, strict: bool = False) -> dict | None:
-    """მფლობელის `{tier, paid_until}` მწკრივი; არ არის → None.
+    """მფლობელის `{tier, paid_until}` მწკრივი; არ არის → None. წაკითხვის შეცდომა ყოველთვის ადის.
 
-    შეცდომა (ცხრილი არ არის / RLS / ქსელი) → None + ერთი WARNING პროცესზე; `strict=True` — შეცდომას აგდებს
-    (extend-ისთვის: წაკითხვის ჩავარდნაზე არსებულ ვადას არ ვაქვეითებთ).
+    `strict` — deprecated, უგულებელყოფილია (ახლა ყოველთვის strict); S24-10 შლის (admin.py-ის გამოძახებასთან ერთად).
     """
-    global _READ_WARNED
-    try:
-        rows = (
-            client.table("subscriptions").select("tier,paid_until")
-            .eq("owner_id", str(owner_id)).limit(1).execute().data
-        )
-    except Exception:
-        if not _READ_WARNED:
-            _READ_WARNED = True
-            logger.warning("subscriptions table unavailable (migration 0034 not applied?) - expiry disabled")
-        if strict:
-            raise
-        return None
+    rows = (
+        client.table("subscriptions").select("tier,paid_until")
+        .eq("owner_id", str(owner_id)).limit(1).execute().data
+    )
     return dict(rows[0]) if rows else None
 
 
@@ -94,7 +82,8 @@ def write(sc, owner_id: str, tier: str, paid_until: datetime | None) -> bool:
 
 
 def apply_tier(sc, owner_id: str, tier: str, *, renewal: bool) -> datetime | None:
-    """tier-ის ცვლილებას ვადას უწერს (`next_paid_until`). ჩაწერის ჩავარდნა გამომძახებელს არ აჩერებს."""
+    """tier-ის ცვლილებას ვადას უწერს (`next_paid_until`). წაკითხვის შეცდომა ადის (ჩაწერამდე — ვადა არ იკარგება);
+    ჩაწერის ჩავარდნა გამომძახებელს არ აჩერებს (`write` — WARNING + False)."""
     paid_until = next_paid_until(read(sc, owner_id), tier, renewal=renewal, now=datetime.now(timezone.utc))
     write(sc, owner_id, tier, paid_until)
     return paid_until

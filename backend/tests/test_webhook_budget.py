@@ -291,13 +291,13 @@ def test_budget_rpc_error_keeps_bot_answering(env, caplog):
     assert not any("bot budget" in m for m in _warnings(caplog))
 
 
-def test_missing_migration_keeps_bot_answering(env):
+def test_missing_function_rpc_error_keeps_bot_answering(env):
     db, sent, calls = env
 
     class Missing(Exception):
         code = "PGRST202"
 
-    db.rpc_errors["llm_usage_by_model"] = Missing("function not found")
+    db.rpc_errors["llm_usage_by_model"] = Missing("function not found")  # fail-open, same as any RPC error
 
     _run()
 

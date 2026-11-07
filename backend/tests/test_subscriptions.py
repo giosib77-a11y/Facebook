@@ -6,7 +6,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi.testclient import TestClient
+from postgrest.exceptions import APIError
 
+from app.core.db import SCHEMA_ERROR_DETAIL
+from app.main import app as fastapi_app
 from app.services import subscriptions
 from app.services.subscriptions import next_paid_until, status_for
 from tests.conftest import USER_ID, FakeSupabase
@@ -14,12 +18,6 @@ from tests.conftest import USER_ID, FakeSupabase
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 D = timedelta(days=1)
 SHOP = "aaaaaaaa-0000-0000-0000-000000000001"
-TABLE_MSG = "subscriptions table unavailable (migration 0034 not applied?) - expiry disabled"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_warning_flag(monkeypatch):
-    monkeypatch.setattr(subscriptions, "_READ_WARNED", False)
 
 
 # ---- next_paid_until ---------------------------------------------------------
@@ -120,23 +118,25 @@ def test_read_missing_row_is_none_without_warning(caplog):
     db = FakeSupabase()
     with caplog.at_level(logging.WARNING, logger="app"):
         assert subscriptions.read(db, USER_ID) is None
-    assert TABLE_MSG not in caplog.text
+    assert caplog.text == ""
 
 
-def test_read_error_is_none_and_warns_once_per_process(caplog):
+def test_read_error_always_raises_and_logs_nothing(caplog):
     db = FakeSupabase()
     db.errors[("subscriptions", "select")] = RuntimeError("relation does not exist")
     with caplog.at_level(logging.WARNING, logger="app"):
-        assert subscriptions.read(db, USER_ID) is None
-        assert subscriptions.read(db, USER_ID) is None
-    assert caplog.text.count(TABLE_MSG) == 1
+        for _ in range(2):  # no "once per process" state
+            with pytest.raises(RuntimeError):
+                subscriptions.read(db, USER_ID)
+    assert caplog.text == ""
 
 
-def test_read_strict_raises_on_error():
+@pytest.mark.parametrize("strict", [True, False])
+def test_read_raises_whatever_strict_says(strict):
     db = FakeSupabase()
     db.errors[("subscriptions", "select")] = RuntimeError("down")
     with pytest.raises(RuntimeError):
-        subscriptions.read(db, USER_ID, strict=True)
+        subscriptions.read(db, USER_ID, strict=strict)  # deprecated parameter, ignored
 
 
 class _FailsOnce(FakeSupabase):
@@ -158,7 +158,8 @@ class _FailsOnce(FakeSupabase):
 def test_read_recovers_after_first_failure():
     db = _FailsOnce()
     db.responses[("subscriptions", "select")] = [{"tier": "basic", "paid_until": None}]
-    assert subscriptions.read(db, USER_ID) is None
+    with pytest.raises(RuntimeError):
+        subscriptions.read(db, USER_ID)
     assert subscriptions.read(db, USER_ID) == {"tier": "basic", "paid_until": None}
 
 
@@ -257,17 +258,20 @@ def test_usage_without_subscriptions_row_is_null(client, user_db):
     assert body["expires_soon"] is False and body["expired"] is False
 
 
-def test_usage_table_error_is_null_false_and_200(client, user_db, caplog):
+def test_usage_table_error_is_503_for_a_schema_error_and_500_otherwise(client, user_db):
     _seed_usage(user_db, "basic")
-    user_db.errors[("subscriptions", "select")] = RuntimeError("relation does not exist")
-    with caplog.at_level(logging.WARNING, logger="app"):
-        r = client.get(f"/shops/{SHOP}/usage")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["paid_until"] is None
-    assert body["expires_soon"] is False and body["expired"] is False
-    assert body["tier"] == "basic"
-    assert TABLE_MSG in caplog.text
+    api = TestClient(fastapi_app, raise_server_exceptions=False)
+    user_db.errors[("subscriptions", "select")] = APIError(
+        {"code": "PGRST205", "message": "Could not find the table", "details": None, "hint": None}
+    )
+    r = api.get(f"/shops/{SHOP}/usage")
+    assert r.status_code == 503, r.text
+    assert r.json() == {"detail": SCHEMA_ERROR_DETAIL}  # not `paid_until: null`
+
+    user_db.errors[("subscriptions", "select")] = RuntimeError("connection reset")
+    r = api.get(f"/shops/{SHOP}/usage")
+    assert r.status_code == 500, r.text
+    assert "paid_until" not in r.json()
 
 
 def test_usage_other_fields_unchanged(client, user_db):

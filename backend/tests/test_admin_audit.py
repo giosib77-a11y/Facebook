@@ -19,20 +19,13 @@ SHOP = "aaaaaaaa-0000-0000-0000-000000000001"
 REQ = "r1"
 SHOP_NAME = "Secret Boutique Name"
 TABLE = "admin_audit_log"
-MISSING_MSG = "admin_audit_log missing (migration 0041 not applied) - admin actions are not audited"
+FAILED_MSG = "admin audit write failed (PgError, action=shop.update)"
 
 
 class PgError(Exception):
     def __init__(self, code):
         super().__init__("postgrest error with a payload that must never reach the log")
         self.code = code
-
-
-@pytest.fixture(autouse=True)
-def _fresh_audit_flag():
-    admin_audit._reset_for_tests()
-    yield
-    admin_audit._reset_for_tests()
 
 
 @pytest.fixture
@@ -193,7 +186,7 @@ def test_unknown_shop_and_owner_404_write_no_audit_row(admin_db):
 
 
 # ---- (6) migration 0041 not applied -----------------------------------------
-def test_missing_table_keeps_action_and_warns_once(admin_db, caplog):
+def test_missing_table_keeps_action_and_warns_on_every_failure(admin_db, caplog):
     admin_db.responses[("shops", "select")] = [_shop_row()]
     admin_db.errors[(TABLE, "insert")] = PgError("PGRST205")
     with caplog.at_level(logging.WARNING, logger="app"):
@@ -201,16 +194,19 @@ def test_missing_table_keeps_action_and_warns_once(admin_db, caplog):
         r2 = _patch({"bot_enabled": True})
     assert r1.status_code == 200 and r2.status_code == 200
     assert len(_inserts(admin_db)) == 2  # tried both times; the table may appear without a restart
-    assert caplog.text.count(MISSING_MSG) == 1
+    assert caplog.text.count(FAILED_MSG) == 2
+    assert "missing" not in caplog.text and "not applied" not in caplog.text
     assert len(admin_db.calls_for("shops", "update")) == 2  # the actions themselves were applied
 
 
-def test_missing_table_postgres_code_42p01_also_warns_once(admin_db, caplog):
+def test_missing_table_postgres_code_42p01_also_warns_on_every_failure(admin_db, caplog):
     admin_db.responses[("shops", "select")] = [_shop_row()]
     admin_db.errors[(TABLE, "insert")] = PgError("42P01")
     with caplog.at_level(logging.WARNING, logger="app"):
         assert _patch({"bot_enabled": False}).status_code == 200
-    assert caplog.text.count(MISSING_MSG) == 1
+        assert _patch({"bot_enabled": True}).status_code == 200
+    assert caplog.text.count(FAILED_MSG) == 2
+    assert "missing" not in caplog.text and "not applied" not in caplog.text
 
 
 # ---- (7) other write error ---------------------------------------------------
@@ -224,7 +220,7 @@ def test_other_write_error_keeps_action_and_logs_class_only(admin_db, caplog):
     assert SHOP not in caplog.text and OWNER not in caplog.text
     assert "connection reset" not in caplog.text
     assert "bot_enabled" not in caplog.text
-    assert MISSING_MSG not in caplog.text
+    assert "missing" not in caplog.text and "not applied" not in caplog.text
 
 
 # ---- (8) record() unit tests -------------------------------------------------
@@ -291,24 +287,15 @@ def test_record_never_raises_on_write_error(caplog):
     assert "postgrest error" not in caplog.text and OWNER not in caplog.text
 
 
-def test_record_missing_table_returns_false_and_warns_once(caplog):
+def test_record_missing_table_returns_false_and_warns_on_every_failure(caplog):
     db = FakeSupabase()
     db.errors[(TABLE, "insert")] = PgError("PGRST205")
     with caplog.at_level(logging.WARNING, logger="app"):
         assert admin_audit.record(db, ADMIN, "shop.update", SHOP) is False
         assert admin_audit.record(db, ADMIN, "shop.update", SHOP) is False
-    assert caplog.text.count(MISSING_MSG) == 1
+    assert caplog.text.count(FAILED_MSG) == 2
+    assert "missing" not in caplog.text and "not applied" not in caplog.text
     assert len(db.calls_for(TABLE, "insert")) == 2
-
-
-def test_reset_for_tests_allows_the_warning_again(caplog):
-    db = FakeSupabase()
-    db.errors[(TABLE, "insert")] = PgError("PGRST205")
-    with caplog.at_level(logging.WARNING, logger="app"):
-        admin_audit.record(db, ADMIN, "shop.update", SHOP)
-        admin_audit._reset_for_tests()
-        admin_audit.record(db, ADMIN, "shop.update", SHOP)
-    assert caplog.text.count(MISSING_MSG) == 2
 
 
 def test_actions_and_detail_keys_match_the_spec():

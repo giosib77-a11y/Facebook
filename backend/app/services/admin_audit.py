@@ -24,21 +24,18 @@ DETAIL_KEYS = frozenset({
     "tier", "days", "paid_until", "email_sent",
 })
 
-_MISSING_CODES = ("PGRST205", "42P01")  # ცხრილი არ არის (PostgREST schema cache / Postgres undefined_table)
 _SCALARS = (str, int, float, bool, type(None))
 
 logger = logging.getLogger("app")
-_MISSING_WARNED = False
 
 
 def record(sc, admin_id: str, action: str, target: str | None, details: dict | None = None) -> bool:
-    """ჩაწერს ადმინის მოქმედებას. True — ჩაიწერა; False — ვერ ჩაიწერა (ლოგში WARNING).
+    """ჩაწერს ადმინის მოქმედებას. True — ჩაიწერა; False — ვერ ჩაიწერა (ლოგში WARNING ყოველ ჩავარდნაზე).
 
     არასდროს აგდებს, გარდა `ValueError`-ისა: უცნობი action / details-ის უცნობი გასაღები ან არა-სკალარი
     მნიშვნელობა პროგრამისტის შეცდომაა და უნდა გამოჩნდეს ტესტში, არა production-ში ჩუმად.
     `None` მნიშვნელობები ამოიღება.
     """
-    global _MISSING_WARNED
     if action not in ACTIONS:
         raise ValueError(f"unknown admin audit action: {action!r}")
     clean: dict = {}
@@ -58,18 +55,6 @@ def record(sc, admin_id: str, action: str, target: str | None, details: dict | N
     try:
         sc.table(TABLE).insert(row).execute()
     except Exception as exc:
-        if getattr(exc, "code", None) in _MISSING_CODES:
-            if not _MISSING_WARNED:
-                _MISSING_WARNED = True
-                logger.warning(
-                    "admin_audit_log missing (migration 0041 not applied) - admin actions are not audited"
-                )
-            return False
         logger.warning("admin audit write failed (%s, action=%s)", type(exc).__name__, action)
         return False
     return True
-
-
-def _reset_for_tests() -> None:
-    global _MISSING_WARNED
-    _MISSING_WARNED = False

@@ -20,7 +20,7 @@ MONTH_START = datetime(2026, 11, 1, 0, 0, 0, tzinfo=timezone.utc)
 KILL_TEXT = "LLM_KILL_SWITCH ჩართულია — ბოტი გამორთულია"
 CLAUDE = "claude-haiku-5-5"
 GPT = "gpt-6-luna"
-MISSING_WARNING = "llm_usage_by_model missing (migration 0038 not applied) - LLM budget disabled"
+UNKNOWN_WARNING = "llm_usage_by_model failed - LLM budget check skipped (RpcMissing)"
 
 
 class RpcMissing(Exception):
@@ -246,15 +246,19 @@ def test_expired_cache_entries_are_pruned(env):
     assert len(budget._cache) == 1  # the five expired keys are gone
 
 
-def test_missing_function_disables_the_budget_with_one_warning(env, caplog):
+def test_missing_function_is_a_logged_rpc_error_not_a_permanent_off_switch(env, caplog):
     db = FakeSupabase()
     db.rpc_errors["llm_usage_by_model"] = RpcMissing("function not found")
     with caplog.at_level(logging.WARNING, logger="app"):
         assert budget.cost_usd(db, shop_id="s1", since=MONTH_START) is None
         assert budget.cost_usd(db, since=DAY_START) is None
         assert budget.cost_usd(db, shop_id="s1", since=DAY_START) is None
-    assert len(db.rpc_calls) == 1  # no RPC after the first PGRST202
-    assert _warnings(caplog) == [MISSING_WARNING]
+        assert budget.cost_usd(db, shop_id="s1", since=MONTH_START) is None  # cached failure: no RPC
+        assert len(db.rpc_calls) == 3  # one RPC per scope - PGRST202 does not stop the next scope
+        env.clock.now += 61
+        assert budget.cost_usd(db, shop_id="s1", since=MONTH_START) is None
+        assert len(db.rpc_calls) == 4  # after the TTL the RPC is tried again
+    assert _warnings(caplog) == [UNKNOWN_WARNING] * 4  # same text as any other error
 
 
 def test_other_rpc_error_is_unknown_with_a_warning_and_retried_after_the_ttl(env, caplog):
@@ -475,10 +479,13 @@ def test_unavailable_spend_data_never_blocks(env, caplog):
     db = FakeSupabase()
     db.rpc_errors["llm_usage_by_model"] = RpcMissing("missing")
     with caplog.at_level(logging.WARNING, logger="app"):
-        assert budget.blocked_reason(db, _shop("free")) is None
-        assert budget.blocked_reason(db, _shop("free")) is None
-    assert _warnings(caplog) == [MISSING_WARNING]
-    assert len(db.rpc_calls) == 1
+        shop = _shop("free")
+        assert budget.blocked_reason(db, shop) is None
+        first_round = len(db.rpc_calls)
+        assert budget.blocked_reason(db, shop) is None
+    assert first_round >= 1
+    assert len(db.rpc_calls) == first_round  # every scope's failure is cached: the 2nd check calls nothing
+    assert _warnings(caplog) == [UNKNOWN_WARNING] * first_round  # one WARNING per failed RPC
 
 
 def test_budget_warnings_never_contain_the_owner_id(env, caplog):

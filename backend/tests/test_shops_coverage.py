@@ -5,14 +5,15 @@ Covered here: PATCH /shops/{id} (bot language), GET usage (404, pending-table fa
 upgrade-request (insert failure), downgrade-free (404, pending-cancel failure), export 404, analytics,
 clear-knowledge 404 on an empty write, `_cancel_pending_requests([])`.
 """
-import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 from postgrest.exceptions import APIError
 
 import app.api.shops as shops_mod
-from app.services import subscriptions
+from app.core.db import SCHEMA_ERROR_DETAIL
+from app.main import app as fastapi_app
 
 SHOP_ID = "22222222-2222-2222-2222-222222222222"
 NOT_FOUND = "მაღაზია ვერ მოიძებნა ან არ არის თქვენი"
@@ -139,18 +140,20 @@ def test_usage_subscription_far_in_future(client, user_db):
     assert body["expires_soon"] is False and body["expired"] is False
 
 
-def test_usage_without_migration_0034_has_no_expiry_and_warns_once(client, user_db, monkeypatch, caplog):
-    monkeypatch.setattr(subscriptions, "_READ_WARNED", False)
+@pytest.mark.parametrize("exc, status_code, body", [
+    (_api_error("PGRST205", "Could not find the table"), 503, {"detail": SCHEMA_ERROR_DETAIL}),
+    (RuntimeError("relation \"subscriptions\" does not exist"), 500, None),
+])
+def test_usage_subscriptions_read_error_is_503_for_schema_and_500_otherwise(
+    client, user_db, exc, status_code, body
+):
     _owner(user_db, "standard")
-    user_db.errors[("subscriptions", "select")] = RuntimeError("relation \"subscriptions\" does not exist")
-    with caplog.at_level(logging.WARNING, logger="app"):
-        first = client.get(f"/shops/{SHOP_ID}/usage")
-        second = client.get(f"/shops/{SHOP_ID}/usage")
-    for r in (first, second):
-        assert r.status_code == 200
-        assert r.json()["paid_until"] is None
-        assert r.json()["expires_soon"] is False and r.json()["expired"] is False
-    assert caplog.text.count("subscriptions table unavailable") == 1
+    user_db.errors[("subscriptions", "select")] = exc
+    r = TestClient(fastapi_app, raise_server_exceptions=False).get(f"/shops/{SHOP_ID}/usage")
+    assert r.status_code == status_code, r.text  # old code: 200 with `paid_until: null`
+    if body is not None:
+        assert r.json() == body
+    assert "paid_until" not in r.json()
 
 
 def test_usage_free_tier_never_reads_subscriptions(client, user_db):

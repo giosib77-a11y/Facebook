@@ -12,7 +12,6 @@ from app.api.admin import get_current_admin
 from app.config import Settings
 from app.core.security import CurrentAuth
 from app.main import app as fastapi_app
-from app.services import admin_audit
 from tests.conftest import FakeSupabase
 
 ADMIN = "admin-uuid"
@@ -60,13 +59,6 @@ class Recorder:
     def send_email(self, to, subject, text):
         self.sent.append((to, subject, text))
         return self.send_result
-
-
-@pytest.fixture(autouse=True)
-def _fresh_audit_flag():
-    admin_audit._reset_for_tests()
-    yield
-    admin_audit._reset_for_tests()
 
 
 @pytest.fixture
