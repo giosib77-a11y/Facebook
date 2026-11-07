@@ -209,6 +209,13 @@ backend-ის deploy-მდე ან მის შემდეგ — task-შ
   - შეცვლილი assert-ები (სახელით, report-ში ძველი → ახალი): `test_file_parsing.py` ~79 (`[: pdf_extract.MAX_CHARS] + SUFFIX` → `[: pdf_extract.MAX_CHARS - len(SUFFIX)] + SUFFIX`), `test_knowledge_upload.py` ~395 (`"a" * 50_000 + …` → `"a" * (50_000 - len(suffix)) + …`). სხვა ტესტი არ იცვლება.
   - done when: საერთო (backend).
 
+### Finish-check (Stage 24, 2026-11-07) — should-fix (fix round 1)
+- [ ] **S24-14 — should-fix (finish-check: code-reviewer + security-auditor, ორივემ ცალ-ცალკე; ორკესტრატორმა კოდში დაადასტურა): `PATCH /admin/shops/{id}` (`subscription_tier`) — `subscriptions`-ის წაკითხვა ყველა ჩაწერამდე** · owner: backend-dev · files: `backend/app/api/admin.py`, `backend/tests/test_subscription_admin.py` · depends: —
+  - მიზეზი: `admin.py:412-423` — ჯერ `bot_enabled`-ის update (413), შემდეგ `shops.subscription_tier` მფლობელის ყველა მაღაზიაზე (418-419), მხოლოდ მერე `subscriptions.apply_tier` → `read` (422). Stage 24-დან `read` შეცდომას აგდებს (S24-8) → წაკითხვის ჩავარდნისას tier უკვე შეცვლილია, `paid_until` არ ჩაიწერა (ფასიანი პაკეტი ვადის გარეშე), `_apply_bot_limit` არ გაეშვა (free-ზე ზედმეტი ბოტები ჩართულია), audit არ ჩაიწერა, ადმინი ხედავს 500 / 503-ს. ეწინააღმდეგება API Contract-ს (`PROJECT.md` „Stage 24": „`subscriptions`-ის **წაკითხვის** შეცდომა → 500 / 503 **ყველა ჩაწერამდე**"). approve-ის გზაზე (`resolve_upgrade_request`) რიგი სწორია — იმავე ნიმუშით.
+  - გასწორება: `payload.subscription_tier is not None and owner_id` → `subscriptions.read(sc, owner_id)` **`bot_enabled`-ისა და `shops`-ის update-ებამდე**; ვადის ჩაწერა წინასწარ წაკითხული მნიშვნელობით (`next_paid_until(current, tier, renewal=False, now=…)` + `write`, ან `apply_tier`-ს არასავალდებულო `current` არგუმენტი — `subscriptions.py` **არ** იცვლება, თუ ეს `admin.py`-ში `next_paid_until` + `write`-ით კეთდება). ქცევა წარმატების გზაზე — ბაიტ-იდენტური (`_apply_bot_limit`, audit, პასუხი). იმავე ფაილში: `admin.py:~514`-ის მოძველებული კომენტარი „ჩავარდნა approve-ს არ აჩერებს" → „write-ის ჩავარდნა approve-ს არ აჩერებს; read-ის — აჩერებს (ჩაწერამდე)".
+  - ტესტი (ძველზე ვარდება): `test_subscription_admin.py::test_patch_tier_subscription_read_failure_is_an_error_and_nothing_changes` — parametrize `APIError(PGRST205)` → 503 `SCHEMA_ERROR_DETAIL`, `RuntimeError` → 500; `calls_for("shops", "update") == []` (არც `bot_enabled`, არც tier — payload-ში ორივე), `subscriptions` upsert 0, `admin_audit_log` insert 0 (ძველზე shops update ≥1 → ვარდება). არსებული `test_patch_tier_subscription_failure_still_200` (upsert-ის ჩავარდნა) — უცვლელად მწვანე.
+  - done when: საერთო (backend); coverage gate ≥85; `git diff --stat` — მხოლოდ ეს 2 ფაილი.
+
 ### Stage 24 — Deploy plan (მფლობელი; აგენტი არაფერს უშვებს)
 0. **წინაპირობა:** `### Stage 23 — Deploy plan` (`## Stage 23 — Done`-ში) — მინიმუმ ნაბიჯი 3 (`0041_admin_audit_log.sql`); Stage 23-ისა და 24-ის კოდი ერთ ბრენჩზეა და ერთ merge-ში წავა — ჯერ Stage 23-ის ნაბიჯები 1–4, მერე ეს.
 1. **G1 — SQL Editor, წამკითხველი query (`## Blockers`-ში ზუსტი ტექსტი) — როდის: ახლავე / S24-7-მდე.** ყველა მწკრივი `true` → ჩატში „G1 ✅" + `server_version_num` (S24-1-ის `major_version`). `false` → შესაბამისი migration (რიგით) ჯერ გაუშვი, მერე query თავიდან. query-ის შეცდომა `relation "cron.job" does not exist` → 0030 / pg_cron არ არის — მომწერე.
@@ -1192,6 +1199,14 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 ### Stage 24 (დაგეგმვისას, 2026-11-06)
 - (S24-2, nit) non-DEFINER ფუნქციებს `apply_stock_delta`, `change_order_status`, `decrement_stock` (და trigger `set_updated_at`) ფიქსირებული `search_path` არ აქვს (დანარჩენებს `search_path=""`). EXECUTE მხოლოდ `service_role`-ს აქვს (03_functions (2)), ამიტომ ექსპლოიტის გზა არ ჩანს; ახალ migration-ში `alter function … set search_path = ''` — მფლობელის გადაწყვეტილებით.
 - (S24-3, nit) Supabase-ის default grant-ებით `anon` / `authenticated`-ს აქვს `TRUNCATE`, `TRIGGER`, `REFERENCES` ბიზნეს ცხრილებზე (shops, products, orders, upgrade_requests, bot_conversations, bot_customers); TRUNCATE RLS-ს არ ემორჩილება, მაგრამ PostgREST მას არ ავლენს (API-დან ექსპლოიტი არ არის). გასწორება ახალ migration-ში: `revoke truncate, references, trigger on all tables in schema public from anon, authenticated` + 02_privileges-ში assert — მფლობელის გადაწყვეტილებით.
+- **Stage 24 finish-check (2026-11-07; code-reviewer 0/1/9, security-auditor 0/1/6 — should-fix ერთი და იგივე → S24-14):**
+  - (nit, ორივე reviewer) `04_tenant_isolation.sql` — anon-ის `update … set x = x` no-op-ია და მხოლოდ რაოდენობა მოწმდება → anon-ის UPDATE-ის grant/პოლისის რეგრესია მწვანე დარჩებოდა; `try_exec` → `ok:<row_count>` ან sentinel მნიშვნელობა. ასევე A→B: B-ს პროდუქტის UPDATE (`price`) და A-ს INSERT B-ს `shop_id`-ით `orders` / `bot_conversations` / `bot_customers`-ში არ მოწმდება (01 პოლისის მხოლოდ სახელს ამოწმებს, არა პირობას).
+  - (nit, security-auditor) `02_privileges.sql` — `orders`-ზე სვეტების UPDATE-ის ინვენტარი არ არის (მხოლოდ ცხრილი + `status`); `grant update (total) on orders to authenticated` გაივლიდა 02-საც და 04-საც → `is_empty` ყველა სვეტზე.
+  - (nit, code-reviewer) echo-ს გზაზე (`webhook.py:516-522`) `_append_history` / `_load_conversation`-ის შეცდომა WARNING-ით იჭერება → inbox-ის მწკრივი `done`, retry-ის გარეშე; გარდამავალი DB-ს შეცდომისას გამყიდველის ხელით პასუხის პაუზა არ ჩაიწერება (Stage 24-მდეც ასე იყო — რეგრესია არ არის). Decision Log-ის „შეცდომა ადის → worker-ის retry" სულისკვეთებით — inbox-ის გზაზე raise.
+  - (nit, ორივე) worker-ის retry-ზე (`webhook.py:527,546,622`) `_rate_limited` და `track_bot_customer` (`day_count` +1) თავიდან სრულდება → დროებითი DB-ს შეცდომისას `daily_cap`-ის მცირე გადაჭარბება; `track_bot_customer` → `_load_conversation`-ის შემდეგ.
+  - (nit, code-reviewer) legacy გზაზე (`WEBHOOK_INBOX_ENABLED=false`, dev) BackgroundTask-ის `APIError` ახალ `api_error_handler`-ს response-ის დაწყების შემდეგ ხვდება → Starlette `RuntimeError("Caught handled exception, but response already started.")` traceback ლოგში; `_process_events_limited`-ში `try/except` → WARNING კლასით.
+  - (nit, code-reviewer) `services/inbox.py` — `_lock` / `threading` მხოლოდ `_reset_for_tests`-ს რჩება (მკვდარი); `services/budget.py:92` `key =(` ფორმატირება.
+  - (nit, code-reviewer) README:~525 „ადმინში 20 000…200 000" — `_ADMIN_ORDERS_MAX` წაიშალა (§6 სწორია); README:~531 „Meta-ს განმეორებული `mid` ბოტს ორჯერ არ ამუშავებს" → „(inbox-ის გზაზე)".
 - (S24-11, nit) `0038`-ის header-ის ფრაზა „0035-ის `llm_tokens_used` უცვლელია" 0042-ის შემდეგ მოძველებულია — ლაივში გაშვებული migration-ის ფაილი არ იცვლება (ისტორიული კომენტარი); ინფორმაციისთვის.
 - (S24-9, nit) `api/webhook.py`-ის `_process_events`-ის WARNING-ები (`საუბრის შენახვა ვერ მოხერხდა`, over-limit და მთავარი branch) `exc_info=True`-ით წერს traceback-ს exception-ის ტექსტით — „მხოლოდ კლასის სახელი"-ს წესთან შესაბამისობისთვის `exc_info` → `type(exc).__name__`.
 - (S24-7, nit) `scripts/backfill_image_descriptions.py`-ს select-ის შეცდომაზე საკუთარი `_MISSING_CODES` და შეტყობინება „run migration 0028 first" (exit 2) რჩება — სკრიპტის გაშვების შემოწმებაა, ჩუმი fallback არა; გამარტივება — მფლობელის გადაწყვეტილებით.
@@ -1569,8 +1584,8 @@ Stage 16 — ბოტის გრაფი: preprocess (შაბლონე�
 ## Run State
 - Stage: Stage 24
 - Stage start commit: b49c81d
-- Finish-check this stage: not run
-- Fix rounds this stage: 0/2
+- Finish-check this stage: done (2026-11-07: code-reviewer 0/1/9, security-auditor 0/1/6 — ერთი და იგივე should-fix → S24-14; nit-ები → Backlog „Stage 24 finish-check"; browser-tester — არ გაეშვა: frontend Stage 24-ში არ შეცვლილა, e2e 27 passed; lint 0 error, vitest 116, build `dist` უცვლელი, pytest 3003)
+- Fix rounds this stage: 1/2
 - Failed attempts: —
 
 ## Last Session
