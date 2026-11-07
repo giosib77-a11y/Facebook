@@ -43,10 +43,6 @@ DESCRIBE_SYSTEM = (
 )
 USER_TEXT = "Photo to describe:"
 
-# "image_description" column missing (migration 0028 not applied): set once, then no more LLM calls.
-_column_missing = False
-
-_MISSING_CODES = frozenset({"PGRST204", "42703"})
 _FILLER = frozenset({
     "en", "ka", "the", "and", "with", "of", "a", "an", "in", "on", "for", "is", "it", "its", "this", "that",
     "has", "shows", "photo", "image", "item", "product", "visible",
@@ -124,19 +120,12 @@ def describe_product_image(shop_id, image_url) -> str | None:
         return None
 
 
-def descriptions_enabled() -> bool:
-    """False once a save found the column missing (migration 0028 not applied) - no point calling the LLM."""
-    return not _column_missing
-
-
 def save_image_description(sc, product_id, shop_id, image_url, description) -> bool:
     """products.image_description = description for this product of this shop (sc = service client; the
     caller has already checked ownership). With a str image_url the update also requires the row to
     still have that photo, so a concurrent photo change is never given the old description.
-    True = the update ran. Never raises."""
-    global _column_missing
-    if _column_missing:
-        return False
+    True = the update ran. Never raises: every failure -> WARNING (shop id + exception class) and False;
+    there is no global switch-off (Stage 24: a missing column is a bug, not a state to remember)."""
     try:
         query = (
             sc.table("products").update({"image_description": description})
@@ -144,16 +133,10 @@ def save_image_description(sc, product_id, shop_id, image_url, description) -> b
         )
         if isinstance(image_url, str):
             query = query.eq("image_url", image_url)
-        query.execute()  # not core.db.run: it hides the error text in production, which we need below
+        query.execute()  # not core.db.run: best-effort, a failure must not become an HTTP error
         return True
     except Exception as exc:
-        message = getattr(exc, "message", None) or str(exc)
-        if getattr(exc, "code", None) in _MISSING_CODES and "image_description" in str(message):
-            _column_missing = True
-            logger.warning("products.image_description missing (migration 0028 not applied) - "
-                           "product photo descriptions disabled")
-        else:
-            logger.warning("image description save failed (shop=%s, %s)", shop_id, type(exc).__name__)
+        logger.warning("image description save failed (shop=%s, %s)", shop_id, type(exc).__name__)
         return False
 
 

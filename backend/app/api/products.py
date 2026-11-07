@@ -19,9 +19,6 @@ from app.services.import_products import parse_products_file, preview_file
 router = APIRouter(prefix="/products", tags=["products"])
 logger = logging.getLogger("app")
 
-# PostgREST/Postgres კოდები, რაც ნიშნავს „სვეტი/ცხრილი ჯერ არ არსებობს"
-_MIGRATION_MISSING = ("42703", "42P01", "PGRST202", "PGRST204")
-
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5MB
 MAX_IMAGE_BYTES = 8 * 1024 * 1024   # 8MB — პროდუქტის ფოტო
 # დაშვებული სურათის ტიპები → ფაილის გაფართოება
@@ -100,7 +97,7 @@ def _refresh_image_description(
     ფოტო + ლიმიტი (30/სთ მაღაზიაზე, მოწმდება აქ, დაგეგმვისას) → background task. გარე/სხვა მაღაზიის ფოტოს
     არ აღწერს. background-ის დასრულებამდე ბოტი ძველებურად მუშაობს (აღწერის გარეშე)."""
     try:
-        if not shop_id or not vision.descriptions_enabled():
+        if not shop_id:
             return
         own = bool(_own_image_path(image_url, shop_id))
         if clear:
@@ -119,8 +116,8 @@ def _product_limit_left(auth, shop_id) -> int | None:
     """დარჩენილი პროდუქტების რაოდენობა პაკეტის მიხედვით. None = ულიმიტო.
 
     ⚠️ რევიუ P2-8: ადრე ნებისმიერი შეცდომა (ქსელის შეფერხებაც) `None`-ს აბრუნებდა,
-    ანუ ლიმიტს **სრულად თიშავდა** (fail-open). ახლა მხოლოდ „მიგრაცია ჯერ არ
-    გაშვებულა" აბრუნებს None-ს; ნამდვილ შეცდომაზე 503 — ლიმიტი ვერ შემოწმდა,
+    ანუ ლიმიტს **სრულად თიშავდა** (fail-open). Stage 24 (A-042): „მიგრაცია ჯერ არ გაშვებულა"
+    გამონაკლისიც წაიშალა — **ნებისმიერ** შეცდომაზე 503: ლიმიტი ვერ შემოწმდა,
     ამიტომ ჩაწერასაც არ ვუშვებთ (fail-closed).
     """
     try:
@@ -141,8 +138,6 @@ def _product_limit_left(auth, shop_id) -> int | None:
     except APIError as e:
         code = getattr(e, "code", None)
         msg = getattr(e, "message", None) or str(e)
-        if code in _MIGRATION_MISSING or "does not exist" in msg or "Could not find" in msg:
-            return None  # subscription_tier ჯერ არ არსებობს — ლიმიტი გამორთულია
         logger.warning("ლიმიტის შემოწმება ჩავარდა (shop=%s, code=%s): %s", shop_id, code, msg)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,

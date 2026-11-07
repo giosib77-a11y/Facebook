@@ -22,7 +22,7 @@ class ShopOut(BaseModel):
     bot_enabled: bool
     bot_language: str = "auto"
     knowledge_filename: str | None = None  # ატვირთული PDF-ის სახელი (ცოდნის ნიშანი)
-    # ბოტის ჯანმრთელობა (migration 0036): ok / token_error / token_expired / send_failed / budget_exhausted; null — უცნობი
+    # ბოტის ჯანმრთელობა (migration 0036): ok / token_error / token_expired / send_failed / budget_exhausted; null — ჯერ არ ჩაწერილა / უცნობი
     bot_status: str | None = None
     bot_status_at: datetime | None = None
     created_at: datetime

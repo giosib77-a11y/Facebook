@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from postgrest.exceptions import APIError
 
 from app.api.admin import router as admin_router
 from app.api.chat import router as chat_router
@@ -22,6 +23,7 @@ from app.api.products import router as products_router
 from app.api.shops import router as shops_router
 from app.api.webhook import router as webhook_router
 from app.config import get_settings
+from app.core.db import SCHEMA_ERROR_DETAIL, is_schema_missing
 from app.core.logging import setup_logging
 from app.services import inbox, inbox_worker
 
@@ -322,6 +324,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     if settings.is_production:
         return JSONResponse(status_code=500, content={"detail": "სერვერის შიდა შეცდომა"})
     return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+
+
+@app.exception_handler(APIError)
+async def api_error_handler(request: Request, exc: APIError):
+    """Stage 24 (A-042): ფუნქცია / სვეტი / ცხრილი არ არის (`core.db.SCHEMA_MISSING_CODES`) → 503 ერთი
+    ტექსტით (production-შიც და dev-შიც) + ERROR ლოგი. ლოგში — მხოლოდ კოდი, method და route-ის
+    **შაბლონი** (`/shops/{shop_id}/customers/{psid}`): რეალური path შეიცავს psid-ს, შეტყობინების ტექსტი
+    — მონაცემებს. სხვა APIError — უცვლელი 500."""
+    if is_schema_missing(exc):
+        route = request.scope.get("route")
+        logger.error(
+            "database schema mismatch (code=%s) on %s %s - is every migration applied?",
+            getattr(exc, "code", None), request.method, getattr(route, "path", None) or "?",
+        )
+        return JSONResponse(status_code=503, content={"detail": SCHEMA_ERROR_DETAIL})
+    return await unhandled_exception_handler(request, exc)
+
 
 app.include_router(health_router)
 app.include_router(shops_router)

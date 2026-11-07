@@ -83,11 +83,6 @@ def env(monkeypatch):
     return Env(monkeypatch)
 
 
-@pytest.fixture(autouse=True)
-def _column_present(monkeypatch):
-    monkeypatch.setattr(vision, "_column_missing", False)
-
-
 def _deadline():
     return time.monotonic() + 30
 
@@ -451,20 +446,20 @@ def test_save_without_image_url_has_no_photo_filter():
     assert call.filters == [("eq", "id", PRODUCT), ("eq", "shop_id", SHOP)]
 
 
-def test_missing_column_disables_descriptions_and_warns_once(caplog):
+def test_missing_column_warns_on_every_attempt_without_a_global_switch_off(caplog):
     db = FakeSupabase()
     db.errors[("products", "update")] = _missing_error()
-    assert vision.descriptions_enabled() is True
+    assert not hasattr(vision, "descriptions_enabled")
     with caplog.at_level(logging.WARNING):
         assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
-        assert vision.descriptions_enabled() is False
         assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
-    assert len(db.calls) == 1  # only the first save reached the DB; the second returned before any query
-    warnings = _warnings(caplog, "migration 0028")
-    assert len(warnings) == 1 and "image_description" in warnings[0].getMessage()
+    assert len(db.calls) == 2  # both saves reached the DB: nothing is remembered between calls
+    warnings = _warnings(caplog, "save failed")
+    assert len(warnings) == 2 and all(SHOP in w.getMessage() for w in warnings)
+    assert "migration 0028" not in _all_log_text(caplog)
 
 
-def test_second_save_after_missing_column_runs_no_query():
+def test_second_save_after_missing_column_still_runs_a_query():
     class Counting:
         def __init__(self):
             self.table_calls = 0
@@ -476,16 +471,19 @@ def test_second_save_after_missing_column_runs_no_query():
     db = Counting()
     assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
     assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
-    assert db.table_calls == 1
+    assert db.table_calls == 2
 
 
-def test_postgres_undefined_column_code_is_also_recognised():
+def test_postgres_undefined_column_code_warns_on_every_failure(caplog):
     db = FakeSupabase()
     db.errors[("products", "update")] = APIError(
         {"message": 'column "image_description" of relation "products" does not exist',
          "code": "42703", "hint": None, "details": None})
-    assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
-    assert vision.descriptions_enabled() is False
+    with caplog.at_level(logging.WARNING):
+        assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
+        assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
+    assert len(db.calls) == 2
+    assert len(_warnings(caplog, "save failed")) == 2
 
 
 @pytest.mark.parametrize("error", [
@@ -494,12 +492,11 @@ def test_postgres_undefined_column_code_is_also_recognised():
     APIError({"message": "image_description is odd", "code": "XX000", "hint": None, "details": None}),
     Exception("connection reset"),
 ])
-def test_other_errors_return_false_and_keep_the_flag(caplog, error):
+def test_other_errors_return_false_and_warn(caplog, error):
     db = FakeSupabase()
     db.errors[("products", "update")] = error
     with caplog.at_level(logging.WARNING):
         assert vision.save_image_description(db, PRODUCT, SHOP, URL, DESC) is False
-    assert vision.descriptions_enabled() is True
     warnings = _warnings(caplog, "save failed")
     assert len(warnings) == 1 and SHOP in warnings[0].getMessage()
     assert "migration 0028" not in _all_log_text(caplog)
@@ -507,7 +504,6 @@ def test_other_errors_return_false_and_keep_the_flag(caplog, error):
 
 def test_save_never_raises_on_a_broken_client():
     assert vision.save_image_description(None, PRODUCT, SHOP, URL, DESC) is False
-    assert vision.descriptions_enabled() is True
 
 
 # ---------------------------------------------------------------------------

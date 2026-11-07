@@ -114,11 +114,6 @@ def world(monkeypatch, user_db, service_db):
     return World(monkeypatch, user_db, service_db)
 
 
-@pytest.fixture(autouse=True)
-def _column_present(monkeypatch):
-    monkeypatch.setattr(vision, "_column_missing", False)
-
-
 def _row(image_url, shop=SHOP):
     return {
         "id": PRODUCT, "shop_id": shop, "name": "x", "price": 1, "quantity": 1,
@@ -439,25 +434,25 @@ def test_product_gone_during_the_background_run_writes_nothing(client, world, ro
 
 
 # ---------------------------------------------------------------------------
-# migration 0028 not applied
+# a failing description save (Stage 24: no global "column missing" switch-off)
 # ---------------------------------------------------------------------------
 def _missing_column_error():
     return APIError({"message": "Could not find the 'image_description' column of 'products' in the schema cache",
                      "code": "PGRST204", "hint": None, "details": None})
 
 
-def test_missing_column_warns_once_and_stops_calling_the_llm(client, world, caplog):
+def test_save_error_warns_and_next_photo_still_described(client, world, caplog):
     world.db.errors[("products", "update")] = _missing_column_error()
     with caplog.at_level(logging.WARNING):
         r1 = _create(client, world, OWN_URL)
         assert len(world.requests) == 1
         r2 = _create(client, world, OWN_URL)
         r3 = _update(client, world, OLD_URL, {"image_url": OWN_URL})
-    assert (r1.status_code, r2.status_code, r3.status_code) == (201, 201, 200)
-    assert len(_warnings(caplog, "products.image_description missing")) == 1
-    assert len(world.requests) == 1  # the second and third requests never reached the LLM
-    assert len(world.desc_updates) == 1  # ... nor even tried another update
-    assert vision.descriptions_enabled() is False
+    assert (r1.status_code, r2.status_code, r3.status_code) == (201, 201, 200)  # best-effort: requests succeed
+    assert len(world.requests) == 3  # every photo is still described: the LLM is called each time
+    assert len(world.desc_updates) == 4  # create, create, update (clear + description) - each save attempted
+    assert len(_warnings(caplog, "image description save failed")) == 4  # a WARNING on every failure
+    assert not hasattr(vision, "descriptions_enabled")
 
 
 # ---------------------------------------------------------------------------

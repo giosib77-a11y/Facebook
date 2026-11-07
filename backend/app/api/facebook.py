@@ -357,14 +357,9 @@ def _connect_page(data: dict, page: dict, user_token: str) -> tuple[str, dict]:
         if "duplicate key" in msg or "23505" in msg or "already exists" in msg:
             logger.warning("გვერდი %s უკვე დაკავშირებულია სხვა მაღაზიაზე", page_id)
             return "error", {"reason": "page_taken"}
-        # migration 0006/0011 ჯერ არ გაშვებულა — ამ ველების გარეშე მაინც ვცდით
-        upd.pop("instagram_account_id", None)
-        upd.pop("facebook_user_id", None)
-        try:
-            res = _save(upd)
-        except Exception:
-            logger.exception("გვერდის შენახვა ჩავარდა (shop=%s)", data.get("shop_id"))
-            return "error", {"reason": "save_failed"}
+        # Stage 24 (A-042): ველების გარეშე მეორე ცდა წაიშალა (0006/0011 ლაივშია) — მაშინვე save_failed
+        logger.exception("გვერდის შენახვა ჩავარდა (shop=%s)", data.get("shop_id"))
+        return "error", {"reason": "save_failed"}
 
     # ⚠️ რევიუ P2-13: შედეგი უნდა შემოწმდეს. 0 მწკრივი ნიშნავს, რომ მაღაზია
     # აღარ არსებობს ან სხვას ეკუთვნის — ადრე ასეთ დროსაც „connected" ბრუნდებოდა.
@@ -376,7 +371,7 @@ def _connect_page(data: dict, page: dict, user_token: str) -> tuple[str, dict]:
         return "error", {"reason": "shop_not_found"}
 
     # A-038: ახალი token → ძველი ჯანმრთელობის სტატუსი (token_expired და ა.შ.) იწმინდება.
-    # ცალკე best-effort (migration 0036 შეიძლება არ იყოს) — fallback-ის pop სიაში არ შედის.
+    # best-effort (ჯანმრთელობის ნიშანი; ჩავარდნა connect-ს არ აჩერებს).
     try:
         _save({"bot_status": None, "bot_status_at": None})
     except Exception as exc:

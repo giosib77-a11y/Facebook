@@ -2,7 +2,10 @@
 import re
 from pathlib import Path
 
+from fastapi.testclient import TestClient
 from postgrest.exceptions import APIError
+
+from app.main import app as fastapi_app
 
 SHOP_ID = "22222222-2222-2222-2222-222222222222"
 PRODUCT_ID = "33333333-3333-3333-3333-333333333333"
@@ -88,23 +91,29 @@ def test_without_key_behaves_as_before(client, service_db):
     assert _key_lookups(service_db) == []
 
 
-def test_missing_column_falls_back_to_plain_insert(client, service_db, caplog, monkeypatch):
-    """migration 0031 not applied: the lookup fails → order is still created, without the key."""
+def test_idempotency_lookup_error_is_an_error_not_a_plain_insert(client, service_db, monkeypatch):
+    """Stage 24: the key lookup fails → the error surfaces (schema → 503, other → 500); no order is created."""
     FakeQuery = type(service_db.table("orders"))  # the conftest class pytest actually loaded
     _setup(service_db)
     real_execute = FakeQuery.execute
+    error = APIError({"code": "42703", "message": "column orders.idempotency_key does not exist",
+                      "details": None, "hint": None})
 
     def execute(self):
         if self.table == "orders" and ("eq", "idempotency_key", KEY) in self.filters:
-            raise APIError({"code": "42703", "message": "column orders.idempotency_key does not exist"})
+            raise error
         return real_execute(self)
 
     monkeypatch.setattr(FakeQuery, "execute", execute)
     r = client.post("/orders", json=_order())
-    assert r.status_code == 201
-    (ins,) = service_db.calls_for("orders", "insert")
-    assert "idempotency_key" not in ins.payload
-    assert "idempotency" in caplog.text
+    assert r.status_code == 503
+    assert r.json() == {"detail": "სერვისი დროებით მიუწვდომელია — სცადეთ მოგვიანებით."}
+    assert service_db.calls_for("orders", "insert") == []
+
+    error = RuntimeError("connection reset")  # a non-schema failure is a plain 500, not a silent insert
+    r = TestClient(fastapi_app, raise_server_exceptions=False).post("/orders", json=_order())
+    assert r.status_code == 500
+    assert service_db.calls_for("orders", "insert") == []
 
 
 def test_invalid_key_rejected(client, service_db):

@@ -1,5 +1,6 @@
 """scripts/backfill_image_descriptions.py: offline, fake service client, fake vision / LLM / download."""
 import pytest
+from postgrest.exceptions import APIError
 
 from app.config import get_settings
 from app.services import facebook, llm, vision
@@ -35,7 +36,6 @@ class Env:
         monkeypatch.setattr(get_settings(), "supabase_url", BASE)
         monkeypatch.setattr(bf, "get_service_client", lambda: self.db)
         monkeypatch.setattr(bf.time, "sleep", lambda s: self.sleeps.append(s))
-        monkeypatch.setattr(vision, "_column_missing", False)
         monkeypatch.setattr(vision, "describe_product_image", self._describe)
 
     def _describe(self, shop_id, url):
@@ -194,6 +194,20 @@ def test_save_failure_counts_as_failed(env, capsys):
     env.db.errors[("products", "update")] = RuntimeError("db down")
     assert bf.main(["--delay", "0"]) == 0
     assert "0 saved, 1 failed" in capsys.readouterr().out
+
+
+def test_save_schema_error_does_not_stop_the_run(env, capsys):
+    """Stage 24: no global "migration 0028 missing" switch - every photo is tried and counted as failed."""
+    env.rows(_row(1), _row(2))
+    env.db.errors[("products", "update")] = APIError({
+        "code": "42703", "message": 'column "image_description" of relation "products" does not exist',
+        "details": None, "hint": None,
+    })
+    assert bf.main(["--delay", "0"]) == 0
+    assert len(env.described) == 2 and len(env.updates()) == 2
+    out = capsys.readouterr().out
+    assert "0 saved, 2 failed" in out
+    assert not hasattr(vision, "descriptions_enabled")
 
 
 def test_cost_estimate_uses_provider_prices():

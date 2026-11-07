@@ -12,6 +12,17 @@ logger = logging.getLogger("app")
 # გვერდზე ადრე გაჩერდება და ჩუმი ჭრა დაბრუნდება — Stage 22 Deploy plan-ის შემოწმება.
 PAGE_SIZE = 1000
 
+# ფუნქცია / სვეტი / ცხრილი არ არის — PostgREST-ის schema cache (PGRST202/204/205) და Postgres (42P01/42703/42883).
+# Stage 24-დან ეს ბაგია ან გამოტოვებული migration, არა „ძველი ქცევის" სიგნალი: `run` ამ კოდებს აღარ თარგმნის,
+# `main.py`-ის APIError handler კი 503-ს აბრუნებს ერთი ტექსტით.
+SCHEMA_MISSING_CODES = frozenset({"PGRST202", "PGRST204", "PGRST205", "42P01", "42703", "42883"})
+SCHEMA_ERROR_DETAIL = "სერვისი დროებით მიუწვდომელია — სცადეთ მოგვიანებით."
+
+
+def is_schema_missing(exc) -> bool:
+    """True, თუ შეცდომის კოდი schema-ს არარსებობას ნიშნავს (`SCHEMA_MISSING_CODES`)."""
+    return getattr(exc, "code", None) in SCHEMA_MISSING_CODES
+
 
 class TooManyRows(Exception):
     """strict `fetch_all`-ში მწკრივების რაოდენობა `max_rows`-ს აჭარბებს."""
@@ -30,12 +41,17 @@ def run(query):
       - 23514 check_violation         -> ვალიდაციის დარღვევა, მაგ. price < 0 (400)
       - 23503 foreign_key_violation   -> არასწორი shop_id (400)
 
+    schema-ს შეცდომები (`SCHEMA_MISSING_CODES`: ფუნქცია / სვეტი / ცხრილი არ არის) — `raise`: ორიგინალი
+    `APIError` ადის და `main.py`-ის handler 503-ად აქცევს (400-ად აღარ ითარგმნება).
+
     production-ში ბაზის ნედლი ტექსტი კლიენტს არ უბრუნდება (schema არ ჟონავს) —
     მხოლოდ ლოგში იწერება.
     """
     try:
         return query.execute()
     except APIError as e:
+        if is_schema_missing(e):
+            raise
         code = getattr(e, "code", None)
         message = getattr(e, "message", None) or str(e)
         if code == "42501":

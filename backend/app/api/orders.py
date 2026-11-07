@@ -110,16 +110,12 @@ def create_order(payload: OrderCreate, request: Request, background_tasks: Backg
     # A-020: იგივე ფორმის განმეორებითი გაგზავნა (პასუხი დაიკარგა) → პირველი შეკვეთა ბრუნდება.
     # ლიმიტებამდე, რომ retry-მ „3 დაუდასტურებელი შეკვეთა"-ზე 429 არ მიიღოს.
     idem_key = str(payload.idempotency_key) if payload.idempotency_key else None
+    # Stage 24 (A-042): ძებნის შეცდომა ადის (schema → 503, სხვა → 500) — idempotency-ს გარეშე შეკვეთა არ
+    # იქმნება; იმავე key-ით ხელახალი გაგზავნა უსაფრთხოა.
     if idem_key:
-        try:
-            prev = _find_order_by_key(sc, str(payload.shop_id), idem_key)
-        except Exception:
-            # migration 0031 ჯერ არ გაშვებულა — შეკვეთა მაინც იქმნება, idempotency-ს გარეშე
-            logger.warning("orders.idempotency_key lookup failed - idempotency off for this order", exc_info=True)
-            idem_key = None
-        else:
-            if prev:
-                return _order_response(prev)
+        prev = _find_order_by_key(sc, str(payload.shop_id), idem_key)
+        if prev:
+            return _order_response(prev)
 
     # ერთი ნომრიდან დაუდასტურებელი შეკვეთების ლიმიტი (ციფრებით შედარება —
     # „+995 555 12-34-56“ == „995555123456“).

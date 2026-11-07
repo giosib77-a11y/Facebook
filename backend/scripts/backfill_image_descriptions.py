@@ -129,10 +129,6 @@ def main(argv=None) -> int:
             else:
                 failed += 1
                 print(f"failed: {row['id']}")
-            if not vision.descriptions_enabled():
-                print("error: migration 0028 is not applied - stopping", file=sys.stderr)
-                print(f"done: {ok} saved, {failed} failed")
-                return 2
     except KeyboardInterrupt:
         print(f"interrupted: {ok} saved, {failed} failed")
         return 130
