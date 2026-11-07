@@ -7,8 +7,8 @@
 -- აფიქსირებს მიგრაციებს: 0001 (set_updated_at — trigger-ის განზრახ გამონაკლისი), 0004
 -- (track_bot_customer), 0009 / 0013 (stock), 0021 (change_order_status), 0030 (purge),
 -- 0032 (create_shop_limited),
--- 0034 (expire_subscriptions), 0035 (llm_tokens_used — S24-11 შლის), 0037 (claim_webhook_events,
--- purge_webhook_inbox), 0038 (llm_usage_by_model), 0039 (admin_*), 0040 (search_products).
+-- 0034 (expire_subscriptions), 0035 (llm_tokens_used — 0042-ით წაიშალა), 0037 (claim_webhook_events,
+-- purge_webhook_inbox), 0038 (llm_usage_by_model), 0039 (admin_*), 0040 (search_products), 0042.
 --
 -- ახალი ფუნქცია → ეს ტესტი წითელია, სანამ აქ ცხადად არ დაემატება — ეს განზრახ არის.
 -- მონაცემს არ ქმნის.
@@ -24,11 +24,17 @@ select functions_are(
   array[
     'admin_growth', 'admin_overview_stats', 'admin_shop_counts', 'apply_stock_delta',
     'change_order_status', 'claim_webhook_events', 'create_shop_limited', 'decrement_stock',
-    'expire_subscriptions', 'llm_tokens_used', 'llm_usage_by_model',
+    'expire_subscriptions', 'llm_usage_by_model',
     'purge_expired_bot_conversations', 'purge_webhook_inbox', 'search_products',
     'set_updated_at', 'track_bot_customer'
   ],
-  'public სქემაში ზუსტად მოსალოდნელი 16 ფუნქციაა'
+  'public სქემაში ზუსტად მოსალოდნელი 15 ფუნქციაა'
+);
+
+-- (1b) 0042-ით წაშლილი ფუნქცია აღარ არსებობს (0035-ის llm_tokens_used)
+select hasnt_function(
+  'public', 'llm_tokens_used', array['uuid', 'timestamp with time zone'],
+  'llm_tokens_used წაშლილია (0042)'
 );
 
 -- (2) anon / authenticated ვერცერთ არა-trigger ფუნქციას ვერ იძახებს
@@ -80,8 +86,6 @@ select ok(has_function_privilege('service_role', 'public.admin_shop_counts()', '
   'service_role: admin_shop_counts');
 select ok(has_function_privilege('service_role', 'public.search_products(uuid,text[],text,integer)', 'EXECUTE'),
   'service_role: search_products');
-select ok(has_function_privilege('service_role', 'public.llm_tokens_used(uuid,timestamp with time zone)', 'EXECUTE'),
-  'service_role: llm_tokens_used (S24-11 შლის)');
 
 select * from finish();
 
