@@ -5,13 +5,12 @@ import re
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.core.db import TooManyRows, fetch_all, run
+from app.core.db import TooManyRows, fetch_all, is_schema_missing, run
 from app.core.ratelimit import rate_limit
 from app.core.security import CurrentAuth, get_current_auth
 from app.core.supabase_client import get_service_client
@@ -109,46 +108,35 @@ def create_shop(payload: ShopCreate, auth: CurrentAuth = Depends(get_current_aut
     return rows[0]
 
 
-# migration 0032 ჯერ არ არის გაშვებული (PGRST202) → ძველი გზა; flag პროცესზე ერთხელ ჩაირთვება
-_CREATE_SHOP_RPC_MISSING = False
-
-
 def _insert_shop_atomic(data: dict, limit: int | None) -> list:
     """ლიმიტის შემოწმება + INSERT ერთ ტრანზაქციაში (RPC `create_shop_limited`, A-029).
 
     pre-check (`create_shop`-ში) მხოლოდ სწრაფი უარია; პარალელური მოთხოვნების race-ს RPC-ის
     advisory lock ფარავს. `core.db.run` აქ განზრახ არ გამოიყენება — გვჭირდება შეცდომის კოდი/ტექსტი.
+    RPC არ არის (schema) → შეცდომა ადის (503, A-042): არა-ატომური insert-ზე გადასვლა აღარ არის.
     """
-    global _CREATE_SHOP_RPC_MISSING
     sc = get_service_client()
-    if not _CREATE_SHOP_RPC_MISSING:
-        try:
-            res = sc.rpc(
-                "create_shop_limited",
-                {
-                    "p_owner": data["owner_id"],
-                    "p_name": data["name"],
-                    "p_description": data.get("description"),
-                    "p_currency": data.get("currency"),
-                    "p_tier": data["subscription_tier"],
-                    "p_limit": limit,
-                },
-            ).execute()
-            return res.data or []
-        except Exception as exc:
-            message = getattr(exc, "message", None) or str(exc)
-            if "shop_limit_reached" in message or "shop_limit_reached" in str(exc):
-                raise HTTPException(status.HTTP_403_FORBIDDEN, _SHOP_LIMIT_TEXT)
-            if getattr(exc, "code", None) == "PGRST202":
-                _CREATE_SHOP_RPC_MISSING = True
-                logger.warning(
-                    "create_shop_limited missing (migration 0032 not applied) - "
-                    "shop limit check is not atomic"
-                )
-            else:
-                logger.warning("create_shop_limited failed (%s)", type(exc).__name__)
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, "მაღაზიის შექმნა ვერ მოხერხდა")
-    return run(sc.table("shops").insert(data)).data or []
+    try:
+        res = sc.rpc(
+            "create_shop_limited",
+            {
+                "p_owner": data["owner_id"],
+                "p_name": data["name"],
+                "p_description": data.get("description"),
+                "p_currency": data.get("currency"),
+                "p_tier": data["subscription_tier"],
+                "p_limit": limit,
+            },
+        ).execute()
+        return res.data or []
+    except Exception as exc:
+        message = getattr(exc, "message", None) or str(exc)
+        if "shop_limit_reached" in message or "shop_limit_reached" in str(exc):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, _SHOP_LIMIT_TEXT)
+        if is_schema_missing(exc):
+            raise
+        logger.warning("create_shop_limited failed (%s)", type(exc).__name__)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "მაღაზიის შექმნა ვერ მოხერხდა")
 
 
 @router.get("/me", response_model=list[ShopOut])
@@ -199,20 +187,15 @@ def shop_usage(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)
         auth.client.table("products").select("id", count="exact")
         .eq("shop_id", str(shop_id)).limit(1)
     )
-    # მიმდინარე pending მოთხოვნა (თუ migration 0005 გაშვებულია). per-account: RLS (ur_owner_select)
+    # მიმდინარე pending მოთხოვნა. per-account: RLS (ur_owner_select)
     # მხოლოდ მფლობელის მაღაზიების მოთხოვნებს აჩვენებს, ამიტომ shop_id-ით არ ვფილტრავთ.
-    pending = None
-    try:
-        pr = (
-            auth.client.table("upgrade_requests").select("requested_tier")
-            .eq("status", "pending")
-            .order("created_at", desc=True).limit(1).execute()
-        )
-        if pr.data:
-            pending = pr.data[0]["requested_tier"]
-    except Exception:
-        pass
-    # გამოწერის ვადა (A-036): RLS-ით მფლობელის საკუთარი მწკრივი; ცხრილის შეცდომა → null/false
+    pr = run(
+        auth.client.table("upgrade_requests").select("requested_tier")
+        .eq("status", "pending")
+        .order("created_at", desc=True).limit(1)
+    )
+    pending = pr.data[0]["requested_tier"] if pr.data else None
+    # გამოწერის ვადა (A-036): RLS-ით მფლობელის საკუთარი მწკრივი; წაკითხვის შეცდომა ადის (A-042)
     sub = subscriptions.read(auth.client, auth.user_id) if tier != "free" else None
     expiry = subscriptions.status_for(tier, (sub or {}).get("paid_until"), datetime.now(timezone.utc))
     settings = get_settings()
@@ -332,20 +315,6 @@ def downgrade_to_free(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_curren
     return {"ok": True, "tier": "free", "bot_disabled": disabled, "message": msg}
 
 
-_PAUSE_COLUMN_WARNED = False  # bot_paused_until-ის არარსებობის WARNING — ერთხელ პროცესზე
-
-
-def _warn_pause_missing() -> None:
-    """migration 0033-ის გარეშე პანელის პაუზის ფუნქციები გამორთულია — WARNING ერთხელ პროცესზე."""
-    global _PAUSE_COLUMN_WARNED
-    if _PAUSE_COLUMN_WARNED:
-        return
-    _PAUSE_COLUMN_WARNED = True
-    logger.warning(
-        "bot_conversations.bot_paused_until missing (migration 0033 not applied) - panel pause list disabled"
-    )
-
-
 def _future_iso(raw) -> str | None:
     """`bot_paused_until` → ISO (UTC), თუ ის მომავალშია; სხვა შემთხვევაში (ან ცუდი მნიშვნელობა) None."""
     if not raw:
@@ -366,34 +335,14 @@ def list_attention(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
     RLS მხოლოდ საკუთარ მაღაზიას აჩვენებს."""
     # `+` URL-ში არ უნდა მოხვდეს (PostgREST-ში space-ად იკითხება) — ამიტომ Z ფორმატი
     now_z = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    pause_supported = True
-    try:
-        r = (
-            auth.client.table("bot_conversations")
-            .select("psid,messages,attention_at,updated_at,needs_attention,bot_paused_until")
-            .eq("shop_id", str(shop_id))
-            .or_(f"needs_attention.eq.true,bot_paused_until.gte.{now_z}")
-            .order("updated_at", desc=True)
-            .limit(50)
-            .execute()
-        )
-    except Exception:
-        # migration 0033 ჯერ არ გაშვებულა → ძველი query (მხოლოდ needs_attention)
-        _warn_pause_missing()
-        pause_supported = False
-        try:
-            r = (
-                auth.client.table("bot_conversations")
-                .select("psid,messages,attention_at,updated_at")
-                .eq("shop_id", str(shop_id))
-                .eq("needs_attention", True)
-                .order("attention_at", desc=True)
-                .limit(50)
-                .execute()
-            )
-        except Exception:
-            # migration 0010 ჯერ არ გაშვებულა
-            return {"items": [], "count": 0, "attention_count": 0}
+    r = run(
+        auth.client.table("bot_conversations")
+        .select("psid,messages,attention_at,updated_at,needs_attention,bot_paused_until")
+        .eq("shop_id", str(shop_id))
+        .or_(f"needs_attention.eq.true,bot_paused_until.gte.{now_z}")
+        .order("updated_at", desc=True)
+        .limit(50)
+    )
 
     items = []
     for row in r.data or []:
@@ -403,7 +352,7 @@ def list_attention(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
             if m.get("role") == "user":
                 last_user = (m.get("content") or "").strip()
                 break
-        needs = True if not pause_supported else bool(row.get("needs_attention"))
+        needs = bool(row.get("needs_attention"))
         items.append(
             {
                 "psid": row["psid"],
@@ -411,7 +360,7 @@ def list_attention(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
                 # მხოლოდ შეჩერებულ საუბარს attention_at ძველი handoff-იდან შეიძლება დარჩენოდა
                 "at": (row.get("attention_at") or row.get("updated_at")) if needs else row.get("updated_at"),
                 "needs_attention": needs,
-                "paused_until": _future_iso(row.get("bot_paused_until")) if pause_supported else None,
+                "paused_until": _future_iso(row.get("bot_paused_until")),
             }
         )
     attention_count = sum(1 for i in items if i["needs_attention"])
@@ -429,20 +378,17 @@ def resolve_attention(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
     # განახლება service_role-ით (bot_conversations-ს owner-update პოლისი არ აქვს);
     # „მოგვარებულია" პაუზასაც ხსნის (A-035)
-    sc = get_service_client()
     try:
-        sc.table("bot_conversations").update(
+        get_service_client().table("bot_conversations").update(
             {"needs_attention": False, "bot_paused_until": None}
         ).eq("shop_id", str(shop_id)).eq("psid", psid).execute()
-    except Exception:
-        # migration 0033 ჯერ არ გაშვებულა → მხოლოდ flag
-        _warn_pause_missing()
-        try:
-            sc.table("bot_conversations").update(
-                {"needs_attention": False}
-            ).eq("shop_id", str(shop_id)).eq("psid", psid).execute()
-        except Exception:
-            pass
+    except Exception as e:
+        # psid ლოგში არ იწერება
+        logger.warning("attention resolve failed (shop=%s, %s)", shop_id, type(e).__name__)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "საუბრის მონიშვნა ვერ შეინახა — სცადეთ მოგვიანებით.",
+        )
     return {"ok": True}
 
 
@@ -548,25 +494,19 @@ def export_shop_data(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current
 def shop_analytics(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_auth)):
     """ბოტის ანალიტიკა — რას კითხულობენ კლიენტები + უპასუხო (handoff) საუბრები.
 
-    RLS-ით მხოლოდ საკუთარი მაღაზიის საუბრები. მიგრაცია 0008/0010-მდე — ცარიელი.
+    RLS-ით მხოლოდ საკუთარი მაღაზიის საუბრები. წაკითხვის შეცდომა ადის (A-042) — ცარიელი სტატისტიკა არა.
     """
     owns = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not owns.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
 
-    empty = {"total_conversations": 0, "needs_attention": 0, "top_terms": [], "recent_questions": []}
-    try:
-        rows = (
-            auth.client.table("bot_conversations")
-            .select("messages,needs_attention,updated_at")
-            .eq("shop_id", str(shop_id))
-            .order("updated_at", desc=True)
-            .limit(500)
-            .execute()
-            .data
-        ) or []
-    except Exception:
-        return empty  # migration ჯერ არ გაშვებულა
+    rows = run(
+        auth.client.table("bot_conversations")
+        .select("messages,needs_attention,updated_at")
+        .eq("shop_id", str(shop_id))
+        .order("updated_at", desc=True)
+        .limit(500)
+    ).data or []
 
     attention = 0
     questions: list[str] = []
@@ -593,40 +533,10 @@ def shop_analytics(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_a
     }
 
 
-# Stage 17: "shops.knowledge_faq missing" გაფრთხილება — პროცესზე მაქსიმუმ ერთხელ
-_faq_column_warned = [False]
-
-
 def _write_knowledge(shop_id: uuid.UUID, payload: dict):
-    """ცოდნის ჩაწერა service client-ით (ერთი update, ფილტრი `id` კოდში). თუ migration 0027 ჯერ არ არის
-    გაშვებული (შეცდომა `knowledge_faq` სვეტზე), იგივე update ამ გასაღების გარეშე — ატვირთვა მაინც ინახება.
-    სხვა შეცდომა ვრცელდება როგორც ადრე (APIError → HTTP, `run`-ით). `run` production-ში ბაზის ტექსტს
-    ფარავს, ამიტომ სვეტის შეცდომას execute-ზე ვცნობთ, `run`-მდე.
-    აბრუნებს `(res, faq_column_ok)`; `False` = სვეტი არ არის და ეს ჩაწერა მის გარეშე მოხდა."""
-    missing: list[bool] = []
-
-    def attempt(data: dict):
-        query = get_service_client().table("shops").update(data).eq("id", str(shop_id))
-
-        def execute():
-            try:
-                return query.execute()
-            except Exception as exc:
-                if "knowledge_faq" in str(exc):
-                    missing.append(True)
-                raise
-
-        return run(SimpleNamespace(execute=execute))
-
-    try:
-        return attempt(payload), True
-    except Exception:
-        if not missing:
-            raise
-    if not _faq_column_warned[0]:
-        _faq_column_warned[0] = True
-        logger.warning("shops.knowledge_faq missing (migration 0027 not applied) - knowledge FAQ disabled")
-    return attempt({k: v for k, v in payload.items() if k != "knowledge_faq"}), False
+    """ცოდნის ჩაწერა service client-ით (ერთი update, ფილტრი `id` კოდში). შეცდომა — `run`-ით
+    (schema → 503 handler-ში, A-042; სხვა APIError → HTTP)."""
+    return run(get_service_client().table("shops").update(payload).eq("id", str(shop_id)))
 
 
 def _build_and_save_faq(shop_id: uuid.UUID, text: str) -> None:
@@ -694,14 +604,13 @@ def upload_knowledge(
     # ჩაწერა service client-ით (0022: authenticated-ს knowledge* სვეტებზე UPDATE აღარ აქვს);
     # მფლობელობა ზემოთ auth.client-ის RLS select-ით უკვე დადასტურდა.
     # knowledge_faq: None — ძველი დოკუმენტის FAQ ახალ ტექსტს არ რჩება
-    res, faq_column_ok = _write_knowledge(
+    res = _write_knowledge(
         shop_id,
         {"knowledge": text, "knowledge_filename": (file.filename or "")[:255], "knowledge_faq": None},
     )
     if not res.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    if faq_column_ok:  # 0027 არ არის გაშვებული → FAQ-ის LLM გამოძახება აზრს მოკლებულია
-        background_tasks.add_task(_build_and_save_faq, shop_id, text)
+    background_tasks.add_task(_build_and_save_faq, shop_id, text)
     return res.data[0]
 
 
@@ -713,7 +622,7 @@ def clear_knowledge(shop_id: uuid.UUID, auth: CurrentAuth = Depends(get_current_
     owned = run(auth.client.table("shops").select("id").eq("id", str(shop_id)).limit(1))
     if not owned.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "მაღაზია ვერ მოიძებნა ან არ არის თქვენი")
-    res, _ = _write_knowledge(
+    res = _write_knowledge(
         shop_id, {"knowledge": None, "knowledge_filename": None, "knowledge_faq": None}
     )
     if not res.data:

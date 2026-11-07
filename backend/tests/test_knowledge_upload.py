@@ -1,6 +1,6 @@
 """S17-4: upload_knowledge / clear_knowledge - the upload is saved with one write and returns at once;
 the FAQ is generated in a background task and saved only if the shop's document is still the same;
-missing-0027 tolerance, rate limit, PDF text cap. Fake Claude client + fake Supabase only - no network,
+missing-0027 column -> 503 (A-042), rate limit, PDF text cap. Fake Claude client + fake Supabase only - no network,
 no .env. (TestClient runs background tasks after the response, before `post()` returns.)"""
 import asyncio
 import io
@@ -15,6 +15,7 @@ from postgrest.exceptions import APIError
 
 import app.api.shops
 import app.services.pdf_extract as pdf_extract
+from app.core.db import SCHEMA_ERROR_DETAIL
 from app.core.security import CurrentAuth, get_current_auth
 from app.main import app as fastapi_app
 from app.services import knowledge, llm
@@ -76,7 +77,6 @@ def fake(monkeypatch, service_db):
 @pytest.fixture(autouse=True)
 def _setup(monkeypatch):
     monkeypatch.setattr(app.api.shops, "extract_pdf_text", lambda content: DOC)
-    monkeypatch.setattr(app.api.shops, "_faq_column_warned", [False])
 
 
 @pytest.fixture
@@ -85,11 +85,6 @@ def paid(user_db, service_db):
     service_db.responses[("shops", "update")] = [shop_row(knowledge_filename="k.pdf")]
     # what the background task reads back to check the document is still the same
     service_db.responses[("shops", "select")] = [{"knowledge": DOC}]
-
-
-def _faq_warnings(caplog):
-    return [r for r in caplog.records
-            if r.levelno == logging.WARNING and "shops.knowledge_faq missing" in r.getMessage()]
 
 
 def _warnings(caplog, needle):
@@ -285,29 +280,30 @@ class NoFaqColumnQuery(FakeQuery):
 
 
 def _missing_column(service_db, error=None):
-    err = error or Exception(MISSING)
+    err = error or APIError({"message": MISSING, "code": "42703", "hint": None, "details": None})
     service_db.table = lambda name: NoFaqColumnQuery(service_db, name, err)
 
 
-def test_missing_column_retries_without_faq_and_warns_once(client, service_db, fake, paid, caplog):
+def test_missing_column_is_503_without_second_update(client, service_db, fake, paid):
     _missing_column(service_db)
     fake.script = [FAQ1, FAQ2]
-    with caplog.at_level(logging.WARNING):
-        assert client.post(URL, files=PDF).status_code == 200
-        assert client.post(URL, files=PDF).status_code == 200
-    saved = [c.payload for c in service_db.calls_for("shops", "update")]
-    assert saved == [{"knowledge": DOC, "knowledge_filename": "k.pdf"}] * 2
-    assert len(service_db.attempts) == 2  # each upload tried the full payload first
-    assert len(_faq_warnings(caplog)) == 1
-    assert fake.requests == []  # column missing -> no background FAQ, so no LLM call (no wasted cost)
+    r1 = client.post(URL, files=PDF)
+    r2 = client.post(URL, files=PDF)
+    assert r1.status_code == 503 and r2.status_code == 503
+    assert r1.json() == {"detail": SCHEMA_ERROR_DETAIL}
+    assert service_db.calls_for("shops", "update") == []  # no FAQ-less retry saved anything
+    assert len(service_db.attempts) == 2  # exactly one (full-payload) attempt per upload
+    assert fake.requests == []  # no background FAQ, so no LLM call
 
 
-def test_missing_column_postgrest_error_also_tolerated(client, service_db, fake, paid):
+def test_missing_column_postgrest_code_is_503_too(client, service_db, fake, paid):
     err = APIError({"message": MISSING, "code": "PGRST204", "hint": None, "details": None})
     _missing_column(service_db, err)
     fake.script = [FAQ1]
-    assert client.post(URL, files=PDF).status_code == 200
-    assert len(service_db.calls_for("shops", "update")) == 1
+    r = client.post(URL, files=PDF)
+    assert r.status_code == 503 and r.json() == {"detail": SCHEMA_ERROR_DETAIL}
+    assert service_db.calls_for("shops", "update") == []
+    assert len(service_db.attempts) == 1
     assert fake.requests == []
 
 
@@ -331,15 +327,14 @@ def test_other_postgrest_error_is_400_without_retry(client, service_db, fake, pa
     assert client.post(URL, files=PDF).status_code == 400
 
 
-def test_clear_tolerates_missing_column(client, user_db, service_db, caplog):
+def test_clear_missing_column_is_503_without_second_update(client, user_db, service_db):
     user_db.responses[("shops", "select")] = [{"id": SHOP_ID}]
     service_db.responses[("shops", "update")] = [shop_row()]
     _missing_column(service_db)
-    with caplog.at_level(logging.WARNING):
-        assert client.delete(URL).status_code == 200
-    saved = [c.payload for c in service_db.calls_for("shops", "update")]
-    assert saved == [{"knowledge": None, "knowledge_filename": None}]
-    assert len(_faq_warnings(caplog)) == 1
+    r = client.delete(URL)
+    assert r.status_code == 503 and r.json() == {"detail": SCHEMA_ERROR_DETAIL}
+    assert service_db.calls_for("shops", "update") == []  # no knowledge-only retry was written
+    assert len(service_db.attempts) == 1
 
 
 # (6) clear: all three columns null, no LLM

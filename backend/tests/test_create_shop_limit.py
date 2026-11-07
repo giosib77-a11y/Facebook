@@ -1,10 +1,9 @@
 """S19-9 (A-029 / N-19): shop limit check + INSERT run atomically in the `create_shop_limited` RPC."""
 import logging
 
-import pytest
 from postgrest.exceptions import APIError
 
-from app.api import shops
+from app.core.db import SCHEMA_ERROR_DETAIL
 from tests.conftest import USER_ID
 
 SHOP_ID = "11111111-1111-1111-1111-111111111111"
@@ -20,12 +19,6 @@ def _row(tier="free"):
         "id": SHOP_ID, "owner_id": USER_ID, "name": "New shop", "description": None,
         "currency": "GEL", "subscription_tier": tier, "bot_enabled": True, **TS,
     }
-
-
-@pytest.fixture(autouse=True)
-def _reset_missing_flag(monkeypatch):
-    # raising=False: on the old code the attribute does not exist
-    monkeypatch.setattr(shops, "_CREATE_SHOP_RPC_MISSING", False, raising=False)
 
 
 def _api_error(message, code):
@@ -78,27 +71,20 @@ def test_business_owner_passes_no_limit(client, user_db, service_db):
     assert call.params["p_tier"] == "business"
 
 
-def test_missing_function_falls_back_to_insert_and_warns_once(client, user_db, service_db, caplog):
+def test_missing_function_is_503_without_insert(client, user_db, service_db):
     user_db.responses[("shops", "select")] = []
     service_db.rpc_errors["create_shop_limited"] = _api_error(
         "Could not find the function public.create_shop_limited", "PGRST202"
     )
     service_db.responses[("shops", "insert")] = [_row("free")]
 
-    with caplog.at_level(logging.WARNING, logger="app"):
-        r1 = client.post("/shops", json={"name": "New shop"})
-        r2 = client.post("/shops", json={"name": "New shop"})
+    r1 = client.post("/shops", json={"name": "New shop"})
+    r2 = client.post("/shops", json={"name": "New shop"})
 
-    assert r1.status_code == 201, r1.text
-    assert r2.status_code == 201, r2.text
-    assert len(service_db.calls_for("shops", "insert")) == 2
-    assert len(_rpc(service_db)) == 1  # after the flag is set the RPC is not called again
-    warnings = [r for r in caplog.records if "create_shop_limited missing" in r.getMessage()]
-    assert len(warnings) == 1
-    assert "migration 0032" in warnings[0].getMessage()
-    insert = service_db.calls_for("shops", "insert")[0]
-    assert insert.payload["owner_id"] == USER_ID
-    assert insert.payload["subscription_tier"] == "free"
+    assert r1.status_code == 503 and r2.status_code == 503
+    assert r1.json() == {"detail": SCHEMA_ERROR_DETAIL}
+    assert service_db.calls_for("shops", "insert") == []  # no non-atomic fallback insert
+    assert len(_rpc(service_db)) == 2  # the RPC is tried every time (no process-wide flag)
 
 
 def test_payload_owner_id_is_ignored(client, user_db, service_db):
@@ -139,8 +125,9 @@ def test_other_rpc_error_is_400_and_does_not_leak_text(client, user_db, service_
     assert "secret_table" not in resp.text
     assert service_db.calls_for("shops", "insert") == []
     assert any("APIError" in r.getMessage() for r in caplog.records)
-    # not the "function missing" case -> the RPC stays in use
-    assert shops._CREATE_SHOP_RPC_MISSING is False
+    # no process-wide "RPC missing" flag any more: the next request calls the RPC again
+    client.post("/shops", json={"name": "New shop"})
+    assert len(_rpc(service_db)) == 2
 
 
 def test_non_postgrest_rpc_error_is_400(client, user_db, service_db):

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from postgrest.exceptions import APIError
 
 import app.api.admin as admin_mod
 import app.core.ratelimit as ratelimit_mod
@@ -12,11 +13,11 @@ from app.api.admin import (
     _all_auth_users,
     _apply_bot_limit,
     _email_map,
-    _parse_ts,
     _restore_bots,
     get_current_admin,
 )
 from app.config import Settings
+from app.core.db import SCHEMA_ERROR_DETAIL
 from app.core.security import CurrentAuth, get_current_auth
 from app.main import app as fastapi_app
 from tests.conftest import FakeQuery, FakeSupabase
@@ -116,27 +117,6 @@ def test_client_ip_without_headers_has_null_fields(admin_db, monkeypatch):
 
 def test_client_ip_requires_admin(client):
     assert client.get("/admin/client-ip").status_code in (401, 403)
-
-
-# ---- _parse_ts ----------------------------------------------------------------------------------
-def test_parse_ts_accepts_z_suffix_and_returns_none_for_garbage():
-    ts = _parse_ts("2026-01-05T10:00:00Z")
-    assert ts is not None and ts.utcoffset().total_seconds() == 0 and ts.year == 2026
-    for bad in ("not-a-date", "", None, 12345678901234567890):
-        assert _parse_ts(bad) is None
-
-
-def test_overview_python_ignores_unparseable_order_dates(admin_db):
-    admin_db.responses[("orders", "select")] = [
-        {"id": "1", "total": 10, "status": "new", "created_at": "garbage"},
-        {"id": "2", "total": 5, "status": "new", "created_at": None},
-    ]
-    admin_db.counts[("products", "select")] = 0
-
-    stats = admin_mod._overview_python(admin_db)
-
-    assert stats["total_orders"] == 2 and stats["orders_30d"] == 0
-    assert stats["revenue"] == 15.0
 
 
 # ---- _all_auth_users / _email_map ---------------------------------------------------------------
@@ -252,27 +232,6 @@ def test_all_sellers_confirmed_flag_and_shop_counts(admin_db):
     assert [by_id[k]["shops"] for k in ("u1", "u2", "u3")] == [2, 1, 0]
     assert [by_id[k]["confirmed"] for k in ("u1", "u2", "u3")] == [True, True, False]
     assert by_id["u1"]["last_sign_in"] == "t" and by_id["u3"]["last_sign_in"] is None
-
-
-# ---- GET /admin/shops: bot_customers table missing (Python fallback) ----------------------------
-def test_admin_shops_fallback_without_bot_customers_table_shows_zero(admin_db, monkeypatch):
-    monkeypatch.setattr(admin_mod, "_RPC_WARNED", set())
-
-    class NoFn(Exception):
-        code = "PGRST202"
-
-    admin_db.rpc_errors["admin_shop_counts"] = NoFn("missing")
-    admin_db.errors[("bot_customers", "select")] = RuntimeError("relation does not exist")
-    admin_db.responses[("shops", "select")] = [_shop(SHOP, "2026-01-01", enabled=True)]
-    admin_db.responses[("products", "select")] = [{"shop_id": SHOP}, {"shop_id": SHOP}]
-    admin_db.responses[("orders", "select")] = [{"shop_id": SHOP}]
-    _auth_admin(admin_db, lambda page=1, per_page=0: [])
-
-    r = TestClient(fastapi_app).get("/admin/shops")
-
-    assert r.status_code == 200, r.text
-    (row,) = r.json()
-    assert (row["products"], row["orders"], row["monthly_customers"]) == (2, 1, 0)
 
 
 # ---- GET /admin/orders: limit clamp -------------------------------------------------------------
@@ -502,12 +461,14 @@ def test_delete_shop_storage_error_is_warning_without_exception_text_and_still_2
 
 
 # ---- GET /admin/upgrade-requests ----------------------------------------------------------------
-def test_upgrade_requests_missing_table_returns_empty_list(admin_db):
-    admin_db.errors[("upgrade_requests", "select")] = RuntimeError("relation does not exist")
+def test_upgrade_requests_missing_table_is_503(admin_db):
+    admin_db.errors[("upgrade_requests", "select")] = APIError(
+        {"code": "PGRST205", "message": "no table", "details": None, "hint": None}
+    )
 
     r = TestClient(fastapi_app).get("/admin/upgrade-requests")
 
-    assert r.status_code == 200 and r.json() == []
+    assert r.status_code == 503 and r.json() == {"detail": SCHEMA_ERROR_DETAIL}  # old code: 200 []
     assert admin_db.calls_for("shops", "select") == []
 
 

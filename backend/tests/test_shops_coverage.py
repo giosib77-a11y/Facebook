@@ -96,16 +96,19 @@ def test_usage_unknown_shop_is_404_and_counts_nothing(client, user_db):
     assert [c.table for c in user_db.calls] == ["shops"]  # no customer / product / request queries
 
 
-def test_usage_survives_upgrade_requests_table_failure(client, user_db):
+@pytest.mark.parametrize("exc, status_code", [
+    (_api_error("PGRST205", "Could not find the table"), 503),  # schema -> main.py handler
+    (_api_error("XX000", "internal error"), 400),  # `run` translation
+    (RuntimeError("connection reset"), 500),  # raw error
+])
+def test_usage_upgrade_requests_error_is_an_error_not_a_null_pending_request(client, user_db, exc, status_code):
     _owner(user_db, "free")
     user_db.counts[("bot_customers", "select")] = 7
     user_db.counts[("products", "select")] = 3
-    user_db.errors[("upgrade_requests", "select")] = RuntimeError("relation does not exist")
-    r = client.get(f"/shops/{SHOP_ID}/usage")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["pending_request"] is None
-    assert body["tier"] == "free" and body["monthly_customers"] == 7 and body["products"] == 3
+    user_db.errors[("upgrade_requests", "select")] = exc
+    r = TestClient(fastapi_app, raise_server_exceptions=False).get(f"/shops/{SHOP_ID}/usage")
+    assert r.status_code == status_code, r.text  # old code: 200 with `pending_request: null`
+    assert "pending_request" not in r.json()
 
 
 def test_usage_reports_pending_request(client, user_db):
@@ -221,12 +224,16 @@ def test_analytics_not_owned_is_404_and_reads_no_conversations(client, user_db):
     assert user_db.calls_for("bot_conversations", "select") == []
 
 
-def test_analytics_without_migration_returns_empty_stats(client, user_db):
+@pytest.mark.parametrize("exc, status_code", [
+    (_api_error("PGRST205", "Could not find the table"), 503),  # schema -> main.py handler
+    (_api_error("XX000", "internal error"), 400),  # `run` translation
+])
+def test_analytics_conversations_error_is_an_error_not_empty_stats(client, user_db, exc, status_code):
     _owner(user_db)
-    user_db.errors[("bot_conversations", "select")] = RuntimeError("relation does not exist")
+    user_db.errors[("bot_conversations", "select")] = exc
     r = client.get(f"/shops/{SHOP_ID}/analytics")
-    assert r.status_code == 200
-    assert r.json() == {"total_conversations": 0, "needs_attention": 0, "top_terms": [], "recent_questions": []}
+    assert r.status_code == status_code, r.text  # old code: 200 with empty stats
+    assert "total_conversations" not in r.json()
 
 
 def test_analytics_no_conversations_is_empty_stats(client, user_db):

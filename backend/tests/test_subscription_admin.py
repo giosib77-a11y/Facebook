@@ -21,6 +21,7 @@ D = timedelta(days=1)
 @pytest.fixture
 def admin_db(monkeypatch):
     db = FakeSupabase()
+    db.rpc_responses["admin_shop_counts"] = {}  # 0039 RPC is required by GET /admin/shops (Stage 24, A-042)
     monkeypatch.setattr(app.api.admin, "get_service_client", lambda: db)
     fastapi_app.dependency_overrides[get_current_admin] = lambda: CurrentAuth(
         user_id="admin", email=None, client=db
@@ -223,12 +224,12 @@ def test_admin_shops_without_subscription_row_has_null_paid_until(admin_db):
     assert row["owner_id"] == OWNER and row["paid_until"] is None
 
 
-def test_admin_shops_table_error_still_200(admin_db):
+def test_admin_shops_table_error_is_an_error(admin_db):
     admin_db.responses[("shops", "select")] = [_shop_row("basic")]
     admin_db.errors[("subscriptions", "select")] = RuntimeError("relation does not exist")
-    r = TestClient(fastapi_app).get("/admin/shops")
-    assert r.status_code == 200, r.text
-    assert r.json()[0]["paid_until"] is None
+    r = TestClient(fastapi_app, raise_server_exceptions=False).get("/admin/shops")
+    assert r.status_code == 500, r.text  # old code: 200 with `paid_until: null`
+    assert not isinstance(r.json(), list)
 
 
 # ---- POST /admin/subscriptions/{owner_id}/extend ---------------------------
@@ -318,7 +319,7 @@ def test_extend_read_error_is_503_and_nothing_written(admin_db):
     admin_db.errors[("subscriptions", "select")] = RuntimeError("relation does not exist")
     r = _extend(5)
     assert r.status_code == 503
-    assert r.json()["detail"] == "გამოწერების ცხრილი ჯერ არ არის (migration 0034)"
+    assert r.json()["detail"] == "გამოწერის ვადა ვერ წაიკითხა — სცადეთ მოგვიანებით."
     assert admin_db.calls_for("subscriptions", "upsert") == []
 
 
@@ -327,7 +328,7 @@ def test_extend_write_error_is_503(admin_db):
     admin_db.errors[("subscriptions", "upsert")] = RuntimeError("relation does not exist")
     r = _extend(5)
     assert r.status_code == 503
-    assert r.json()["detail"] == "გამოწერების ცხრილი ჯერ არ არის (migration 0034)"
+    assert r.json()["detail"] == "გამოწერის ვადა ვერ წაიკითხა — სცადეთ მოგვიანებით."
 
 
 def test_extend_requires_admin(client):

@@ -109,7 +109,7 @@ def test_subscriptions_read_error_propagates(exc):
     with pytest.raises(type(exc)):
         subscriptions.read(db, USER_ID)  # old code: None
     with pytest.raises(type(exc)):
-        subscriptions.read(db, USER_ID, strict=False)  # `strict` is ignored
+        subscriptions.read(db, USER_ID)  # a second call raises again (no "once" state)
 
 
 # ---- (6) approve: a failed subscriptions read stops everything before any write ---------------------

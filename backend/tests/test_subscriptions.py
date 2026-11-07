@@ -131,14 +131,6 @@ def test_read_error_always_raises_and_logs_nothing(caplog):
     assert caplog.text == ""
 
 
-@pytest.mark.parametrize("strict", [True, False])
-def test_read_raises_whatever_strict_says(strict):
-    db = FakeSupabase()
-    db.errors[("subscriptions", "select")] = RuntimeError("down")
-    with pytest.raises(RuntimeError):
-        subscriptions.read(db, USER_ID, strict=strict)  # deprecated parameter, ignored
-
-
 class _FailsOnce(FakeSupabase):
     """First subscriptions select fails, the next succeed (transient error)."""
 

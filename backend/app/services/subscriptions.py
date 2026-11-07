@@ -53,11 +53,8 @@ def next_paid_until(current: dict | None, tier: str, *, renewal: bool, now: date
     return now + period
 
 
-def read(client, owner_id: str, *, strict: bool = False) -> dict | None:
-    """მფლობელის `{tier, paid_until}` მწკრივი; არ არის → None. წაკითხვის შეცდომა ყოველთვის ადის.
-
-    `strict` — deprecated, უგულებელყოფილია (ახლა ყოველთვის strict); S24-10 შლის (admin.py-ის გამოძახებასთან ერთად).
-    """
+def read(client, owner_id: str) -> dict | None:
+    """მფლობელის `{tier, paid_until}` მწკრივი; არ არის → None. წაკითხვის შეცდომა ყოველთვის ადის."""
     rows = (
         client.table("subscriptions").select("tier,paid_until")
         .eq("owner_id", str(owner_id)).limit(1).execute().data

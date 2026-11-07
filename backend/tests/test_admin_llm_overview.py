@@ -24,6 +24,7 @@ def _spend(usd):
 @pytest.fixture
 def admin_db(monkeypatch):
     db = FakeSupabase()
+    db.rpc_responses["admin_overview_stats"] = {}  # 0039 RPC is required (Stage 24, A-042)
     monkeypatch.setattr(app.api.admin, "get_service_client", lambda: db)
     fastapi_app.dependency_overrides[get_current_admin] = lambda: CurrentAuth(
         user_id="admin", email=None, client=db

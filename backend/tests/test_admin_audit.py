@@ -172,7 +172,9 @@ def test_extend_free_owner_400_writes_no_audit_row(admin_db):
 def test_extend_subscriptions_table_missing_503_writes_no_audit_row(admin_db):
     admin_db.responses[("shops", "select")] = [{"subscription_tier": "basic"}]
     admin_db.errors[("subscriptions", "select")] = RuntimeError("relation does not exist")
-    assert _extend().status_code == 503
+    r = _extend()
+    assert r.status_code == 503
+    assert r.json()["detail"] == "გამოწერის ვადა ვერ წაიკითხა — სცადეთ მოგვიანებით."
     assert _inserts(admin_db) == []
 
 
@@ -313,6 +315,9 @@ def test_actions_and_detail_keys_match_the_spec():
 @pytest.mark.parametrize("path", ["/admin/overview", "/admin/shops", "/admin/orders", f"/admin/shops/{SHOP}"])
 def test_read_endpoints_write_no_audit_row(admin_db, path):
     admin_db.responses[("shops", "select")] = [_shop_row("basic")]
+    # 0039 RPCs are required since Stage 24 (A-042): no Python-aggregation fallback
+    admin_db.rpc_responses["admin_overview_stats"] = {}
+    admin_db.rpc_responses["admin_shop_counts"] = {}
     r = TestClient(fastapi_app).get(path)
     assert r.status_code == 200, r.text
     assert admin_db.calls_for(TABLE, "insert") == []

@@ -5,7 +5,6 @@
 """
 import logging
 import uuid
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -31,12 +30,7 @@ PRODUCT_IMAGES_BUCKET = "product-images"  # იგივე, რაც api/produ
 
 # A-041: ცხადი ჭერი; გადაჭარბება — WARNING (fetch_all), არა ჩუმი ჭრა
 _ADMIN_SHOPS_MAX = 20_000      # shops / subscriptions და სხვა მცირე ცხრილები
-_ADMIN_ORDERS_MAX = 200_000    # orders / products / bot_customers (მხოლოდ Python-ის fallback-ში)
 _ADMIN_PRODUCTS_MAX = 10_000   # ერთი მაღაზიის პროდუქტები (shop_detail)
-
-# 0039-ის RPC-ები (admin_overview_stats / admin_growth / admin_shop_counts) არ არის ბაზაში
-_RPC_MISSING_CODES = ("PGRST202", "42883")
-_RPC_WARNED: set[str] = set()  # ფუნქცია, რომლისთვისაც WARNING უკვე დაიწერა (ერთხელ პროცესზე)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger("app")
@@ -98,13 +92,6 @@ def get_current_admin(auth: CurrentAuth = Depends(get_current_auth)) -> CurrentA
     if auth.verified_by == "local":
         confirm_with_auth_server(auth)
     return auth
-
-
-def _parse_ts(v):
-    try:
-        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception:
-        return None
 
 
 def _all_auth_users(sc) -> list:
@@ -218,60 +205,16 @@ def client_ip(request: Request, admin: CurrentAuth = Depends(get_current_admin))
     }
 
 
-def _admin_rpc(sc, fn: str, params: dict | None = None) -> dict | None:
-    """ადმინის SQL-აგრეგაცია (migration 0039): dict, ან None → გამომძახებელი Python-ის გზაზე გადადის.
+def _admin_rpc(sc, fn: str, params: dict | None = None) -> dict:
+    """ადმინის SQL-აგრეგაცია (migration 0039; Python-ის აგრეგაცია აღარ არის — A-042).
 
-    RPC ყოველ მოთხოვნაზე ისევ ცდება (flag მხოლოდ WARNING-ს აჩუმებს) — migration-ის შემდეგ restart არ სჭირდება.
-    ფუნქცია არ არის (PGRST202 / 42883) → None + ერთი WARNING პროცესზე ფუნქციაზე; სხვა შეცდომა ადის (500).
+    RPC-ის ნებისმიერი შეცდომა ადის (არმყოფი ფუნქცია → 503 `main.py`-ის handler-ში); არა-ობიექტი
+    (არა-`jsonb` dict) შედეგი → `ValueError` (500).
     """
-    try:
-        data = sc.rpc(fn, params or {}).execute().data
-    except Exception as exc:
-        if getattr(exc, "code", None) not in _RPC_MISSING_CODES:
-            raise
-        if fn not in _RPC_WARNED:
-            _RPC_WARNED.add(fn)
-            logger.warning("%s missing (migration 0039 not applied) - Python aggregation", fn)
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _overview_python(sc) -> dict:
-    """0039-ის გარეშე: იგივე რიცხვები Python-ში, გვერდ-გვერდ (fetch_all) — ნელია, მაგრამ სწორი."""
-    shops = fetch_all(
-        lambda: sc.table("shops").select("id,owner_id,facebook_page_id,subscription_tier").order("id"),
-        max_rows=_ADMIN_SHOPS_MAX, label="admin overview shops",
-    )
-    orders = fetch_all(
-        lambda: sc.table("orders").select("total,status,created_at").order("id"),
-        max_rows=_ADMIN_ORDERS_MAX, label="admin overview orders",
-    )
-    products = sc.table("products").select("id", count="exact").limit(1).execute()
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-    orders_30d, revenue = 0, 0.0
-    for o in orders:
-        if o.get("status") != "cancelled":
-            revenue += float(o.get("total") or 0)
-        ts = _parse_ts(o.get("created_at"))
-        if ts and ts >= cutoff:
-            orders_30d += 1
-
-    owner_tiers: dict[str, list] = {}
-    for s in shops:
-        oid = s.get("owner_id")
-        if oid:
-            owner_tiers.setdefault(str(oid), []).append(s.get("subscription_tier"))
-    return {
-        "total_shops": len(shops),
-        "total_sellers": len({s["owner_id"] for s in shops if s.get("owner_id")}),
-        "connected_shops": len([s for s in shops if s.get("facebook_page_id")]),
-        "total_products": products.count or 0,
-        "total_orders": len(orders),
-        "orders_30d": orders_30d,
-        "revenue": revenue,
-        "owner_tiers": dict(Counter(best_tier(t) for t in owner_tiers.values())),
-    }
+    data = sc.rpc(fn, params or {}).execute().data
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected {fn} result")
+    return data
 
 
 @router.get("/overview")
@@ -279,8 +222,6 @@ def overview(admin: CurrentAuth = Depends(get_current_admin)):
     """საერთო მაჩვენებლები — მთელი პლატფორმა."""
     sc = get_service_client()
     stats = _admin_rpc(sc, "admin_overview_stats")
-    if stats is None:
-        stats = _overview_python(sc)
 
     # MRR + პაკეტების განაწილება — გამოწერა per-account-ია (ერთი გადახდა ფარავს
     # მფლობელის ყველა მაღაზიას), ამიტომ მფლობელობით ვთვლით, არა მაღაზიაზე —
@@ -331,33 +272,13 @@ def growth(admin: CurrentAuth = Depends(get_current_admin), months: int = 6):
     sc = get_service_client()
     yms = _last_months(months)
     data = _admin_rpc(sc, "admin_growth", {"p_months": months})
-    if data is not None:
-        # SQL მხოლოდ მონაცემიან თვეებს აბრუნებს — ნულებს აქ ვავსებთ; _last_months-ს გარეთა გასაღებები იგნორდება
-        def _n(ym: str, key: str) -> int:
-            row = data.get(ym)
-            return int((row.get(key) if isinstance(row, dict) else 0) or 0)
 
-        return [{"ym": ym, "shops": _n(ym, "shops"), "orders": _n(ym, "orders")} for ym in yms]
+    # SQL მხოლოდ მონაცემიან თვეებს აბრუნებს — ნულებს აქ ვავსებთ; _last_months-ს გარეთა გასაღებები იგნორდება
+    def _n(ym: str, key: str) -> int:
+        row = data.get(ym)
+        return int((row.get(key) if isinstance(row, dict) else 0) or 0)
 
-    shops = fetch_all(
-        lambda: sc.table("shops").select("created_at,id").order("id"),
-        max_rows=_ADMIN_SHOPS_MAX, label="admin growth shops",
-    )
-    orders = fetch_all(
-        lambda: sc.table("orders").select("created_at,id").order("id"),
-        max_rows=_ADMIN_ORDERS_MAX, label="admin growth orders",
-    )
-    sh = {ym: 0 for ym in yms}
-    od = {ym: 0 for ym in yms}
-    for s in shops:
-        ym = str(s.get("created_at"))[:7]
-        if ym in sh:
-            sh[ym] += 1
-    for o in orders:
-        ym = str(o.get("created_at"))[:7]
-        if ym in od:
-            od[ym] += 1
-    return [{"ym": ym, "shops": sh[ym], "orders": od[ym]} for ym in yms]
+    return [{"ym": ym, "shops": _n(ym, "shops"), "orders": _n(ym, "orders")} for ym in yms]
 
 
 @router.get("/shops")
@@ -370,47 +291,19 @@ def all_shops(admin: CurrentAuth = Depends(get_current_admin)):
     )
     emails = _email_map(sc)
 
-    try:
-        sub_rows = fetch_all(
-            lambda: sc.table("subscriptions").select("owner_id,paid_until").order("owner_id"),
-            max_rows=_ADMIN_SHOPS_MAX, label="admin subscriptions",
-        )
-        paid_until_by_owner = {str(r["owner_id"]): r.get("paid_until") for r in sub_rows}
-    except Exception:
-        paid_until_by_owner = {}  # migration 0034 ჯერ არ გაშვებულა
+    sub_rows = fetch_all(
+        lambda: sc.table("subscriptions").select("owner_id,paid_until").order("owner_id"),
+        max_rows=_ADMIN_SHOPS_MAX, label="admin subscriptions",
+    )
+    paid_until_by_owner = {str(r["owner_id"]): r.get("paid_until") for r in sub_rows}
 
     prod_count, order_count, cust_count = {}, {}, {}
-    counts = _admin_rpc(sc, "admin_shop_counts")
-    if counts is not None:
-        # SQL-ში დათვლილი (1000-იანი ჭერის გარეშე); RPC-ში არმყოფი მაღაზია → 0
-        for sid, c in counts.items():
-            if isinstance(c, dict):
-                prod_count[sid] = int(c.get("products") or 0)
-                order_count[sid] = int(c.get("orders") or 0)
-                cust_count[sid] = int(c.get("customers") or 0)
-    else:
-        products = fetch_all(
-            lambda: sc.table("products").select("shop_id").order("id"),
-            max_rows=_ADMIN_ORDERS_MAX, label="admin shops products",
-        )
-        orders = fetch_all(
-            lambda: sc.table("orders").select("shop_id").order("id"),
-            max_rows=_ADMIN_ORDERS_MAX, label="admin shops orders",
-        )
-        ym = datetime.now(timezone.utc).strftime("%Y-%m")
-        try:
-            cust_rows = fetch_all(
-                lambda: sc.table("bot_customers").select("shop_id").eq("ym", ym).order("shop_id").order("psid"),
-                max_rows=_ADMIN_ORDERS_MAX, label="admin shops customers",
-            )
-        except Exception:
-            cust_rows = []  # migration ჯერ არ გაშვებულა
-        for p in products:
-            prod_count[p["shop_id"]] = prod_count.get(p["shop_id"], 0) + 1
-        for o in orders:
-            order_count[o["shop_id"]] = order_count.get(o["shop_id"], 0) + 1
-        for c in cust_rows:
-            cust_count[c["shop_id"]] = cust_count.get(c["shop_id"], 0) + 1
+    # SQL-ში დათვლილი (1000-იანი ჭერის გარეშე); RPC-ში არმყოფი მაღაზია → 0
+    for sid, c in _admin_rpc(sc, "admin_shop_counts").items():
+        if isinstance(c, dict):
+            prod_count[sid] = int(c.get("products") or 0)
+            order_count[sid] = int(c.get("orders") or 0)
+            cust_count[sid] = int(c.get("customers") or 0)
 
     result = []
     for s in shops:
@@ -576,13 +469,10 @@ def _remove_shop_images(sc, shop_id: str) -> None:
 def list_upgrade_requests(admin: CurrentAuth = Depends(get_current_admin)):
     """მიმდინარე (pending) პაკეტის განახლების მოთხოვნები."""
     sc = get_service_client()
-    try:
-        reqs = (
-            sc.table("upgrade_requests").select("*").eq("status", "pending")
-            .order("created_at", desc=True).execute().data or []
-        )
-    except Exception:
-        return []  # migration 0005 ჯერ არ გაშვებულა
+    reqs = (
+        sc.table("upgrade_requests").select("*").eq("status", "pending")
+        .order("created_at", desc=True).execute().data or []
+    )
     shop_ids = sorted({r["shop_id"] for r in reqs if r.get("shop_id")})
     shops = (
         sc.table("shops").select("id,name,subscription_tier,owner_id").in_("id", shop_ids).execute().data or []
@@ -660,10 +550,10 @@ def extend_subscription(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "უფასო პაკეტს ვადა არ აქვს")
 
     unavailable = HTTPException(
-        status.HTTP_503_SERVICE_UNAVAILABLE, "გამოწერების ცხრილი ჯერ არ არის (migration 0034)"
+        status.HTTP_503_SERVICE_UNAVAILABLE, "გამოწერის ვადა ვერ წაიკითხა — სცადეთ მოგვიანებით."
     )
     try:
-        current = subscriptions.read(sc, oid, strict=True)
+        current = subscriptions.read(sc, oid)
     except Exception:
         raise unavailable
     now = datetime.now(timezone.utc)

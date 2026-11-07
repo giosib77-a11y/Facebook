@@ -1,7 +1,7 @@
 """S20-4 (A-035): panel API for paused conversations.
 
-* GET  /shops/{id}/attention          -> needs_attention OR paused (bot_paused_until >= now); 0033-less fallback
-* POST /shops/{id}/attention/{psid}/resolve -> clears needs_attention AND the pause; 0033-less fallback
+* GET  /shops/{id}/attention          -> needs_attention OR paused (bot_paused_until >= now); 0033-less -> 503 (A-042)
+* POST /shops/{id}/attention/{psid}/resolve -> clears needs_attention AND the pause; update failure -> 503 (A-042)
 * POST /shops/{id}/attention/{psid}/resume  -> clears only the pause; ownership via the user client
 
 Fake Supabase only (tests/conftest.py); nothing leaves the process.
@@ -11,14 +11,20 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from postgrest.exceptions import APIError
 
 import app.api.shops as shops_api
+from app.core.db import SCHEMA_ERROR_DETAIL
 from tests.conftest import FakeQuery, FakeSupabase
 
 SHOP_ID = "22222222-2222-2222-2222-222222222222"
 PSID = "7654321098765432"
-PAUSE_WARNING = "bot_conversations.bot_paused_until missing"
 URL = f"/shops/{SHOP_ID}/attention"
+RESOLVE_503 = "საუბრის მონიშვნა ვერ შეინახა — სცადეთ მოგვიანებით."
+
+
+def _api_error(code: str, message: str) -> APIError:
+    return APIError({"code": code, "message": message, "details": None, "hint": None})
 
 
 class _PauseQuery(FakeQuery):
@@ -39,7 +45,7 @@ class _PauseQuery(FakeQuery):
         )
         if db.pause_missing and touches_pause:
             db.calls.append(self)
-            raise RuntimeError("column bot_conversations.bot_paused_until does not exist")
+            raise _api_error("42703", "column bot_conversations.bot_paused_until does not exist")
         return super().execute()
 
 
@@ -55,11 +61,6 @@ class PauseDB(FakeSupabase):
 @pytest.fixture
 def user_db():
     return PauseDB()
-
-
-@pytest.fixture(autouse=True)
-def _reset_flag(monkeypatch):
-    monkeypatch.setattr(shops_api, "_PAUSE_COLUMN_WARNED", False, raising=False)
 
 
 def _iso(delta_hours: float) -> str:
@@ -164,40 +165,24 @@ def test_list_pause_without_timezone_treated_as_utc(client, user_db):
     assert item["paused_until"].endswith("+00:00")
 
 
-def test_list_without_migration_0033_uses_old_query(client, user_db, caplog):
+def test_list_without_migration_0033_is_503_and_runs_no_old_query(client, user_db):
     user_db.pause_missing = True
-    user_db.responses[("bot_conversations", "select")] = [
-        {"psid": PSID, "messages": [{"role": "user", "content": "ფასი?"}],
-         "attention_at": "2026-11-05T10:00:00+00:00", "updated_at": "2026-11-05T10:01:00+00:00"},
-    ]
-
-    with caplog.at_level(logging.WARNING, logger="app"):
-        r = client.get(URL)
-        client.get(URL)  # second request: the WARNING must not repeat
-
-    assert r.status_code == 200
-    assert r.json() == {
-        "items": [{
-            "psid": PSID, "last_message": "ფასი?", "at": "2026-11-05T10:00:00+00:00",
-            "needs_attention": True, "paused_until": None,
-        }],
-        "count": 1,
-        "attention_count": 1,
-    }
-    old = user_db.calls_for("bot_conversations", "select")[1]  # [0] is the failed new query
-    assert ("eq", "needs_attention", True) in old.filters
-    assert "bot_paused_until" not in old.columns
-    assert sum(PAUSE_WARNING in m for m in caplog.messages) == 1
-    assert PSID not in caplog.text
-
-
-def test_list_both_queries_fail_returns_empty(client, user_db):
-    user_db.errors[("bot_conversations", "select")] = RuntimeError("relation does not exist")
 
     r = client.get(URL)
 
-    assert r.status_code == 200
-    assert r.json() == {"items": [], "count": 0, "attention_count": 0}
+    assert r.status_code == 503
+    assert r.json() == {"detail": SCHEMA_ERROR_DETAIL}
+    assert len(user_db.calls_for("bot_conversations", "select")) == 1  # no retry with the old query
+
+
+def test_list_db_error_is_an_error_not_an_empty_list(client, user_db):
+    user_db.errors[("bot_conversations", "select")] = _api_error("XX000", "internal error")
+
+    r = client.get(URL)
+
+    assert r.status_code == 400  # `run` translation (non-schema APIError)
+    assert r.json() != {"items": [], "count": 0, "attention_count": 0}
+    assert len(user_db.calls_for("bot_conversations", "select")) == 1
 
 
 def test_list_uses_last_user_message(client, user_db):
@@ -226,30 +211,29 @@ def test_resolve_clears_flag_and_pause_in_one_service_update(client, user_db, se
     assert _updates(user_db) == []  # the write goes through the service client only
 
 
-def test_resolve_without_migration_0033_retries_with_flag_only(client, user_db, monkeypatch, caplog):
+def test_resolve_without_migration_0033_is_503_and_not_retried_with_flag_only(client, user_db, monkeypatch):
     _owner(user_db)
     db = PauseDB(pause_missing=True)
     monkeypatch.setattr(shops_api, "get_service_client", lambda: db)
 
+    r = client.post(f"{URL}/{PSID}/resolve")
+
+    assert r.status_code == 503 and r.json() == {"detail": RESOLVE_503}
+    payloads = [u.payload for u in _updates(db)]
+    assert payloads == [{"needs_attention": False, "bot_paused_until": None}]  # one attempt, no flag-only retry
+
+
+def test_resolve_db_error_is_503_with_one_attempt_and_no_psid_in_log(client, user_db, service_db, caplog):
+    _owner(user_db)
+    service_db.errors[("bot_conversations", "update")] = RuntimeError(f"db down for {PSID}")
+
     with caplog.at_level(logging.WARNING, logger="app"):
         r = client.post(f"{URL}/{PSID}/resolve")
 
-    assert r.status_code == 200 and r.json() == {"ok": True}
-    payloads = [u.payload for u in _updates(db)]
-    assert payloads == [{"needs_attention": False, "bot_paused_until": None}, {"needs_attention": False}]
-    second = _updates(db)[1]
-    assert ("eq", "shop_id", SHOP_ID) in second.filters and ("eq", "psid", PSID) in second.filters
-    assert sum(PAUSE_WARNING in m for m in caplog.messages) == 1
-
-
-def test_resolve_both_updates_failing_is_silent(client, user_db, service_db):
-    _owner(user_db)
-    service_db.errors[("bot_conversations", "update")] = RuntimeError("db down")
-
-    r = client.post(f"{URL}/{PSID}/resolve")
-
-    assert r.status_code == 200 and r.json() == {"ok": True}
-    assert len(_updates(service_db)) == 2
+    assert r.status_code == 503 and r.json() == {"detail": RESOLVE_503}
+    assert len(_updates(service_db)) == 1
+    assert "attention resolve failed" in caplog.text and SHOP_ID in caplog.text and "RuntimeError" in caplog.text
+    assert PSID not in caplog.text
 
 
 def test_resolve_foreign_shop_is_404_and_writes_nothing(client, user_db, service_db):
